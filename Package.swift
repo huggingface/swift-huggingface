@@ -28,7 +28,7 @@ let package = Package(
             dependencies: [
                 .product(name: "EventSource", package: "EventSource")
             ],
-            path: "Sources/HuggingFace",
+            path: "Sources/HuggingFace"
         ),
         .testTarget(
             name: "HuggingFaceTests",
