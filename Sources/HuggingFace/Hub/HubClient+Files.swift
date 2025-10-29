@@ -70,6 +70,7 @@ public extension HubClient {
                 .addOptionalText(name: "message", value: message)
                 .addFileStreamed(name: "file", fileURL: fileURL, mimeType: mimeType)
                 .buildToTempFile()
+            defer { try? FileManager.default.removeItem(at: tempFile) }
 
             let (data, response) = try await session.upload(for: request, fromFile: tempFile)
             _ = try httpClient.validateResponse(response, data: data)

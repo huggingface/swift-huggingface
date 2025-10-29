@@ -402,7 +402,7 @@ let exists = await client.fileExists(
 )
 
 // Get file information
-let info = try await client.fileInfo(
+let info = try await client.getFile(
     "pytorch_model.bin",
     in: "facebook/bart-large"
 )
@@ -451,7 +451,7 @@ let fileURL = try await client.resumeDownloadFile(
 
 // Upload a file
 let result = try await client.uploadFile(
-    "/path/to/local/file.csv"),
+    URL(fileURLWithPath: "/path/to/local/file.csv"),
     to: "data/new_dataset.csv",
     in: "username/my-dataset",
     kind: .dataset,
@@ -474,7 +474,10 @@ let results = try await client.uploadFiles(
 // Or build a batch programmatically
 var batch = FileBatch()
 batch["config.json"] = .path("/path/to/config.json")
-batch["model.safetensors"] = .url(modelURL, mimeType: "application/octet-stream")
+batch["model.safetensors"] = .url(
+    URL(fileURLWithPath: "/path/to/model.safetensors"),
+    mimeType: "application/octet-stream"
+)
 
 // Delete a file
 try await client.deleteFile(

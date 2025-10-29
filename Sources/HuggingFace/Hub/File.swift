@@ -37,6 +37,13 @@ public struct FileBatch: Hashable, Codable, Sendable {
             return Self(url: URL(fileURLWithPath: path), mimeType: mimeType)
         }
 
+        /// Creates a file entry from a URL.
+        /// - Parameters:
+        ///   - url: The file URL. Must be a file URL (e.g., `file:///path/to/file`), not a remote URL.
+        ///   - mimeType: Optional MIME type for the file.
+        /// - Returns: A file entry, or `nil` if the URL is not a file URL.
+        /// - Note: Only file URLs are accepted because this API requires local file access for upload.
+        ///         Remote URLs (http, https, etc.) are not supported and will return `nil`.
         public static func url(_ url: URL, mimeType: String? = nil) -> Self? {
             guard url.isFileURL else {
                 return nil
