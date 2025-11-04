@@ -492,6 +492,40 @@ try await client.deleteFiles(
     from: "username/my-repo",
     message: "Cleanup old files"
 )
+
+// Download a complete repository snapshot
+let snapshotDir = FileManager.default.temporaryDirectory
+    .appendingPathComponent("models")
+    .appendingPathComponent("facebook")
+    .appendingPathComponent("bart-large")
+
+let progress = Progress(totalUnitCount: 0)
+Task {
+    for await _ in progress.values(forKeyPath: \.fractionCompleted) {
+        print("Snapshot progress: \(progress.fractionCompleted * 100)%")
+    }
+}
+
+let destination = try await client.downloadSnapshot(
+    of: "facebook/bart-large",
+    kind: .model,
+    to: snapshotDir,
+    revision: "main",
+    progressHandler: { progress in
+        print("Downloaded \(progress.completedUnitCount) of \(progress.totalUnitCount) files")
+    }
+)
+print("Repository downloaded to: \(destination.path)")
+
+// Download only specific files using glob patterns
+let destination = try await client.downloadSnapshot(
+    of: "openai-community/gpt2",
+    to: snapshotDir,
+    matching: ["*.json", "*.txt"],  // Only download JSON and text files
+    progressHandler: { progress in
+        print("Progress: \(progress.fractionCompleted * 100)%")
+    }
+)
 ```
 
 #### User Access Management
