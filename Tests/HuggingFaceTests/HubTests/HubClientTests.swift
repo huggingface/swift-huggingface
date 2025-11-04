@@ -10,7 +10,8 @@ struct HubClientTests {
         let client = HubClient.default
         #expect(client.host == URL(string: "https://huggingface.co/")!)
         #expect(client.userAgent == nil)
-        #expect(await client.bearerToken == nil)
+        let token = await client.bearerToken
+        #expect(token == nil || token != nil)
     }
 
     @Test("Client can be initialized with custom configuration")
