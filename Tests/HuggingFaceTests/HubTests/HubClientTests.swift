@@ -38,4 +38,17 @@ struct HubClientTests {
 
         #expect(client.host.path.hasSuffix("/"))
     }
+
+    @Test("Xet configuration can be toggled per client")
+    func testXetConfigurationToggle() throws {
+        let host = URL(string: "https://huggingface.co")!
+
+        try #require(HubClient.isXetSupported, "Xet is not supported on this platform")
+
+        let disabledClient = HubClient(host: host, enableXet: false)
+        #expect(disabledClient.isXetEnabled == false)
+
+        let enabledClient = HubClient(host: host, enableXet: true)
+        #expect(enabledClient.isXetEnabled)
+    }
 }

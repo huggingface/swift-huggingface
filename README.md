@@ -1000,3 +1000,8 @@ let response = try await client.speechToText(
 
 print("Transcription: \(response.text)")
 ```
+
+## License
+
+This project is available under the MIT license.
+See the LICENSE file for more info.
