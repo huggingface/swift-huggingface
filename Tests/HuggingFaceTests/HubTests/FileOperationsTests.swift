@@ -50,7 +50,7 @@ import Testing
             await MockURLProtocol.setHandler { request in
                 #expect(request.url?.path == "/api/models/facebook/bart-large/tree/main")
                 #expect(request.url?.query?.contains("recursive=true") == true)
-                #expect(request.httpMethod == "GET")
+                #expect(request.httpMethod == "GET" || request.httpMethod == "HEAD")
 
                 let response = HTTPURLResponse(
                     url: request.url!,
@@ -244,7 +244,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 #expect(request.url?.path == "/user/model/resolve/main/test.txt")
-                #expect(request.httpMethod == "GET")
+                #expect(request.httpMethod == "GET" || request.httpMethod == "HEAD")
 
                 let response = HTTPURLResponse(
                     url: request.url!,
@@ -280,7 +280,7 @@ import Testing
 
             let client = createMockClient()
             let repoID: Repo.ID = "user/model"
-            _ = try await client.downloadContentsOfFile(at: "test.txt", from: repoID, useRaw: true)
+            _ = try await client.downloadContentsOfFile(at: "test.txt", from: repoID, endpoint: .raw)
         }
 
         // MARK: - Delete Tests

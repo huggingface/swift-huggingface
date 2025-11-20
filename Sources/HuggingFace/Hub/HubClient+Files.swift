@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 
 #if canImport(UniformTypeIdentifiers)
@@ -7,6 +8,56 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+
+import Xet
+
+private let xetMinimumFileSizeBytes = 16 * 1024 * 1024  // 16MiB
+
+/// Controls which transport is used for file downloads.
+public enum FileDownloadTransport: Hashable, CaseIterable, Sendable {
+    /// Automatically select the best transport (Xet for large files, LFS otherwise).
+    case automatic
+
+    /// Force classic LFS download.
+    case lfs
+
+    /// Force Xet download (requires Xet support).
+    case xet
+
+    var shouldAttemptXet: Bool {
+        switch self {
+        case .automatic, .xet:
+            return true
+        case .lfs:
+            return false
+        }
+    }
+
+    func shouldUseXet(fileSizeBytes: Int?, minimumFileSizeBytes: Int?) -> Bool {
+        switch self {
+        case .xet:
+            return true
+        case .lfs:
+            return false
+        case .automatic:
+            guard let minimumFileSizeBytes, let fileSizeBytes else {
+                return true
+            }
+            return fileSizeBytes >= minimumFileSizeBytes
+        }
+    }
+}
+
+/// Controls which endpoint is used for file downloads.
+public enum FileDownloadEndpoint: String, Hashable, CaseIterable, Sendable {
+    /// Resolve endpoint (default behavior).
+    case resolve
+
+    /// Raw endpoint (bypass resolve redirects).
+    case raw
+
+    var pathComponent: String { rawValue }
+}
 
 // MARK: - Upload Operations
 
@@ -180,7 +231,7 @@ public extension HubClient {
     ///   - repo: Repository identifier
     ///   - kind: Kind of repository
     ///   - revision: Git revision (branch, tag, or commit)
-    ///   - useRaw: Use raw endpoint instead of resolve
+    ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     /// - Returns: File data
     func downloadContentsOfFile(
@@ -188,7 +239,8 @@ public extension HubClient {
         from repo: Repo.ID,
         kind: Repo.Kind = .model,
         revision: String = "main",
-        useRaw: Bool = false,
+        endpoint: FileDownloadEndpoint = .resolve,
+        transport: FileDownloadTransport = .automatic,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy
     ) async throws -> Data {
         // Check cache first
@@ -203,7 +255,26 @@ public extension HubClient {
             return try Data(contentsOf: cachedPath)
         }
 
-        let endpoint = useRaw ? "raw" : "resolve"
+        if endpoint == .resolve, transport.shouldAttemptXet {
+            do {
+                if let data = try await downloadDataWithXet(
+                    repoPath: repoPath,
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    transport: transport
+                ) {
+                    return data
+                }
+            } catch {
+                if transport == .xet {
+                    throw error
+                }
+            }
+        }
+
+        // Fallback to existing LFS download method
+        let endpoint = endpoint.pathComponent
         let url = httpClient.host
             .appending(path: repo.namespace)
             .appending(path: repo.name)
@@ -243,7 +314,7 @@ public extension HubClient {
     ///   - destination: Destination URL for downloaded file
     ///   - kind: Kind of repository
     ///   - revision: Git revision
-    ///   - useRaw: Use raw endpoint
+    ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional Progress object to track download progress
     /// - Returns: Final destination URL
@@ -253,9 +324,10 @@ public extension HubClient {
         to destination: URL,
         kind: Repo.Kind = .model,
         revision: String = "main",
-        useRaw: Bool = false,
+        endpoint: FileDownloadEndpoint = .resolve,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
-        progress: Progress? = nil
+        progress: Progress? = nil,
+        transport: FileDownloadTransport = .automatic
     ) async throws -> URL {
         // Check cache first
         if let cache = cache,
@@ -278,8 +350,28 @@ public extension HubClient {
             progress?.completedUnitCount = progress?.totalUnitCount ?? 100
             return destination
         }
+        if endpoint == .resolve, transport.shouldAttemptXet {
+            do {
+                if let downloaded = try await downloadFileWithXet(
+                    repoPath: repoPath,
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    destination: destination,
+                    progress: progress,
+                    transport: transport
+                ) {
+                    return downloaded
+                }
+            } catch {
+                if transport == .xet {
+                    throw error
+                }
+            }
+        }
 
-        let endpoint = useRaw ? "raw" : "resolve"
+        // Fallback to existing LFS download method
+        let endpoint = endpoint.pathComponent
         let url = httpClient.host
             .appending(path: repo.namespace)
             .appending(path: repo.name)
@@ -329,6 +421,59 @@ public extension HubClient {
         return destination
     }
 
+    /// Download file to a destination URL using a tree entry (uses file size for transport selection).
+    /// - Parameters:
+    ///   - entry: File entry from the repository tree
+    ///   - repo: Repository identifier
+    ///   - destination: Destination URL for downloaded file
+    ///   - kind: Kind of repository
+    ///   - revision: Git revision
+    ///   - endpoint: Select resolve or raw endpoint
+    ///   - cachePolicy: Cache policy for the request
+    ///   - progress: Optional Progress object to track download progress
+    ///   - transport: Download transport selection
+    /// - Returns: Final destination URL
+    func downloadFile(
+        _ entry: Git.TreeEntry,
+        from repo: Repo.ID,
+        to destination: URL,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        endpoint: FileDownloadEndpoint = .resolve,
+        cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
+        progress: Progress? = nil,
+        transport: FileDownloadTransport = .automatic
+    ) async throws -> URL {
+        if transport == .automatic,
+            let fileSizeBytes = entry.size,
+            fileSizeBytes < xetMinimumFileSizeBytes
+        {
+            return try await downloadFile(
+                at: entry.path,
+                from: repo,
+                to: destination,
+                kind: kind,
+                revision: revision,
+                endpoint: endpoint,
+                cachePolicy: cachePolicy,
+                progress: progress,
+                transport: .lfs
+            )
+        }
+
+        return try await downloadFile(
+            at: entry.path,
+            from: repo,
+            to: destination,
+            kind: kind,
+            revision: revision,
+            endpoint: endpoint,
+            cachePolicy: cachePolicy,
+            progress: progress,
+            transport: transport
+        )
+    }
+
     #if !canImport(FoundationNetworking)
         /// Download file with resume capability
         ///
@@ -366,7 +511,7 @@ public extension HubClient {
     ///   - destination: Destination URL for downloaded file
     ///   - kind: Kind of repository
     ///   - revision: Git revision
-    ///   - useRaw: Use raw endpoint
+    ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     /// - Returns: Final destination URL
     func downloadContentsOfFile(
@@ -375,8 +520,9 @@ public extension HubClient {
         to destination: URL,
         kind: Repo.Kind = .model,
         revision: String = "main",
-        useRaw: Bool = false,
-        cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy
+        endpoint: FileDownloadEndpoint = .resolve,
+        cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
+        transport: FileDownloadTransport = .automatic
     ) async throws -> URL {
         return try await downloadFile(
             at: repoPath,
@@ -384,9 +530,10 @@ public extension HubClient {
             to: destination,
             kind: kind,
             revision: revision,
-            useRaw: useRaw,
+            endpoint: endpoint,
             cachePolicy: cachePolicy,
-            progress: nil
+            progress: nil,
+            transport: transport
         )
     }
 }
@@ -637,11 +784,254 @@ public extension HubClient {
     }
 }
 
+private extension HubClient {
+    /// Downloads file data using Xet's content-addressable storage system.
+    func downloadDataWithXet(
+        repoPath: String,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        transport: FileDownloadTransport
+    ) async throws -> Data? {
+        guard
+            let fileID = try await fetchXetFileID(
+                repoPath: repoPath,
+                repo: repo,
+                revision: revision,
+                transport: transport
+            )
+        else {
+            return nil
+        }
+
+        return try await Xet.withDownloader(
+            refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
+            hubToken: try? await httpClient.tokenProvider.getToken()
+        ) { downloader in
+            try await downloader.data(for: fileID)
+        }
+    }
+
+    /// Downloads a file using Xet's content-addressable storage system.
+    @discardableResult
+    func downloadFileWithXet(
+        repoPath: String,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        destination: URL,
+        progress: Progress?,
+        transport: FileDownloadTransport
+    ) async throws -> URL? {
+        guard
+            let fileID = try await fetchXetFileID(
+                repoPath: repoPath,
+                repo: repo,
+                revision: revision,
+                transport: transport
+            )
+        else {
+            return nil
+        }
+
+        _ = try await Xet.withDownloader(
+            refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
+            hubToken: try? await httpClient.tokenProvider.getToken()
+        ) { downloader in
+            try await downloader.download(fileID, to: destination)
+        }
+
+        progress?.totalUnitCount = 100
+        progress?.completedUnitCount = 100
+
+        return destination
+    }
+
+    func fetchXetFileID(
+        repoPath: String,
+        repo: Repo.ID,
+        revision: String,
+        transport: FileDownloadTransport
+    ) async throws -> String? {
+        let urlPath = "/\(repo)/resolve/\(revision)/\(repoPath)"
+        var request = try await httpClient.createRequest(.head, urlPath)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+
+        let (_, response) = try await session.data(
+            for: request,
+            delegate: NoRedirectDelegate()
+        )
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return nil
+        }
+
+        let rawFileID = httpResponse.value(forHTTPHeaderField: "X-Xet-Hash")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let fileID = rawFileID, !fileID.isEmpty else {
+            return nil
+        }
+
+        let rawSize =
+            httpResponse.value(forHTTPHeaderField: "X-Linked-Size")
+            ?? ((200 ... 299).contains(httpResponse.statusCode)
+                ? httpResponse.value(forHTTPHeaderField: "Content-Length")
+                : nil)
+        let fileSizeBytes = rawSize.flatMap(Int.init)
+        if !transport.shouldUseXet(
+            fileSizeBytes: fileSizeBytes,
+            minimumFileSizeBytes: xetMinimumFileSizeBytes
+        ) {
+            return nil
+        }
+
+        return isValidHash(fileID, pattern: sha256Pattern) ? fileID : nil
+    }
+
+    func xetRefreshURL(for repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL {
+        let url = httpClient.host.appendingPathComponent(
+            "api/\(kind.pluralized)/\(repo)/xet-read-token/\(revision)"
+        )
+        return url
+    }
+
+}
+
+private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest _: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(nil)
+    }
+}
+
+// MARK: - Metadata Helpers
+
+extension HubClient {
+    private var sha256Pattern: String { "^[0-9a-f]{64}$" }
+    private var commitHashPattern: String { "^[0-9a-f]{40}$" }
+
+    /// Read metadata about a file in the local directory.
+    func readDownloadMetadata(at metadataPath: URL) -> LocalDownloadFileMetadata? {
+        FileManager.default.readDownloadMetadata(at: metadataPath)
+    }
+
+    /// Write metadata about a downloaded file.
+    func writeDownloadMetadata(commitHash: String, etag: String, to metadataPath: URL) throws {
+        try FileManager.default.writeDownloadMetadata(
+            commitHash: commitHash,
+            etag: etag,
+            to: metadataPath
+        )
+    }
+
+    /// Check if a hash matches the expected pattern.
+    func isValidHash(_ hash: String, pattern: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return false
+        }
+        let range = NSRange(location: 0, length: hash.utf16.count)
+        return regex.firstMatch(in: hash, options: [], range: range) != nil
+    }
+
+    /// Compute SHA256 hash of a file.
+    func computeFileHash(at url: URL) throws -> String {
+        try FileManager.default.computeFileHash(at: url)
+    }
+}
+
 // MARK: -
 
 private struct UploadResponse: Codable {
     let path: String
     let commit: String?
+}
+
+// MARK: -
+
+private extension FileManager {
+    /// Read metadata about a file in the local directory.
+    func readDownloadMetadata(at metadataPath: URL) -> LocalDownloadFileMetadata? {
+        guard fileExists(atPath: metadataPath.path) else {
+            return nil
+        }
+
+        do {
+            let contents = try String(contentsOf: metadataPath, encoding: .utf8)
+            let lines = contents.components(separatedBy: .newlines)
+
+            guard lines.count >= 3 else {
+                try? removeItem(at: metadataPath)
+                return nil
+            }
+
+            let commitHash = lines[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            let etag = lines[1].trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard let timestamp = Double(lines[2].trimmingCharacters(in: .whitespacesAndNewlines))
+            else {
+                try? removeItem(at: metadataPath)
+                return nil
+            }
+
+            let timestampDate = Date(timeIntervalSince1970: timestamp)
+            let filename = metadataPath.lastPathComponent.replacingOccurrences(
+                of: ".metadata",
+                with: ""
+            )
+
+            return LocalDownloadFileMetadata(
+                commitHash: commitHash,
+                etag: etag,
+                filename: filename,
+                timestamp: timestampDate
+            )
+        } catch {
+            try? removeItem(at: metadataPath)
+            return nil
+        }
+    }
+
+    /// Write metadata about a downloaded file.
+    func writeDownloadMetadata(commitHash: String, etag: String, to metadataPath: URL) throws {
+        let metadataContent = "\(commitHash)\n\(etag)\n\(Date().timeIntervalSince1970)\n"
+        try createDirectory(
+            at: metadataPath.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try metadataContent.write(to: metadataPath, atomically: true, encoding: .utf8)
+    }
+
+    /// Compute SHA256 hash of a file.
+    func computeFileHash(at url: URL) throws -> String {
+        guard let fileHandle = try? FileHandle(forReadingFrom: url) else {
+            throw HTTPClientError.unexpectedError("Unable to open file: \(url.path)")
+        }
+
+        defer {
+            try? fileHandle.close()
+        }
+
+        var hasher = SHA256()
+        let chunkSize = 1024 * 1024
+
+        while autoreleasepool(invoking: {
+            guard let nextChunk = try? fileHandle.read(upToCount: chunkSize),
+                !nextChunk.isEmpty
+            else {
+                return false
+            }
+
+            hasher.update(data: nextChunk)
+            return true
+        }) {}
+
+        let digest = hasher.finalize()
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 // MARK: -

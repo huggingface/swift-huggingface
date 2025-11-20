@@ -42,4 +42,5 @@ struct HubClientTests {
 
         #expect(client.host.path.hasSuffix("/"))
     }
+
 }
