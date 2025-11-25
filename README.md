@@ -19,7 +19,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mattt/swift-huggingface.git", from: "0.2.0")
+    .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.2.0")
 ]
 ```
 
