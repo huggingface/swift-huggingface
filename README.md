@@ -1000,3 +1000,20 @@ let response = try await client.speechToText(
 
 print("Transcription: \(response.text)")
 ```
+
+## Contributing
+
+This is a community project and we welcome contributions.
+Please check out
+[Issues tagged with `good first issue`][good-first-issues]
+if you are looking for a place to start!
+
+Please ensure your code passes the build and test suite
+before submitting a pull request.
+You can run the tests with `swift test`.
+
+[good-first-issues]: https://github.com/huggingface/swift-huggingface/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22good%20first%20issue%22
+
+## License
+
+[Apache 2](LICENSE).
