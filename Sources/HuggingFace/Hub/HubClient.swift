@@ -4,6 +4,30 @@ import Foundation
     import FoundationNetworking
 #endif
 
+/// Configuration for file downloads.
+///
+/// Controls retry behavior for failed downloads.
+public struct DownloadConfiguration: Sendable, Equatable {
+    /// Maximum number of retry attempts for failed downloads.
+    public var maxRetries: Int
+
+    /// Delay between retry attempts in seconds.
+    public var retryDelay: TimeInterval
+
+    /// Default configuration with 3 retries and 1 second delay.
+    public static let `default` = DownloadConfiguration(maxRetries: 3, retryDelay: 1.0)
+
+    /// Creates a download configuration.
+    ///
+    /// - Parameters:
+    ///   - maxRetries: Maximum number of retry attempts. Defaults to 3.
+    ///   - retryDelay: Delay between retries in seconds. Defaults to 1.0.
+    public init(maxRetries: Int = 3, retryDelay: TimeInterval = 1.0) {
+        self.maxRetries = maxRetries
+        self.retryDelay = retryDelay
+    }
+}
+
 /// A Hugging Face Hub API client.
 ///
 /// This client provides methods to interact with the Hugging Face Hub API,
@@ -64,6 +88,9 @@ public final class HubClient: Sendable {
     /// allowing cache reuse between Swift and Python Hugging Face clients.
     public let cache: HubCache?
 
+    /// Configuration for download behavior including retries.
+    public let downloadConfiguration: DownloadConfiguration
+
     /// The host URL for requests made by the client.
     public var host: URL {
         httpClient.host
@@ -95,17 +122,20 @@ public final class HubClient: Sendable {
     ///   - session: The URL session for network requests.
     ///   - userAgent: The value for the `User-Agent` header, if any.
     ///   - cache: The cache for downloaded files. Pass `nil` to disable caching.
+    ///   - downloadConfiguration: Configuration for download behavior. Defaults to `.default`.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         userAgent: String? = nil,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        downloadConfiguration: DownloadConfiguration = .default
     ) {
         self.init(
             session: session,
             host: Self.detectHost(),
             userAgent: userAgent,
             tokenProvider: .environment,
-            cache: cache
+            cache: cache,
+            downloadConfiguration: downloadConfiguration
         )
     }
 
@@ -118,19 +148,22 @@ public final class HubClient: Sendable {
     ///   - bearerToken: The Bearer token for authentication, if any. Defaults to `nil`.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///            Pass `nil` to disable caching.
+    ///   - downloadConfiguration: Configuration for download behavior. Defaults to `.default`.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         bearerToken: String? = nil,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        downloadConfiguration: DownloadConfiguration = .default
     ) {
         self.init(
             session: session,
             host: host,
             userAgent: userAgent,
             tokenProvider: bearerToken.map { .fixed(token: $0) } ?? .none,
-            cache: cache
+            cache: cache,
+            downloadConfiguration: downloadConfiguration
         )
     }
 
@@ -143,12 +176,14 @@ public final class HubClient: Sendable {
     ///   - tokenProvider: The token provider for authentication.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///            Pass `nil` to disable caching.
+    ///   - downloadConfiguration: Configuration for download behavior. Defaults to `.default`.
     public init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         tokenProvider: TokenProvider,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        downloadConfiguration: DownloadConfiguration = .default
     ) {
         self.httpClient = HTTPClient(
             host: host,
@@ -157,6 +192,7 @@ public final class HubClient: Sendable {
             session: session
         )
         self.cache = cache
+        self.downloadConfiguration = downloadConfiguration
     }
 
     // MARK: - Auto-detection

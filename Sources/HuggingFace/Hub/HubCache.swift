@@ -134,6 +134,89 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("snapshots")
     }
 
+    /// Returns the incomplete downloads directory for a repository.
+    public func incompleteDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
+        repoDirectory(repo: repo, kind: kind).appendingPathComponent(".incomplete")
+    }
+
+    // MARK: - Incomplete File Management
+
+    /// Returns the path for storing an incomplete download.
+    ///
+    /// Incomplete files are stored in `.incomplete/<etag>.<filename>` within the repo directory.
+    /// The etag ensures that if a file changes on the server, we don't resume with stale data.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - filename: The filename within the repository.
+    ///   - etag: The etag of the file being downloaded.
+    /// - Returns: The URL for storing the incomplete download.
+    public func incompleteFilePath(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) -> URL {
+        let normalizedEtag = normalizeEtag(etag)
+        let safeName = filename.replacingOccurrences(of: "/", with: "_")
+        return incompleteDirectory(repo: repo, kind: kind)
+            .appendingPathComponent("\(normalizedEtag).\(safeName)")
+    }
+
+    /// Returns the size of an incomplete download file.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - filename: The filename within the repository.
+    ///   - etag: The etag of the file being downloaded.
+    /// - Returns: The size in bytes of the incomplete file, or 0 if it doesn't exist.
+    public func incompleteFileSize(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) -> Int {
+        let path = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        guard FileManager.default.fileExists(atPath: path.path) else {
+            return 0
+        }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path.path),
+            let size = attributes[.size] as? Int
+        else {
+            return 0
+        }
+        return size
+    }
+
+    /// Prepares the incomplete file for writing.
+    ///
+    /// Creates the incomplete directory and an empty file if it doesn't exist.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - filename: The filename within the repository.
+    ///   - etag: The etag of the file being downloaded.
+    /// - Returns: The URL of the incomplete file, ready for writing.
+    public func prepareIncompleteFile(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) throws -> URL {
+        let incompletePath = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        let directory = incompletePath.deletingLastPathComponent()
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        if !FileManager.default.fileExists(atPath: incompletePath.path) {
+            FileManager.default.createFile(atPath: incompletePath.path, contents: nil)
+        }
+
+        return incompletePath
+    }
+
+    /// Removes an incomplete download file.
+    ///
+    /// Call this after a successful download to clean up the incomplete file.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - filename: The filename within the repository.
+    ///   - etag: The etag of the file being downloaded.
+    public func removeIncompleteFile(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) {
+        let path = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        try? FileManager.default.removeItem(at: path)
+    }
+
     // MARK: - Revision Resolution
 
     /// Resolves a reference (branch/tag) to its commit hash.
