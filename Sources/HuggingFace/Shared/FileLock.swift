@@ -66,21 +66,19 @@ public struct FileLock: Sendable {
     /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
     public func withLock<T>(_ body: () async throws -> T) async throws -> T {
-        let handle = try acquireLock()
+        let handle = try await acquireLockAsync()
         defer { releaseLock(handle) }
         return try await body()
     }
 
-    // MARK: - Private
+    // MARK: -
 
-    private func acquireLock() throws -> FileHandle {
-        // Ensure parent directory exists
+    private func prepareLockFile() throws -> FileHandle {
         try FileManager.default.createDirectory(
             at: lockPath.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
 
-        // Create or open the lock file
         if !FileManager.default.fileExists(atPath: lockPath.path) {
             FileManager.default.createFile(atPath: lockPath.path, contents: nil)
         }
@@ -89,13 +87,34 @@ public struct FileLock: Sendable {
             throw FileLockError.acquisitionFailed(lockPath)
         }
 
-        // Try to acquire lock with retries
+        return handle
+    }
+
+    private func tryLock(_ handle: FileHandle) -> Bool {
+        flock(handle.fileDescriptor, LOCK_EX | LOCK_NB) == 0
+    }
+
+    private func acquireLock() throws -> FileHandle {
+        let handle = try prepareLockFile()
+
         for attempt in 0 ... maxRetries {
-            if flock(handle.fileDescriptor, LOCK_EX | LOCK_NB) == 0 {
-                return handle
-            }
+            if tryLock(handle) { return handle }
             if attempt < maxRetries {
                 Thread.sleep(forTimeInterval: retryDelay)
+            }
+        }
+
+        try? handle.close()
+        throw FileLockError.acquisitionFailed(lockPath)
+    }
+
+    private func acquireLockAsync() async throws -> FileHandle {
+        let handle = try prepareLockFile()
+
+        for attempt in 0 ... maxRetries {
+            if tryLock(handle) { return handle }
+            if attempt < maxRetries {
+                try await Task.sleep(for: .seconds(retryDelay))
             }
         }
 
