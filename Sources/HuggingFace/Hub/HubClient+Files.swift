@@ -388,7 +388,17 @@ public extension HubClient {
         let httpResponse = response as? HTTPURLResponse
         let commitHash = httpResponse?.value(forHTTPHeaderField: "X-Repo-Commit")
 
-        // Store in cache
+        // Create parent directory if needed
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        // Copy to final destination first (before storing in cache removes the source)
+        try? FileManager.default.removeItem(at: destination)
+        try FileManager.default.copyItem(at: downloadedURL, to: destination)
+
+        // Store in cache (uses copyItem internally, so source is preserved)
         if let cache = cache, let commitHash = commitHash {
             try? cache.storeFile(
                 at: downloadedURL,
@@ -399,20 +409,11 @@ public extension HubClient {
                 etag: etag,
                 ref: revision != commitHash ? revision : nil
             )
-            // Clean up incomplete file
+            // Clean up incomplete file now that it's been copied to both destination and cache
             cache.removeIncompleteFile(repo: repo, kind: kind, filename: repoPath, etag: etag)
-        }
-
-        // Create parent directory if needed
-        try FileManager.default.createDirectory(
-            at: destination.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-
-        // Move/copy to final destination
-        try? FileManager.default.removeItem(at: destination)
-        if downloadedURL != destination {
-            try FileManager.default.moveItem(at: downloadedURL, to: destination)
+        } else {
+            // No cache, just remove the downloaded file (we already copied to destination)
+            try? FileManager.default.removeItem(at: downloadedURL)
         }
 
         return destination
