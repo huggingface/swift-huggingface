@@ -89,100 +89,100 @@ import Testing
             }
         }
     }
+
+    @Suite("Hugging Face OAuth Scope Tests", .serialized)
+    struct HuggingFaceScopeTests {
+        typealias Scope = HuggingFaceAuthenticationManager.Scope
+
+        @Test("OAuth Scope sets work correctly")
+        func testScopeSets() {
+            // Test basic scope set
+            let basicScopes = Set<Scope>.basic
+            #expect(basicScopes.contains(.openid))
+            #expect(basicScopes.contains(.profile))
+            #expect(basicScopes.contains(.email))
+
+            // Test read access scope set
+            let readScopes = Set<Scope>.readAccess
+            #expect(readScopes.contains(.readRepos))
+
+            // Test write access scope set
+            let writeScopes = Set<Scope>.writeAccess
+            #expect(writeScopes.contains(.writeRepos))
+
+            // Test full access scope set
+            let fullScopes = Set<Scope>.fullAccess
+            #expect(fullScopes.contains(.manageRepos))
+            #expect(fullScopes.contains(.inferenceAPI))
+
+            // Test inference only scope set
+            let inferenceScopes = Set<Scope>.inferenceOnly
+            #expect(inferenceScopes.contains(.openid))
+            #expect(inferenceScopes.contains(.inferenceAPI))
+
+            // Test discussions scope set
+            let discussionScopes = Set<Scope>.discussions
+            #expect(discussionScopes.contains(.writeDiscussions))
+        }
+
+        @Test("OAuth Scope raw values are correct")
+        func testScopeRawValues() {
+            #expect(Scope.openid.rawValue == "openid")
+            #expect(Scope.profile.rawValue == "profile")
+            #expect(Scope.email.rawValue == "email")
+            #expect(Scope.readBilling.rawValue == "read-billing")
+            #expect(Scope.readRepos.rawValue == "read-repos")
+            #expect(Scope.writeRepos.rawValue == "write-repos")
+            #expect(Scope.manageRepos.rawValue == "manage-repos")
+            #expect(Scope.inferenceAPI.rawValue == "inference-api")
+            #expect(Scope.writeDiscussions.rawValue == "write-discussions")
+
+            // Test custom scope
+            let customScope = Scope.other("custom-scope")
+            #expect(customScope.rawValue == "custom-scope")
+        }
+
+        @Test("OAuth Scope initialization from raw values")
+        func testScopeInitializationFromRawValue() {
+            #expect(Scope(rawValue: "openid") == .openid)
+            #expect(Scope(rawValue: "profile") == .profile)
+            #expect(Scope(rawValue: "email") == .email)
+            #expect(Scope(rawValue: "read-billing") == .readBilling)
+            #expect(Scope(rawValue: "read-repos") == .readRepos)
+            #expect(Scope(rawValue: "write-repos") == .writeRepos)
+            #expect(Scope(rawValue: "manage-repos") == .manageRepos)
+            #expect(Scope(rawValue: "inference-api") == .inferenceAPI)
+            #expect(Scope(rawValue: "write-discussions") == .writeDiscussions)
+
+            // Test custom scope
+            let customScope = Scope(rawValue: "custom-scope")
+            #expect(customScope == .other("custom-scope"))
+        }
+
+        @Test("OAuth Scope descriptions are correct")
+        func testScopeDescriptions() {
+            #expect(Scope.openid.description.contains("ID token"))
+            #expect(Scope.profile.description.contains("profile information"))
+            #expect(Scope.email.description.contains("email address"))
+            #expect(Scope.readBilling.description.contains("payment method"))
+            #expect(Scope.readRepos.description.contains("read access"))
+            #expect(Scope.writeRepos.description.contains("write/read access"))
+            #expect(Scope.manageRepos.description.contains("full access"))
+            #expect(Scope.inferenceAPI.description.contains("Inference API"))
+            #expect(Scope.writeDiscussions.description.contains("discussions"))
+
+            // Test custom scope description
+            let customScope = Scope.other("custom-scope")
+            #expect(customScope.description == "custom-scope")
+        }
+
+        @Test("OAuth Scope string literal support")
+        func testScopeStringLiteral() {
+            let scope: Scope = "openid"
+            #expect(scope == .openid)
+
+            let customScope: Scope = "custom-scope"
+            #expect(customScope == .other("custom-scope"))
+        }
+    }
 #endif  // swift(>=6.1)
-
-@Suite("Hugging Face OAuth Scope Tests", .serialized)
-struct HuggingFaceScopeTests {
-    typealias Scope = HuggingFaceAuthenticationManager.Scope
-
-    @Test("OAuth Scope sets work correctly")
-    func testScopeSets() {
-        // Test basic scope set
-        let basicScopes = Set<Scope>.basic
-        #expect(basicScopes.contains(.openid))
-        #expect(basicScopes.contains(.profile))
-        #expect(basicScopes.contains(.email))
-
-        // Test read access scope set
-        let readScopes = Set<Scope>.readAccess
-        #expect(readScopes.contains(.readRepos))
-
-        // Test write access scope set
-        let writeScopes = Set<Scope>.writeAccess
-        #expect(writeScopes.contains(.writeRepos))
-
-        // Test full access scope set
-        let fullScopes = Set<Scope>.fullAccess
-        #expect(fullScopes.contains(.manageRepos))
-        #expect(fullScopes.contains(.inferenceAPI))
-
-        // Test inference only scope set
-        let inferenceScopes = Set<Scope>.inferenceOnly
-        #expect(inferenceScopes.contains(.openid))
-        #expect(inferenceScopes.contains(.inferenceAPI))
-
-        // Test discussions scope set
-        let discussionScopes = Set<Scope>.discussions
-        #expect(discussionScopes.contains(.writeDiscussions))
-    }
-
-    @Test("OAuth Scope raw values are correct")
-    func testScopeRawValues() {
-        #expect(Scope.openid.rawValue == "openid")
-        #expect(Scope.profile.rawValue == "profile")
-        #expect(Scope.email.rawValue == "email")
-        #expect(Scope.readBilling.rawValue == "read-billing")
-        #expect(Scope.readRepos.rawValue == "read-repos")
-        #expect(Scope.writeRepos.rawValue == "write-repos")
-        #expect(Scope.manageRepos.rawValue == "manage-repos")
-        #expect(Scope.inferenceAPI.rawValue == "inference-api")
-        #expect(Scope.writeDiscussions.rawValue == "write-discussions")
-
-        // Test custom scope
-        let customScope = Scope.other("custom-scope")
-        #expect(customScope.rawValue == "custom-scope")
-    }
-
-    @Test("OAuth Scope initialization from raw values")
-    func testScopeInitializationFromRawValue() {
-        #expect(Scope(rawValue: "openid") == .openid)
-        #expect(Scope(rawValue: "profile") == .profile)
-        #expect(Scope(rawValue: "email") == .email)
-        #expect(Scope(rawValue: "read-billing") == .readBilling)
-        #expect(Scope(rawValue: "read-repos") == .readRepos)
-        #expect(Scope(rawValue: "write-repos") == .writeRepos)
-        #expect(Scope(rawValue: "manage-repos") == .manageRepos)
-        #expect(Scope(rawValue: "inference-api") == .inferenceAPI)
-        #expect(Scope(rawValue: "write-discussions") == .writeDiscussions)
-
-        // Test custom scope
-        let customScope = Scope(rawValue: "custom-scope")
-        #expect(customScope == .other("custom-scope"))
-    }
-
-    @Test("OAuth Scope descriptions are correct")
-    func testScopeDescriptions() {
-        #expect(Scope.openid.description.contains("ID token"))
-        #expect(Scope.profile.description.contains("profile information"))
-        #expect(Scope.email.description.contains("email address"))
-        #expect(Scope.readBilling.description.contains("payment method"))
-        #expect(Scope.readRepos.description.contains("read access"))
-        #expect(Scope.writeRepos.description.contains("write/read access"))
-        #expect(Scope.manageRepos.description.contains("full access"))
-        #expect(Scope.inferenceAPI.description.contains("Inference API"))
-        #expect(Scope.writeDiscussions.description.contains("discussions"))
-
-        // Test custom scope description
-        let customScope = Scope.other("custom-scope")
-        #expect(customScope.description == "custom-scope")
-    }
-
-    @Test("OAuth Scope string literal support")
-    func testScopeStringLiteral() {
-        let scope: Scope = "openid"
-        #expect(scope == .openid)
-
-        let customScope: Scope = "custom-scope"
-        #expect(customScope == .other("custom-scope"))
-    }
-}
