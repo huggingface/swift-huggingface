@@ -23,12 +23,10 @@ import Foundation
 ///
 /// ## Fixed Path
 ///
-/// For a specific cache directory, use the `.fixed` case or a URL literal:
+/// For a specific cache directory:
 ///
 /// ```swift
-/// let cache = HubCache(location: .fixed(URL(fileURLWithPath: "/custom/cache")))
-/// // Or using URL directly:
-/// let cache = HubCache(location: URL(fileURLWithPath: "/custom/cache"))
+/// let cache = HubCache(location: .fixed(directory: URL(fileURLWithPath: "/custom/cache")))
 /// ```
 ///
 /// ## Disable Caching
@@ -58,7 +56,7 @@ import Foundation
 ///
 /// ```swift
 /// let provider: CacheLocationProvider = [
-///     .fixed(URL(fileURLWithPath: "/preferred/cache")),
+///     .fixed(directory: URL(fileURLWithPath: "/preferred/cache")),
 ///     .environment
 /// ]
 /// ```
@@ -68,7 +66,7 @@ public indirect enum CacheLocationProvider: Sendable {
     /// Use this case when you want to specify an exact cache directory:
     ///
     /// ```swift
-    /// let cache = HubCache(location: .fixed(URL(fileURLWithPath: "/path/to/cache")))
+    /// let cache = HubCache(location: .fixed(directory: URL(fileURLWithPath: "/path/to/cache")))
     /// ```
     ///
     /// - Parameter directory: The URL of the cache directory.
@@ -93,7 +91,7 @@ public indirect enum CacheLocationProvider: Sendable {
     ///
     /// ```swift
     /// let provider: CacheLocationProvider = [
-    ///     .fixed(URL(fileURLWithPath: "/preferred/cache")),
+    ///     .fixed(directory: URL(fileURLWithPath: "/preferred/cache")),
     ///     .environment
     /// ]
     /// ```
@@ -207,15 +205,7 @@ extension CacheLocationProvider: ExpressibleByArrayLiteral {
 
 extension CacheLocationProvider {
     /// Creates a fixed cache location provider from a URL.
-    ///
-    /// This allows using URLs directly where a `CacheLocationProvider` is expected:
-    ///
-    /// ```swift
-    /// let cache = HubCache(location: .init(URL(fileURLWithPath: "/path/to/cache")))
-    /// ```
-    ///
-    /// - Parameter url: The URL of the cache directory.
-    public init(_ url: URL) {
+    init(_ url: URL) {
         self = .fixed(directory: url)
     }
 
