@@ -46,8 +46,13 @@ public extension HubClient {
         branch: String = "main",
         message: String? = nil
     ) async throws -> (path: String, commit: String?) {
-        let urlPath = "/api/\(kind.pluralized)/\(repo)/upload/\(branch)"
-        var request = try await httpClient.createRequest(.post, urlPath)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: kind.pluralized)
+            .appending(path: repo.description)
+            .appending(path: "upload")
+            .appending(component: branch)
+        var request = try await httpClient.createRequest(.post, url: url)
 
         let boundary = "----hf-\(UUID().uuidString)"
         request.setValue(
@@ -195,8 +200,12 @@ public extension HubClient {
         }
 
         let endpoint = useRaw ? "raw" : "resolve"
-        let urlPath = "/\(repo)/\(endpoint)/\(revision)/\(repoPath)"
-        var request = try await httpClient.createRequest(.get, urlPath)
+        let url = httpClient.host
+            .appending(path: repo.description)
+            .appending(path: endpoint)
+            .appending(component: revision)
+            .appending(path: repoPath)
+        var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
 
         let (data, response) = try await session.data(for: request)
@@ -265,8 +274,12 @@ public extension HubClient {
         }
 
         let endpoint = useRaw ? "raw" : "resolve"
-        let urlPath = "/\(repo)/\(endpoint)/\(revision)/\(repoPath)"
-        var request = try await httpClient.createRequest(.get, urlPath)
+        let url = httpClient.host
+            .appending(path: repo.description)
+            .appending(path: endpoint)
+            .appending(component: revision)
+            .appending(path: repoPath)
+        var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
 
         let (tempURL, response) = try await session.download(
@@ -424,7 +437,12 @@ public extension HubClient {
         branch: String = "main",
         message: String
     ) async throws {
-        let urlPath = "/api/\(kind.pluralized)/\(repo)/commit/\(branch)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: kind.pluralized)
+            .appending(path: repo.description)
+            .appending(path: "commit")
+            .appending(component: branch)
         let operations = repoPaths.map { path in
             Value.object(["op": .string("delete"), "path": .string(path)])
         }
@@ -433,7 +451,7 @@ public extension HubClient {
             "operations": .array(operations),
         ]
 
-        let _: Bool = try await httpClient.fetch(.post, urlPath, params: params)
+        let _: Bool = try await httpClient.fetch(.post, url: url, params: params)
     }
 }
 
@@ -474,10 +492,15 @@ public extension HubClient {
         revision: String = "main",
         recursive: Bool = true
     ) async throws -> [Git.TreeEntry] {
-        let urlPath = "/api/\(kind.pluralized)/\(repo)/tree/\(revision)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: kind.pluralized)
+            .appending(path: repo.description)
+            .appending(path: "tree")
+            .appending(component: revision)
         let params: [String: Value]? = recursive ? ["recursive": .bool(true)] : nil
 
-        return try await httpClient.fetch(.get, urlPath, params: params)
+        return try await httpClient.fetch(.get, url: url, params: params)
     }
 
     /// Get file information
@@ -493,8 +516,12 @@ public extension HubClient {
         kind _: Repo.Kind = .model,
         revision: String = "main"
     ) async throws -> File {
-        let urlPath = "/\(repo)/resolve/\(revision)/\(repoPath)"
-        var request = try await httpClient.createRequest(.head, urlPath)
+        let url = httpClient.host
+            .appending(path: repo.description)
+            .appending(path: "resolve")
+            .appending(component: revision)
+            .appending(path: repoPath)
+        var request = try await httpClient.createRequest(.head, url: url)
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
 
         do {

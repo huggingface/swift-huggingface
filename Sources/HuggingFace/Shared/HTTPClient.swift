@@ -72,6 +72,20 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> T {
         let request = try await createRequest(method, path, params: params, headers: headers)
+        return try await performFetch(request: request)
+    }
+
+    func fetch<T: Decodable>(
+        _ method: HTTPMethod,
+        url: URL,
+        params: [String: Value]? = nil,
+        headers: [String: String]? = nil
+    ) async throws -> T {
+        let request = try await createRequest(method, url: url, params: params, headers: headers)
+        return try await performFetch(request: request)
+    }
+
+    private func performFetch<T: Decodable>(request: URLRequest) async throws -> T {
         let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
@@ -192,6 +206,28 @@ final class HTTPClient: @unchecked Sendable {
         var urlComponents = URLComponents(url: host, resolvingAgainstBaseURL: true)
         urlComponents?.path = path
 
+        return try await createRequest(method, urlComponents: urlComponents, params: params, headers: headers)
+    }
+
+    func createRequest(
+        _ method: HTTPMethod,
+        url: URL,
+        params: [String: Value]? = nil,
+        headers: [String: String]? = nil
+    ) async throws -> URLRequest {
+        let urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: true)
+
+        return try await createRequest(method, urlComponents: urlComponents, params: params, headers: headers)
+    }
+
+    private func createRequest(
+        _ method: HTTPMethod,
+        urlComponents: URLComponents?,
+        params: [String: Value]? = nil,
+        headers: [String: String]? = nil
+    ) async throws -> URLRequest {
+        var urlComponents = urlComponents
+
         var httpBody: Data? = nil
         switch method {
         case .get, .head:
@@ -218,7 +254,7 @@ final class HTTPClient: @unchecked Sendable {
 
         guard let url = urlComponents?.url else {
             throw HTTPClientError.requestError(
-                #"Unable to construct URL with host "\#(host)" and path "\#(path)""#
+                #"Unable to construct URL from components \#(String(describing: urlComponents))"#
             )
         }
         var request: URLRequest = URLRequest(url: url)

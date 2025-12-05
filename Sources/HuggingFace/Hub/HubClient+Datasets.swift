@@ -53,17 +53,22 @@ extension HubClient {
         revision: String? = nil,
         full: Bool? = nil
     ) async throws -> Dataset {
-        let path: String
+        var url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "datasets")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
         if let revision {
-            path = "/api/datasets/\(id.namespace)/\(id.name)/revision/\(revision)"
-        } else {
-            path = "/api/datasets/\(id.namespace)/\(id.name)"
+            url =
+                url
+                .appending(path: "revision")
+                .appending(component: revision)
         }
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
 
-        return try await httpClient.fetch(.get, path, params: params)
+        return try await httpClient.fetch(.get, url: url, params: params)
     }
 
     /// Gets all available dataset tags hosted in the Hub.
@@ -228,14 +233,20 @@ extension HubClient {
         tag: String,
         message: String? = nil
     ) async throws -> Bool {
-        let path = "/api/datasets/\(id.namespace)/\(id.name)/tag/\(revision)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "datasets")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "tag")
+            .appending(component: revision)
 
         let params: [String: Value] = [
             "tag": .string(tag),
             "message": message.map { .string($0) } ?? .null,
         ]
 
-        let result: Bool = try await httpClient.fetch(.post, path, params: params)
+        let result: Bool = try await httpClient.fetch(.post, url: url, params: params)
         return result
     }
 
@@ -252,14 +263,20 @@ extension HubClient {
         revision: String,
         message: String
     ) async throws -> String {
-        let path = "/api/datasets/\(id.namespace)/\(id.name)/super-squash/\(revision)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "datasets")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "super-squash")
+            .appending(component: revision)
 
         let params: [String: Value] = [
             "message": .string(message)
         ]
 
         struct Response: Decodable { let commitID: String }
-        let resp: Response = try await httpClient.fetch(.post, path, params: params)
+        let resp: Response = try await httpClient.fetch(.post, url: url, params: params)
         return resp.commitID
     }
 }
