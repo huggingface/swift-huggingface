@@ -46,13 +46,18 @@ extension HubClient {
         _ id: Repo.ID,
         settings: Repo.Settings
     ) async throws -> Bool {
-        let path = "/api/\(kind.rawValue)s/\(id.namespace)/\(id.name)/settings"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: kind.pluralized)
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "settings")
 
         let encoder = JSONEncoder()
         let data = try encoder.encode(settings)
         let params = try JSONDecoder().decode([String: Value].self, from: data)
 
-        return try await httpClient.fetch(.put, path, params: params)
+        return try await httpClient.fetch(.put, url: url, params: params)
     }
 
     /// Moves a repository to a new location.

@@ -50,17 +50,22 @@ extension HubClient {
         revision: String? = nil,
         full: Bool? = nil
     ) async throws -> Space {
-        let path: String
+        var url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
         if let revision {
-            path = "/api/spaces/\(id.namespace)/\(id.name)/revision/\(revision)"
-        } else {
-            path = "/api/spaces/\(id.namespace)/\(id.name)"
+            url =
+                url
+                .appending(path: "revision")
+                .appending(component: revision)
         }
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
 
-        return try await httpClient.fetch(.get, path, params: params)
+        return try await httpClient.fetch(.get, url: url, params: params)
     }
 
     /// Gets runtime information for a Space.
@@ -69,8 +74,13 @@ extension HubClient {
     /// - Returns: Runtime information for the space.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func spaceRuntime(_ id: Repo.ID) async throws -> Space.Runtime {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/runtime"
-        return try await httpClient.fetch(.get, path)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "runtime")
+        return try await httpClient.fetch(.get, url: url)
     }
 
     /// Puts a Space to sleep.
@@ -79,8 +89,13 @@ extension HubClient {
     /// - Returns: `true` if the operation was successful.
     /// - Throws: An error if the request fails.
     public func sleepSpace(_ id: Repo.ID) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/sleeptime"
-        return try await httpClient.fetch(.post, path)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "sleeptime")
+        return try await httpClient.fetch(.post, url: url)
     }
 
     /// Restarts a Space.
@@ -91,12 +106,17 @@ extension HubClient {
     /// - Returns: `true` if the operation was successful.
     /// - Throws: An error if the request fails.
     public func restartSpace(_ id: Repo.ID, factory: Bool = false) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/restart"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "restart")
         var params: [String: Value] = [:]
         if factory {
             params["factory"] = .bool(true)
         }
-        return try await httpClient.fetch(.post, path, params: params)
+        return try await httpClient.fetch(.post, url: url, params: params)
     }
 
     // MARK: - Space Streaming
@@ -111,8 +131,14 @@ extension HubClient {
         _ id: Repo.ID,
         logType: String
     ) -> AsyncThrowingStream<Space.LogEntry, Error> {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/logs/\(logType)"
-        return httpClient.fetchStream(.get, path)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "logs")
+            .appending(path: logType)
+        return httpClient.fetchStream(.get, url: url)
     }
 
     /// Streams live metrics for a Space using Server-Sent Events.
@@ -120,8 +146,13 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: An async stream of metrics.
     public func streamSpaceMetrics(_ id: Repo.ID) -> AsyncThrowingStream<Space.Metrics, Error> {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/metrics"
-        return httpClient.fetchStream(.get, path)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "metrics")
+        return httpClient.fetchStream(.get, url: url)
     }
 
     /// Streams events for a Space using Server-Sent Events.
@@ -134,12 +165,17 @@ extension HubClient {
         _ id: Repo.ID,
         sessionUUID: String? = nil
     ) -> AsyncThrowingStream<Space.Event, Error> {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/events"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "events")
         var params: [String: Value] = [:]
         if let sessionUUID {
             params["session_uuid"] = .string(sessionUUID)
         }
-        return httpClient.fetchStream(.get, path, params: params)
+        return httpClient.fetchStream(.get, url: url, params: params)
     }
 
     // MARK: - Space Secrets Management
@@ -159,7 +195,12 @@ extension HubClient {
         description: String? = nil,
         value: String? = nil
     ) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/secrets"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "secrets")
 
         let params: [String: Value] = [
             "key": .string(key),
@@ -167,7 +208,7 @@ extension HubClient {
             "value": value.map { .string($0) } ?? .string(""),
         ]
 
-        let result: Bool = try await httpClient.fetch(.post, path, params: params)
+        let result: Bool = try await httpClient.fetch(.post, url: url, params: params)
         return result
     }
 
@@ -182,13 +223,18 @@ extension HubClient {
         _ id: Repo.ID,
         key: String
     ) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/secrets"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "secrets")
 
         let params: [String: Value] = [
             "key": .string(key)
         ]
 
-        let result: Bool = try await httpClient.fetch(.delete, path, params: params)
+        let result: Bool = try await httpClient.fetch(.delete, url: url, params: params)
         return result
     }
 
@@ -209,7 +255,12 @@ extension HubClient {
         description: String? = nil,
         value: String? = nil
     ) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/variables"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "variables")
 
         let params: [String: Value] = [
             "key": .string(key),
@@ -217,7 +268,7 @@ extension HubClient {
             "value": value.map { .string($0) } ?? .string(""),
         ]
 
-        let result: Bool = try await httpClient.fetch(.post, path, params: params)
+        let result: Bool = try await httpClient.fetch(.post, url: url, params: params)
         return result
     }
 
@@ -232,13 +283,18 @@ extension HubClient {
         _ id: Repo.ID,
         key: String
     ) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/variables"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "variables")
 
         let params: [String: Value] = [
             "key": .string(key)
         ]
 
-        let result: Bool = try await httpClient.fetch(.delete, path, params: params)
+        let result: Bool = try await httpClient.fetch(.delete, url: url, params: params)
         return result
     }
 
@@ -255,13 +311,18 @@ extension HubClient {
         _ id: Repo.ID,
         resourceGroupId: String?
     ) async throws -> ResourceGroup {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/resource-group"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "resource-group")
 
         let params: [String: Value] = [
             "resourceGroupId": resourceGroupId.map { .string($0) } ?? .null
         ]
 
-        return try await httpClient.fetch(.post, path, params: params)
+        return try await httpClient.fetch(.post, url: url, params: params)
     }
 
     /// Scans a space repository.
@@ -270,8 +331,13 @@ extension HubClient {
     /// - Returns: `true` if the scan was initiated successfully.
     /// - Throws: An error if the request fails.
     public func scanSpace(_ id: Repo.ID) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/scan"
-        let result: Bool = try await httpClient.fetch(.post, path)
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "scan")
+        let result: Bool = try await httpClient.fetch(.post, url: url)
         return result
     }
 
@@ -290,14 +356,20 @@ extension HubClient {
         tag: String,
         message: String? = nil
     ) async throws -> Bool {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/tag/\(revision)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "tag")
+            .appending(component: revision)
 
         let params: [String: Value] = [
             "tag": .string(tag),
             "message": message.map { .string($0) } ?? .null,
         ]
 
-        let result: Bool = try await httpClient.fetch(.post, path, params: params)
+        let result: Bool = try await httpClient.fetch(.post, url: url, params: params)
         return result
     }
 
@@ -314,14 +386,20 @@ extension HubClient {
         revision: String,
         message: String
     ) async throws -> String {
-        let path = "/api/spaces/\(id.namespace)/\(id.name)/super-squash/\(revision)"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "spaces")
+            .appending(path: id.namespace)
+            .appending(path: id.name)
+            .appending(path: "super-squash")
+            .appending(component: revision)
 
         let params: [String: Value] = [
             "message": .string(message)
         ]
 
         struct Response: Decodable { let commitID: String }
-        let resp: Response = try await httpClient.fetch(.post, path, params: params)
+        let resp: Response = try await httpClient.fetch(.post, url: url, params: params)
         return resp.commitID
     }
 }
