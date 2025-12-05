@@ -34,12 +34,15 @@ import Foundation
 ///
 /// ## OAuth Authentication
 ///
-/// For OAuth-based authentication, use the `.oauth` case with an authentication manager:
+/// For OAuth-based authentication (requires macOS 14+, iOS 17+), use the `.oauth(manager:)` factory method:
 ///
 /// ```swift
-/// let authManager = HuggingFaceAuthenticationManager(
+/// let authManager = try HuggingFaceAuthenticationManager(
 ///     clientID: "your-client-id",
-///     redirectURL: URL(string: "myapp://oauth")!
+///     redirectURL: URL(string: "myapp://oauth")!,
+///     scope: .basic,
+///     keychainService: "com.example.app",
+///     keychainAccount: "huggingface"
 /// )
 /// let client = HubClient(tokenProvider: .oauth(manager: authManager))
 /// ```
@@ -117,13 +120,13 @@ public indirect enum TokenProvider: Sendable {
     /// the same token detection logic as the Hugging Face CLI.
     case environment
 
-    /// An OAuth token provider that uses HuggingFaceAuthenticationManager.
+    /// An OAuth token provider that retrieves tokens asynchronously.
     ///
-    /// Use this case for OAuth-based authentication flows. The authentication
-    /// manager handles the complete OAuth flow including token refresh.
+    /// Use this case for OAuth-based authentication flows. Create instances using
+    /// the `TokenProvider.oauth(manager:)` factory method when using `HuggingFaceAuthenticationManager`.
     ///
-    /// - Parameter manager: The OAuth authentication manager that handles token retrieval and refresh.
-    case oauth(manager: HuggingFaceAuthenticationManager)
+    /// - Parameter getToken: A closure that retrieves a valid OAuth token.
+    case oauth(getToken: @Sendable () async throws -> String)
 
     /// A composite token provider that tries multiple providers in order.
     ///
@@ -185,7 +188,7 @@ public indirect enum TokenProvider: Sendable {
         case .environment:
             return try getTokenFromEnvironment()
 
-        case .oauth(let manager):
+        case .oauth:
             fatalError(
                 "OAuth token provider requires async context. Use getToken() in an async context or switch to a synchronous provider."
             )
@@ -208,6 +211,39 @@ public indirect enum TokenProvider: Sendable {
         }
     }
 }
+
+// MARK: - OAuth Factory
+
+#if canImport(AuthenticationServices)
+    import Observation
+
+    extension TokenProvider {
+        /// Creates an OAuth token provider using HuggingFaceAuthenticationManager.
+        ///
+        /// Use this factory method for OAuth-based authentication flows. The authentication
+        /// manager handles the complete OAuth flow including token refresh.
+        ///
+        /// ```swift
+        /// let authManager = try HuggingFaceAuthenticationManager(
+        ///     clientID: "your-client-id",
+        ///     redirectURL: URL(string: "myapp://oauth")!,
+        ///     scope: .basic,
+        ///     keychainService: "com.example.app",
+        ///     keychainAccount: "huggingface"
+        /// )
+        /// let client = HubClient(tokenProvider: .oauth(manager: authManager))
+        /// ```
+        ///
+        /// - Parameter manager: The OAuth authentication manager that handles token retrieval and refresh.
+        /// - Returns: A token provider that retrieves tokens from the authentication manager.
+        @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+        public static func oauth(manager: HuggingFaceAuthenticationManager) -> TokenProvider {
+            return .oauth(getToken: { @MainActor in
+                try await manager.getValidToken()
+            })
+        }
+    }
+#endif
 
 // MARK: - ExpressibleByStringLiteral & ExpressibleByStringInterpolation
 

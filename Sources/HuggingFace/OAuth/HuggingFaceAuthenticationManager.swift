@@ -5,6 +5,7 @@
     /// A manager for handling Hugging Face OAuth authentication.
     ///
     /// - SeeAlso: [Hugging Face OAuth Documentation](https://huggingface.co/docs/api-inference/authentication)
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     @Observable
     @MainActor
     public final class HuggingFaceAuthenticationManager: Sendable {
@@ -184,6 +185,7 @@
 
     // MARK: -
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension HuggingFaceAuthenticationManager {
         /// OAuth scopes supported by HuggingFace
         public enum Scope: Hashable, Sendable {
@@ -247,6 +249,7 @@
         }
     }
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension HuggingFaceAuthenticationManager.Scope: RawRepresentable {
         public init(rawValue: String) {
             switch rawValue {
@@ -299,6 +302,7 @@
         }
     }
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension HuggingFaceAuthenticationManager.Scope: Codable {
         public init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
@@ -312,12 +316,14 @@
         }
     }
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension HuggingFaceAuthenticationManager.Scope: ExpressibleByStringLiteral {
         public init(stringLiteral value: String) {
             self = Self(rawValue: value)
         }
     }
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension Set<HuggingFaceAuthenticationManager.Scope> {
         public static var basic: Self { [.openid, .profile, .email] }
         public static var readAccess: Self { [.openid, .profile, .email, .readRepos] }
@@ -329,6 +335,7 @@
 
     // MARK: -
 
+    @available(macOS 14.0, macCatalyst 17.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
     extension HuggingFaceAuthenticationManager {
         /// A mechanism for storing and retrieving OAuth tokens.
         public struct TokenStorage: Sendable {

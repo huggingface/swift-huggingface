@@ -6,11 +6,11 @@ import PackageDescription
 let package = Package(
     name: "swift-huggingface",
     platforms: [
-        .macOS(.v14),
-        .macCatalyst(.v14),
+        .macOS(.v13),
+        .macCatalyst(.v16),
         .iOS(.v16),
-        .watchOS(.v10),
-        .tvOS(.v17),
+        .watchOS(.v9),
+        .tvOS(.v16),
         .visionOS(.v1),
     ],
     products: [
