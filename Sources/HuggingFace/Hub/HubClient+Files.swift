@@ -319,7 +319,9 @@ public extension HubClient {
             throw HTTPClientError.requestError("File not found: \(repoPath)")
         }
 
-        let etag = fileInfo.etag ?? UUID().uuidString
+        guard let etag = fileInfo.etag else {
+            throw HTTPClientError.requestError("File metadata missing etag - cannot track download")
+        }
         let expectedSize = fileInfo.size ?? 0
 
         // Check for incomplete download and get resume offset
