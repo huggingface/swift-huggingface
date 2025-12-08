@@ -1,5 +1,8 @@
 import Foundation
-import UniformTypeIdentifiers
+
+#if canImport(UniformTypeIdentifiers)
+    import UniformTypeIdentifiers
+#endif
 
 #if canImport(FoundationNetworking)
     import FoundationNetworking
@@ -599,9 +602,14 @@ private struct UploadResponse: Codable {
 
 private extension URL {
     var mimeType: String? {
-        guard let uti = UTType(filenameExtension: pathExtension) else {
+        #if canImport(UniformTypeIdentifiers)
+            guard let uti = UTType(filenameExtension: pathExtension) else {
+                return nil
+            }
+            return uti.preferredMIMEType
+        #else
+            // TODO: see how we can get the equivalent of UTType/mimetype on linux
             return nil
-        }
-        return uti.preferredMIMEType
+        #endif
     }
 }

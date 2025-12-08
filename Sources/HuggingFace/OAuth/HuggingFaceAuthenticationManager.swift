@@ -1,3 +1,5 @@
+import Foundation
+
 #if canImport(AuthenticationServices)
     import AuthenticationServices
     import Observation

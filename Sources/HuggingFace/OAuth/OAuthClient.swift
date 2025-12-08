@@ -1,5 +1,5 @@
-#if canImport(CryptoKit)
-    import CryptoKit
+#if canImport(Crypto)
+    import Crypto
     import Foundation
 
     #if canImport(FoundationNetworking)
@@ -365,4 +365,4 @@
                 .replacingOccurrences(of: "=", with: "")
         }
     }
-#endif  // canImport(CryptoKit)
+#endif  // canImport(Crypto)
