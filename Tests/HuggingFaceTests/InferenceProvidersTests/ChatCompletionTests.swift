@@ -1,5 +1,8 @@
 import Foundation
 import Testing
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 
 @testable import HuggingFace
 

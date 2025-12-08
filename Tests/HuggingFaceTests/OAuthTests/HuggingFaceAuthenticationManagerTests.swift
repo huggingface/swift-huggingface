@@ -3,7 +3,7 @@ import Testing
 
 @testable import HuggingFace
 
-#if swift(>=6.1)
+#if swift(>=6.1) && canImport(AuthenticationServices)
     @Suite("HuggingFace Authentication Manager Tests")
     struct HuggingFaceAuthenticationManagerTests {
         @Test("HuggingFaceAuthenticationManager can be initialized with valid parameters")
