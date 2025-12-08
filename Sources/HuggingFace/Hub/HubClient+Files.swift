@@ -334,7 +334,7 @@ public extension HubClient {
                     || (expectedSize == 0 && incompleteSize > 0)
                 {
                     resumeOffset = Int64(incompleteSize)
-                    incompletePath = cache.incompleteFilePath(
+                    incompletePath = try? cache.incompleteFilePath(
                         repo: repo,
                         kind: kind,
                         filename: repoPath,

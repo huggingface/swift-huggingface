@@ -152,8 +152,9 @@ public struct HubCache: Sendable {
     ///   - filename: The filename within the repository.
     ///   - etag: The etag of the file being downloaded.
     /// - Returns: The URL for storing the incomplete download.
-    public func incompleteFilePath(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) -> URL {
+    public func incompleteFilePath(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) throws -> URL {
         let normalizedEtag = normalizeEtag(etag)
+        try validatePathComponent(normalizedEtag)
         let safeName = filename.replacingOccurrences(of: "/", with: "_")
         return incompleteDirectory(repo: repo, kind: kind)
             .appendingPathComponent("\(normalizedEtag).\(safeName)")
@@ -168,7 +169,16 @@ public struct HubCache: Sendable {
     ///   - etag: The etag of the file being downloaded.
     /// - Returns: The size in bytes of the incomplete file, or `nil` if it doesn't exist, etag is invalid, or size cannot be determined.
     public func incompleteFileSize(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) -> Int? {
-        let path = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        guard
+            let path = try? incompleteFilePath(
+                repo: repo,
+                kind: kind,
+                filename: filename,
+                etag: etag
+            )
+        else {
+            return nil
+        }
         guard FileManager.default.fileExists(atPath: path.path) else {
             return nil
         }
@@ -191,7 +201,12 @@ public struct HubCache: Sendable {
     ///   - etag: The etag of the file being downloaded.
     /// - Returns: The URL of the incomplete file, ready for writing.
     public func prepareIncompleteFile(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) throws -> URL {
-        let incompletePath = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        let incompletePath = try incompleteFilePath(
+            repo: repo,
+            kind: kind,
+            filename: filename,
+            etag: etag
+        )
         let directory = incompletePath.deletingLastPathComponent()
 
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -213,7 +228,16 @@ public struct HubCache: Sendable {
     ///   - filename: The filename within the repository.
     ///   - etag: The etag of the file being downloaded.
     public func removeIncompleteFile(repo: Repo.ID, kind: Repo.Kind, filename: String, etag: String) {
-        let path = incompleteFilePath(repo: repo, kind: kind, filename: filename, etag: etag)
+        guard
+            let path = try? incompleteFilePath(
+                repo: repo,
+                kind: kind,
+                filename: filename,
+                etag: etag
+            )
+        else {
+            return
+        }
         try? FileManager.default.removeItem(at: path)
     }
 
