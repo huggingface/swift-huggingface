@@ -124,9 +124,9 @@ final class HTTPClient: @unchecked Sendable {
             let task = Task {
                 do {
                     let request = try await createRequest(method, path, params: params, headers: headers)
-                    let (bytes, response) = try await session.bytes(for: request)
+                    /*let (bytes, response) = try await session.bytes(for: request)
                     let httpResponse = try validateResponse(response)
-
+                    
                     guard (200 ..< 300).contains(httpResponse.statusCode) else {
                         var errorData = Data()
                         for try await byte in bytes {
@@ -135,9 +135,19 @@ final class HTTPClient: @unchecked Sendable {
                         // validateResponse will throw the appropriate error
                         _ = try validateResponse(response, data: errorData)
                         return  // This line will never be reached, but satisfies the compiler
-                    }
+                    }*/
 
-                    for try await event in bytes.events {
+                    for try await event in streamEvents(
+                        request: request,
+                        configuration: session.configuration,
+                        onResponse: { [weak self] response in
+                            guard let self else {
+                                return
+                            }
+
+                            _ = try validateResponse(response)
+                        }
+                    ) {
                         // Check for [DONE] signal
                         if event.data.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
                             continuation.finish()
