@@ -224,14 +224,9 @@ public extension HubClient {
 
     /// Download file to a destination URL with automatic resume support.
     ///
-    /// This method supports resumable downloads. If a download is interrupted,
-    /// subsequent calls will automatically resume from where they left off.
+    /// This method supports resumable downloads using HTTP Range headers. If a download
+    /// is interrupted, subsequent calls will automatically resume from where they left off.
     /// Incomplete downloads are stored in the cache directory and matched by etag.
-    ///
-    /// When `inBackground` is true, the download uses a background URL session that
-    /// can continue even when the app is suspended. This is useful for large files
-    /// on iOS. Background downloads support resume via Range headers and incomplete
-    /// file tracking, just like foreground downloads.
     ///
     /// - Parameters:
     ///   - repoPath: Path to file in repository
@@ -240,7 +235,6 @@ public extension HubClient {
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - useRaw: Use raw endpoint
-    ///   - inBackground: Whether to use a background URL session for the download
     ///   - forceDownload: Skip cache and always download from server
     ///   - progress: Optional Progress object to track download progress and throughput
     /// - Returns: Final destination URL
@@ -251,7 +245,6 @@ public extension HubClient {
         kind: Repo.Kind = .model,
         revision: String = "main",
         useRaw: Bool = false,
-        inBackground: Bool = false,
         forceDownload: Bool = false,
         progress: Progress? = nil
     ) async throws -> URL {
@@ -292,7 +285,6 @@ public extension HubClient {
                     kind: kind,
                     revision: revision,
                     useRaw: useRaw,
-                    inBackground: inBackground,
                     progress: progress
                 )
             } catch {
@@ -319,7 +311,6 @@ public extension HubClient {
         kind: Repo.Kind,
         revision: String,
         useRaw: Bool,
-        inBackground: Bool,
         progress: Progress?
     ) async throws -> URL {
         // Get file metadata to determine etag and size
@@ -380,60 +371,14 @@ public extension HubClient {
             progress.completedUnitCount = resumeOffset
         }
 
-        // Perform download (chunked for foreground, download task for background)
-        let downloadedURL: URL
-        let response: URLResponse
-
-        if inBackground {
-            let backgroundSession = createBackgroundSession(identifier: "hf-download-\(UUID().uuidString)")
-            defer { backgroundSession.invalidateAndCancel() }
-
-            let tempDownloadURL: URL
-            (tempDownloadURL, response) = try await backgroundSession.download(
-                for: request,
-                delegate: progress.map { DownloadProgressDelegate(progress: $0, resumeOffset: resumeOffset) }
-            )
-
-            // If we're resuming, append the downloaded data to the incomplete file
-            if resumeOffset > 0, let incompletePath = incompletePath {
-                let sourceHandle = try FileHandle(forReadingFrom: tempDownloadURL)
-                let destHandle = try FileHandle(forWritingTo: incompletePath)
-                defer {
-                    try? sourceHandle.close()
-                    try? destHandle.close()
-                }
-                try destHandle.seekToEnd()
-
-                // Stream data in chunks to avoid loading large files into memory
-                let chunkSize = 1024 * 1024  // 1MB chunks
-                while autoreleasepool(invoking: {
-                    guard let chunk = try? sourceHandle.read(upToCount: chunkSize), !chunk.isEmpty else {
-                        return false
-                    }
-                    try? destHandle.write(contentsOf: chunk)
-                    return true
-                }) {}
-
-                downloadedURL = incompletePath
-                try? FileManager.default.removeItem(at: tempDownloadURL)
-            } else {
-                if let incompletePath = incompletePath {
-                    try? FileManager.default.removeItem(at: incompletePath)
-                    try FileManager.default.moveItem(at: tempDownloadURL, to: incompletePath)
-                    downloadedURL = incompletePath
-                } else {
-                    downloadedURL = tempDownloadURL
-                }
-            }
-        } else {
-            (downloadedURL, response) = try await performChunkedDownload(
-                request: request,
-                incompletePath: incompletePath,
-                resumeOffset: resumeOffset,
-                expectedSize: expectedSize,
-                progress: progress
-            )
-        }
+        // Perform chunked download with resume support
+        let (downloadedURL, response) = try await performChunkedDownload(
+            request: request,
+            incompletePath: incompletePath,
+            resumeOffset: resumeOffset,
+            expectedSize: expectedSize,
+            progress: progress
+        )
 
         _ = try httpClient.validateResponse(response, data: nil)
 
@@ -578,14 +523,6 @@ public extension HubClient {
         return (outputPath, response)
     }
 
-    /// Creates a background URL session for downloads that can continue when the app is suspended.
-    private func createBackgroundSession(identifier: String) -> URLSession {
-        let config = URLSessionConfiguration.background(withIdentifier: identifier)
-        config.isDiscretionary = false
-        config.sessionSendsLaunchEvents = true
-        return URLSession(configuration: config)
-    }
-
     /// Download file to a destination URL (convenience method without progress tracking)
     /// - Parameters:
     ///   - repoPath: Path to file in repository
@@ -612,62 +549,6 @@ public extension HubClient {
             useRaw: useRaw,
             progress: nil
         )
-    }
-}
-
-// MARK: - Progress Delegate
-
-private actor DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate {
-    private let progress: Progress
-    private let resumeOffset: Int64
-    private var lastUpdateTime: Date
-    private var lastBytesWritten: Int64 = 0
-    private let minimumUpdateInterval: TimeInterval = 0.1  // Update speed every 100ms
-
-    init(progress: Progress, resumeOffset: Int64 = 0) {
-        self.progress = progress
-        self.resumeOffset = resumeOffset
-        self.lastUpdateTime = Date()
-    }
-
-    nonisolated func urlSession(
-        _: URLSession,
-        downloadTask _: URLSessionDownloadTask,
-        didWriteData _: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        Task {
-            await updateProgress(
-                totalBytesWritten: totalBytesWritten,
-                totalBytesExpectedToWrite: totalBytesExpectedToWrite
-            )
-        }
-    }
-
-    private func updateProgress(totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        progress.totalUnitCount = resumeOffset + totalBytesExpectedToWrite
-        progress.completedUnitCount = resumeOffset + totalBytesWritten
-
-        // Calculate and report throughput
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastUpdateTime)
-        if elapsed >= minimumUpdateInterval {
-            let adjustedTotalBytes = resumeOffset + totalBytesWritten
-            let deltaBytes = adjustedTotalBytes - lastBytesWritten
-            let speed = Double(deltaBytes) / elapsed
-            progress.setUserInfoObject(speed, forKey: .throughputKey)
-            lastUpdateTime = now
-            lastBytesWritten = adjustedTotalBytes
-        }
-    }
-
-    nonisolated func urlSession(
-        _: URLSession,
-        downloadTask _: URLSessionDownloadTask,
-        didFinishDownloadingTo _: URL
-    ) {
-        // The actual file handling is done in the async/await layer
     }
 }
 
