@@ -308,29 +308,31 @@ public extension HubClient {
         return destination
     }
 
-    /// Download file with resume capability
-    /// - Parameters:
-    ///   - resumeData: Resume data from a previous download attempt
-    ///   - destination: Destination URL for downloaded file
-    ///   - progress: Optional Progress object to track download progress
-    /// - Returns: Final destination URL
-    func resumeDownloadFile(
-        resumeData: Data,
-        to destination: URL,
-        progress: Progress? = nil
-    ) async throws -> URL {
-        let (tempURL, response) = try await session.download(
-            resumeFrom: resumeData,
-            delegate: progress.map { DownloadProgressDelegate(progress: $0) }
-        )
-        _ = try httpClient.validateResponse(response, data: nil)
+    #if !canImport(FoundationNetworking)
+        /// Download file with resume capability
+        /// - Parameters:
+        ///   - resumeData: Resume data from a previous download attempt
+        ///   - destination: Destination URL for downloaded file
+        ///   - progress: Optional Progress object to track download progress
+        /// - Returns: Final destination URL
+        func resumeDownloadFile(
+            resumeData: Data,
+            to destination: URL,
+            progress: Progress? = nil
+        ) async throws -> URL {
+            let (tempURL, response) = try await session.download(
+                resumeFrom: resumeData,
+                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
+            )
+            _ = try httpClient.validateResponse(response, data: nil)
 
-        // Move from temporary location to final destination
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: tempURL, to: destination)
+            // Move from temporary location to final destination
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: tempURL, to: destination)
 
-        return destination
-    }
+            return destination
+        }
+    #endif
 
     /// Download file to a destination URL (convenience method without progress tracking)
     /// - Parameters:
