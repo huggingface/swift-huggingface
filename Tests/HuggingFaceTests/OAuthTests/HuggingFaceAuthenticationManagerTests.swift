@@ -1,9 +1,15 @@
 import Foundation
+
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 import Testing
 
 @testable import HuggingFace
 
-#if swift(>=6.1)
+// HuggingFaceAuthenticationManager tests are only available on Apple platforms
+// since the manager uses AuthenticationServices which is not available on Linux.
+#if canImport(AuthenticationServices) && swift(>=6.1)
     @Suite("HuggingFace Authentication Manager Tests")
     struct HuggingFaceAuthenticationManagerTests {
         @Test("HuggingFaceAuthenticationManager can be initialized with valid parameters")
@@ -185,4 +191,4 @@ import Testing
             #expect(customScope == .other("custom-scope"))
         }
     }
-#endif  // swift(>=6.1)
+#endif  // canImport(AuthenticationServices) && swift(>=6.1)

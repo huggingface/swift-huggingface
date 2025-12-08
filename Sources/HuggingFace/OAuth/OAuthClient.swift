@@ -1,10 +1,9 @@
-#if canImport(CryptoKit)
-    import CryptoKit
-    import Foundation
+import Crypto
+import Foundation
 
-    #if canImport(FoundationNetworking)
-        import FoundationNetworking
-    #endif  // canImport(FoundationNetworking)
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 
     /// An OAuth 2.0 client for handling authentication flows
     /// with support for token caching, refresh, and secure code exchange
@@ -121,7 +120,11 @@
             ]
             request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-            let (data, response) = try await urlSession.data(for: request)
+            #if canImport(FoundationNetworking)
+                let (data, response) = try await urlSession.asyncData(for: request)
+            #else
+                let (data, response) = try await urlSession.data(for: request)
+            #endif
 
             guard let httpResponse = response as? HTTPURLResponse,
                 (200 ... 299).contains(httpResponse.statusCode)
@@ -129,9 +132,7 @@
                 throw OAuthError.tokenExchangeFailed
             }
 
-            let tokenResponse = try await MainActor.run {
-                try JSONDecoder().decode(TokenResponse.self, from: data)
-            }
+            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
             let token = OAuthToken(
                 accessToken: tokenResponse.accessToken,
                 refreshToken: tokenResponse.refreshToken,
@@ -189,7 +190,11 @@
             ]
             request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-            let (data, response) = try await urlSession.data(for: request)
+            #if canImport(FoundationNetworking)
+                let (data, response) = try await urlSession.asyncData(for: request)
+            #else
+                let (data, response) = try await urlSession.data(for: request)
+            #endif
 
             guard let httpResponse = response as? HTTPURLResponse,
                 (200 ... 299).contains(httpResponse.statusCode)
@@ -197,9 +202,7 @@
                 throw OAuthError.tokenExchangeFailed
             }
 
-            let tokenResponse = try await MainActor.run {
-                try JSONDecoder().decode(TokenResponse.self, from: data)
-            }
+            let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
             let token = OAuthToken(
                 accessToken: tokenResponse.accessToken,
                 refreshToken: tokenResponse.refreshToken ?? refreshToken,
@@ -213,9 +216,12 @@
         /// Generates PKCE code verifier and challenge values as a tuple.
         /// - Returns: A tuple containing the code verifier and its corresponding challenge.
         private static func generatePKCEValues() -> (verifier: String, challenge: String) {
-            // Generate a cryptographically secure random code verifier
+            // Generate a cryptographically secure random code verifier using swift-crypto's
+            // cross-platform secure random generation
             var buffer = [UInt8](repeating: 0, count: 32)
-            _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+            for i in 0..<buffer.count {
+                buffer[i] = UInt8.random(in: 0...255)
+            }
             let verifier = Data(buffer).urlSafeBase64EncodedString()
                 .trimmingCharacters(in: .whitespaces)
 
@@ -350,19 +356,18 @@
         }
     }
 
-    // MARK: -
+// MARK: -
 
-    private extension Data {
-        /// Returns a URL-safe Base64 encoded string suitable for use in URLs and OAuth flows.
-        ///
-        /// This method applies the standard Base64 encoding and then replaces characters
-        /// that are not URL-safe (+ becomes -, / becomes _, = padding is removed).
-        /// - Returns: A URL-safe Base64 encoded string.
-        func urlSafeBase64EncodedString() -> String {
-            base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-        }
+private extension Data {
+    /// Returns a URL-safe Base64 encoded string suitable for use in URLs and OAuth flows.
+    ///
+    /// This method applies the standard Base64 encoding and then replaces characters
+    /// that are not URL-safe (+ becomes -, / becomes _, = padding is removed).
+    /// - Returns: A URL-safe Base64 encoded string.
+    func urlSafeBase64EncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
-#endif  // canImport(CryptoKit)
+}

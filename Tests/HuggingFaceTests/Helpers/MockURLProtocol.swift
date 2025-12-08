@@ -1,6 +1,10 @@
 import Foundation
 import Testing
 
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
+
 @testable import HuggingFace
 
 // MARK: - Request Handler Storage
@@ -52,11 +56,6 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         await requestHandlerStorage.setHandler(handler)
     }
 
-    /// Execute the stored handler for a request
-    func executeHandler(for request: URLRequest) async throws -> (HTTPURLResponse, Data) {
-        return try await Self.requestHandlerStorage.executeHandler(for: request)
-    }
-
     override class func canInit(with request: URLRequest) -> Bool {
         return true
     }
@@ -66,14 +65,23 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
+        // Capture values before entering the Task to avoid data races.
+        // We use nonisolated(unsafe) because URLProtocol is inherently non-Sendable,
+        // but we know the URLSession will keep this instance alive during loading.
+        let capturedRequest = request
+        nonisolated(unsafe) let capturedClient = client
+        nonisolated(unsafe) let capturedSelf = self
+
         Task {
             do {
-                let (response, data) = try await self.executeHandler(for: request)
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-                client?.urlProtocol(self, didLoad: data)
-                client?.urlProtocolDidFinishLoading(self)
+                let (response, data) = try await Self.requestHandlerStorage.executeHandler(
+                    for: capturedRequest)
+                capturedClient?.urlProtocol(
+                    capturedSelf, didReceive: response, cacheStoragePolicy: .notAllowed)
+                capturedClient?.urlProtocol(capturedSelf, didLoad: data)
+                capturedClient?.urlProtocolDidFinishLoading(capturedSelf)
             } catch {
-                client?.urlProtocol(self, didFailWithError: error)
+                capturedClient?.urlProtocol(capturedSelf, didFailWithError: error)
             }
         }
     }
