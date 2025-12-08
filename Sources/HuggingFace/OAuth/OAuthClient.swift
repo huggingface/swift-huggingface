@@ -214,7 +214,14 @@ public actor OAuthClient: Sendable {
     private static func generatePKCEValues() -> (verifier: String, challenge: String) {
         // Generate a cryptographically secure random code verifier
         var buffer = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        #if os(macOS)
+            _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        #else
+            // This should be cryptographically secure, see: https://forums.swift.org/t/random-data-uint8-random-or-secrandomcopybytes/56165/9
+            var generator = SystemRandomNumberGenerator()
+            buffer = buffer.map { _ in UInt8.random(in: 0 ... 8, using: &generator) }
+        #endif
+
         let verifier = Data(buffer).urlSafeBase64EncodedString()
             .trimmingCharacters(in: .whitespaces)
 
