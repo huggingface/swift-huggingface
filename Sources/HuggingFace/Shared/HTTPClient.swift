@@ -72,7 +72,11 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> T {
         let request = try await createRequest(method, path, params: params, headers: headers)
-        let (data, response) = try await session.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await session.asyncData(for: request)
+        #else
+            let (data, response) = try await session.data(for: request)
+        #endif
         let httpResponse = try validateResponse(response, data: data)
 
         if T.self == Bool.self {
@@ -99,12 +103,16 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> PaginatedResponse<T> {
         let request = try await createRequest(method, path, params: params, headers: headers)
-        let (data, response) = try await session.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await session.asyncData(for: request)
+        #else
+            let (data, response) = try await session.data(for: request)
+        #endif
         let httpResponse = try validateResponse(response, data: data)
 
         do {
             let items = try jsonDecoder.decode([T].self, from: data)
-            let nextURL = httpResponse.nextPageURL()
+            let nextURL = parseNextPageURL(from: httpResponse)
             return PaginatedResponse(items: items, nextURL: nextURL)
         } catch {
             throw HTTPClientError.decodingError(
@@ -124,51 +132,87 @@ final class HTTPClient: @unchecked Sendable {
             let task = Task {
                 do {
                     let request = try await createRequest(method, path, params: params, headers: headers)
-                    /*let (bytes, response) = try await session.bytes(for: request)
-                    let httpResponse = try validateResponse(response)
-                    
-                    guard (200 ..< 300).contains(httpResponse.statusCode) else {
-                        var errorData = Data()
-                        for try await byte in bytes {
-                            errorData.append(byte)
-                        }
-                        // validateResponse will throw the appropriate error
-                        _ = try validateResponse(response, data: errorData)
-                        return  // This line will never be reached, but satisfies the compiler
-                    }*/
 
-                    for try await event in streamEvents(
-                        request: request,
-                        configuration: session.configuration,
-                        onResponse: { [weak self] response in
-                            guard let self else {
-                                return
-                            }
+                    #if canImport(FoundationNetworking)
+                        // Linux: Use buffered approach since true streaming is not available
+                        let (data, response) = try await session.asyncData(for: request)
+                        let httpResponse = try validateResponse(response, data: data)
 
-                            _ = try validateResponse(response)
+                        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                            return
                         }
-                    ) {
-                        // Check for [DONE] signal
-                        if event.data.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
+
+                        // Parse SSE events from the buffered response
+                        guard let responseString = String(data: data, encoding: .utf8) else {
                             continuation.finish()
                             return
                         }
 
-                        guard let jsonData = event.data.data(using: .utf8) else {
-                            continue
+                        for line in responseString.components(separatedBy: "\n") {
+                            let trimmed = line.trimmingCharacters(in: .whitespaces)
+                            guard trimmed.hasPrefix("data:") else { continue }
+
+                            let eventData = String(trimmed.dropFirst(5)).trimmingCharacters(
+                                in: .whitespaces
+                            )
+
+                            // Check for [DONE] signal
+                            if eventData == "[DONE]" {
+                                continuation.finish()
+                                return
+                            }
+
+                            guard let jsonData = eventData.data(using: .utf8) else {
+                                continue
+                            }
+
+                            do {
+                                let decoded = try jsonDecoder.decode(T.self, from: jsonData)
+                                continuation.yield(decoded)
+                            } catch {
+                                print("Warning: Failed to decode streaming response chunk: \(error)")
+                            }
                         }
 
-                        do {
-                            let decoded = try jsonDecoder.decode(T.self, from: jsonData)
-                            continuation.yield(decoded)
-                        } catch {
-                            // Log decoding errors but don't fail the stream
-                            // This allows the stream to continue even if individual chunks fail
-                            print("Warning: Failed to decode streaming response chunk: \(error)")
-                        }
-                    }
+                        continuation.finish()
+                    #else
+                        // Apple platforms: Use native streaming APIs
+                        let (bytes, response) = try await session.bytes(for: request)
+                        let httpResponse = try validateResponse(response)
 
-                    continuation.finish()
+                        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+                            var errorData = Data()
+                            for try await byte in bytes {
+                                errorData.append(byte)
+                            }
+                            // validateResponse will throw the appropriate error
+                            _ = try validateResponse(response, data: errorData)
+                            return  // This line will never be reached, but satisfies the compiler
+                        }
+
+                        for try await event in bytes.events {
+                            // Check for [DONE] signal
+                            if event.data.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" {
+                                continuation.finish()
+                                return
+                            }
+
+                            guard let jsonData = event.data.data(using: .utf8) else {
+                                continue
+                            }
+
+                            do {
+                                let decoded = try jsonDecoder.decode(T.self, from: jsonData)
+                                continuation.yield(decoded)
+                            } catch {
+                                // Log decoding errors but don't fail the stream
+                                // This allows the stream to continue even if individual chunks fail
+                                print("Warning: Failed to decode streaming response chunk: \(error)")
+                            }
+                        }
+
+                        continuation.finish()
+                    #endif
                 } catch {
                     continuation.finish(throwing: error)
                 }
@@ -187,7 +231,11 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> Data {
         let request = try await createRequest(method, path, params: params, headers: headers)
-        let (data, response) = try await session.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await session.asyncData(for: request)
+        #else
+            let (data, response) = try await session.data(for: request)
+        #endif
         let _ = try validateResponse(response, data: data)
 
         return data

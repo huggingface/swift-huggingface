@@ -3,7 +3,7 @@ import Foundation
 
 #if canImport(FoundationNetworking)
     import FoundationNetworking
-#endif  // canImport(FoundationNetworking)
+#endif
 
 /// An OAuth 2.0 client for handling authentication flows
 /// with support for token caching, refresh, and secure code exchange
@@ -120,7 +120,11 @@ public actor OAuthClient: Sendable {
         ]
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-        let (data, response) = try await urlSession.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await urlSession.asyncData(for: request)
+        #else
+            let (data, response) = try await urlSession.data(for: request)
+        #endif
 
         guard let httpResponse = response as? HTTPURLResponse,
             (200 ... 299).contains(httpResponse.statusCode)
@@ -128,9 +132,7 @@ public actor OAuthClient: Sendable {
             throw OAuthError.tokenExchangeFailed
         }
 
-        let tokenResponse = try await MainActor.run {
-            try JSONDecoder().decode(TokenResponse.self, from: data)
-        }
+        let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
         let token = OAuthToken(
             accessToken: tokenResponse.accessToken,
             refreshToken: tokenResponse.refreshToken,
@@ -188,7 +190,11 @@ public actor OAuthClient: Sendable {
         ]
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-        let (data, response) = try await urlSession.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await urlSession.asyncData(for: request)
+        #else
+            let (data, response) = try await urlSession.data(for: request)
+        #endif
 
         guard let httpResponse = response as? HTTPURLResponse,
             (200 ... 299).contains(httpResponse.statusCode)
@@ -196,9 +202,7 @@ public actor OAuthClient: Sendable {
             throw OAuthError.tokenExchangeFailed
         }
 
-        let tokenResponse = try await MainActor.run {
-            try JSONDecoder().decode(TokenResponse.self, from: data)
-        }
+        let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
         let token = OAuthToken(
             accessToken: tokenResponse.accessToken,
             refreshToken: tokenResponse.refreshToken ?? refreshToken,
