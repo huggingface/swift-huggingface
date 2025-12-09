@@ -100,7 +100,11 @@ extension HubClient {
         repos: [String: String]? = nil,
         autoJoin: ResourceGroup.AutoJoin? = nil
     ) async throws -> Bool {
-        let path = "/api/organizations/\(name)/resource-groups"
+        let url = httpClient.host
+            .appending(path: "api")
+            .appending(path: "organizations")
+            .appending(path: name)
+            .appending(path: "resource-groups")
         var params: [String: Value] = ["name": .string(resourceGroupName)]
         if let description { params["description"] = .string(description) }
         if let users {
@@ -128,7 +132,7 @@ extension HubClient {
             if let role = autoJoin.role { auto["role"] = .string(role.rawValue) }
             params["autoJoin"] = .object(auto)
         }
-        let result: Bool = try await httpClient.fetch(.post, path, params: params)
+        let result: Bool = try await httpClient.fetch(.post, url: url, params: params)
         return result
     }
 }
