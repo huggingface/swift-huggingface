@@ -75,13 +75,14 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
         Task {
             do {
                 let (response, data) = try await Self.requestHandlerStorage.executeHandler(
-                    for: capturedRequest)
-                capturedClient?.urlProtocol(
-                    capturedSelf, didReceive: response, cacheStoragePolicy: .notAllowed)
-                capturedClient?.urlProtocol(capturedSelf, didLoad: data)
-                capturedClient?.urlProtocolDidFinishLoading(capturedSelf)
+                    for: capturedRequest
+                )
+                /*    capturedClient?.urlProtocol(
+                        capturedSelf, didReceive: response, cacheStoragePolicy: .notAllowed)
+                    capturedClient?.urlProtocol(capturedSelf, didLoad: data)
+                    capturedClient?.urlProtocolDidFinishLoading(capturedSelf)*/
             } catch {
-                capturedClient?.urlProtocol(capturedSelf, didFailWithError: error)
+                //capturedClient?.urlProtocol(capturedSelf, didFailWithError: error)
             }
         }
     }
