@@ -1,3 +1,5 @@
+import Foundation
+
 #if canImport(AuthenticationServices)
     import AuthenticationServices
     import Observation
@@ -486,13 +488,15 @@
 
 // MARK: -
 
-private extension URL {
-    /// Extracts the OAuth authorization code from a callback URL.
-    /// - Returns: The authorization code if found, nil otherwise.
-    var oauthCode: String? {
-        URLComponents(string: absoluteString)?
-            .queryItems?
-            .first(where: { $0.name == "code" })?
-            .value
+#if canImport(AuthenticationServices)
+    private extension URL {
+        /// Extracts the OAuth authorization code from a callback URL.
+        /// - Returns: The authorization code if found, nil otherwise.
+        var oauthCode: String? {
+            URLComponents(string: absoluteString)?
+                .queryItems?
+                .first(where: { $0.name == "code" })?
+                .value
+        }
     }
-}
+#endif

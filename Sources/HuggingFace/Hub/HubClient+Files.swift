@@ -1,5 +1,8 @@
 import Foundation
-import UniformTypeIdentifiers
+
+#if canImport(UniformTypeIdentifiers)
+    import UniformTypeIdentifiers
+#endif
 
 #if canImport(FoundationNetworking)
     import FoundationNetworking
@@ -78,7 +81,11 @@ public extension HubClient {
                 .buildToTempFile()
             defer { try? FileManager.default.removeItem(at: tempFile) }
 
-            let (data, response) = try await session.upload(for: request, fromFile: tempFile)
+            #if canImport(FoundationNetworking)
+                let (data, response) = try await session.asyncUpload(for: request, fromFile: tempFile)
+            #else
+                let (data, response) = try await session.upload(for: request, fromFile: tempFile)
+            #endif
             _ = try httpClient.validateResponse(response, data: data)
 
             if data.isEmpty {
@@ -95,7 +102,11 @@ public extension HubClient {
                 .addFile(name: "file", fileURL: fileURL, mimeType: mimeType)
                 .buildInMemory()
 
-            let (data, response) = try await session.upload(for: request, from: body)
+            #if canImport(FoundationNetworking)
+                let (data, response) = try await session.asyncUpload(for: request, from: body)
+            #else
+                let (data, response) = try await session.upload(for: request, from: body)
+            #endif
             _ = try httpClient.validateResponse(response, data: data)
 
             if data.isEmpty {
@@ -210,7 +221,11 @@ public extension HubClient {
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
 
-        let (data, response) = try await session.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (data, response) = try await session.asyncData(for: request)
+        #else
+            let (data, response) = try await session.data(for: request)
+        #endif
         _ = try httpClient.validateResponse(response, data: data)
 
         // Store in cache if we have etag and commit info
@@ -286,10 +301,14 @@ public extension HubClient {
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
 
-        let (tempURL, response) = try await session.download(
-            for: request,
-            delegate: progress.map { DownloadProgressDelegate(progress: $0) }
-        )
+        #if canImport(FoundationNetworking)
+            let (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
+        #else
+            let (tempURL, response) = try await session.download(
+                for: request,
+                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
+            )
+        #endif
         _ = try httpClient.validateResponse(response, data: nil)
 
         // Store in cache before moving to destination
@@ -322,29 +341,35 @@ public extension HubClient {
         return destination
     }
 
-    /// Download file with resume capability
-    /// - Parameters:
-    ///   - resumeData: Resume data from a previous download attempt
-    ///   - destination: Destination URL for downloaded file
-    ///   - progress: Optional Progress object to track download progress
-    /// - Returns: Final destination URL
-    func resumeDownloadFile(
-        resumeData: Data,
-        to destination: URL,
-        progress: Progress? = nil
-    ) async throws -> URL {
-        let (tempURL, response) = try await session.download(
-            resumeFrom: resumeData,
-            delegate: progress.map { DownloadProgressDelegate(progress: $0) }
-        )
-        _ = try httpClient.validateResponse(response, data: nil)
+    #if !canImport(FoundationNetworking)
+        /// Download file with resume capability
+        ///
+        /// - Note: This method is only available on Apple platforms.
+        ///   On Linux, resume functionality is not supported.
+        ///
+        /// - Parameters:
+        ///   - resumeData: Resume data from a previous download attempt
+        ///   - destination: Destination URL for downloaded file
+        ///   - progress: Optional Progress object to track download progress
+        /// - Returns: Final destination URL
+        func resumeDownloadFile(
+            resumeData: Data,
+            to destination: URL,
+            progress: Progress? = nil
+        ) async throws -> URL {
+            let (tempURL, response) = try await session.download(
+                resumeFrom: resumeData,
+                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
+            )
+            _ = try httpClient.validateResponse(response, data: nil)
 
-        // Move from temporary location to final destination
-        try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.moveItem(at: tempURL, to: destination)
+            // Move from temporary location to final destination
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: tempURL, to: destination)
 
-        return destination
-    }
+            return destination
+        }
+    #endif
 
     /// Download file to a destination URL (convenience method without progress tracking)
     /// - Parameters:
@@ -380,32 +405,34 @@ public extension HubClient {
 
 // MARK: - Progress Delegate
 
-private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    private let progress: Progress
+#if !canImport(FoundationNetworking)
+    private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let progress: Progress
 
-    init(progress: Progress) {
-        self.progress = progress
-    }
+        init(progress: Progress) {
+            self.progress = progress
+        }
 
-    func urlSession(
-        _: URLSession,
-        downloadTask _: URLSessionDownloadTask,
-        didWriteData _: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        progress.totalUnitCount = totalBytesExpectedToWrite
-        progress.completedUnitCount = totalBytesWritten
-    }
+        func urlSession(
+            _: URLSession,
+            downloadTask _: URLSessionDownloadTask,
+            didWriteData _: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            progress.totalUnitCount = totalBytesExpectedToWrite
+            progress.completedUnitCount = totalBytesWritten
+        }
 
-    func urlSession(
-        _: URLSession,
-        downloadTask _: URLSessionDownloadTask,
-        didFinishDownloadingTo _: URL
-    ) {
-        // The actual file handling is done in the async/await layer
+        func urlSession(
+            _: URLSession,
+            downloadTask _: URLSessionDownloadTask,
+            didFinishDownloadingTo _: URL
+        ) {
+            // The actual file handling is done in the async/await layer
+        }
     }
-}
+#endif
 
 // MARK: - Delete Operations
 
@@ -532,7 +559,11 @@ public extension HubClient {
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
 
         do {
-            let (_, response) = try await session.data(for: request)
+            #if canImport(FoundationNetworking)
+                let (_, response) = try await session.asyncData(for: request)
+            #else
+                let (_, response) = try await session.data(for: request)
+            #endif
             guard let httpResponse = response as? HTTPURLResponse else {
                 return File(exists: false)
             }
@@ -633,9 +664,44 @@ private struct UploadResponse: Codable {
 
 private extension URL {
     var mimeType: String? {
-        guard let uti = UTType(filenameExtension: pathExtension) else {
-            return nil
-        }
-        return uti.preferredMIMEType
+        #if canImport(UniformTypeIdentifiers)
+            guard let uti = UTType(filenameExtension: pathExtension) else {
+                return nil
+            }
+            return uti.preferredMIMEType
+        #else
+            // Fallback MIME type lookup for Linux
+            let ext = pathExtension.lowercased()
+            switch ext {
+            case "json": return "application/json"
+            case "txt": return "text/plain"
+            case "html", "htm": return "text/html"
+            case "css": return "text/css"
+            case "js": return "application/javascript"
+            case "xml": return "application/xml"
+            case "pdf": return "application/pdf"
+            case "zip": return "application/zip"
+            case "gz", "gzip": return "application/gzip"
+            case "tar": return "application/x-tar"
+            case "png": return "image/png"
+            case "jpg", "jpeg": return "image/jpeg"
+            case "gif": return "image/gif"
+            case "svg": return "image/svg+xml"
+            case "webp": return "image/webp"
+            case "mp3": return "audio/mpeg"
+            case "wav": return "audio/wav"
+            case "mp4": return "video/mp4"
+            case "webm": return "video/webm"
+            case "bin", "safetensors", "gguf", "ggml": return "application/octet-stream"
+            case "pt", "pth": return "application/octet-stream"
+            case "onnx": return "application/octet-stream"
+            case "md": return "text/markdown"
+            case "yaml", "yml": return "application/x-yaml"
+            case "toml": return "application/toml"
+            case "py": return "text/x-python"
+            case "swift": return "text/x-swift"
+            default: return "application/octet-stream"
+            }
+        #endif
     }
 }

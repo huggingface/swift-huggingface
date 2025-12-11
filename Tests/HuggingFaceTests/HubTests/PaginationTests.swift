@@ -37,7 +37,7 @@ struct PaginationTests {
             linkHeader: "<https://huggingface.co/api/models?limit=10&skip=10>; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(nextURL?.absoluteString == "https://huggingface.co/api/models?limit=10&skip=10")
@@ -49,7 +49,7 @@ struct PaginationTests {
             linkHeader: "<https://huggingface.co/api/page2>; rel='next'"
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(nextURL?.absoluteString == "https://huggingface.co/api/page2")
@@ -62,7 +62,7 @@ struct PaginationTests {
                 "<https://huggingface.co/api/page1>; rel=\"prev\", <https://huggingface.co/api/page3>; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(nextURL?.absoluteString == "https://huggingface.co/api/page3")
@@ -74,7 +74,7 @@ struct PaginationTests {
             linkHeader: "  <https://huggingface.co/api/page2>  ;  rel=\"next\"  "
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(nextURL?.absoluteString == "https://huggingface.co/api/page2")
@@ -87,7 +87,7 @@ struct PaginationTests {
                 "<https://huggingface.co/api/models?limit=20&skip=40&sort=downloads&filter=text-generation>; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(
@@ -100,7 +100,7 @@ struct PaginationTests {
     func testMissingLinkHeader() {
         let response = makeHTTPResponse(linkHeader: nil)
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL == nil)
     }
@@ -109,7 +109,7 @@ struct PaginationTests {
     func testEmptyLinkHeader() {
         let response = makeHTTPResponse(linkHeader: "")
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL == nil)
     }
@@ -120,7 +120,7 @@ struct PaginationTests {
             linkHeader: "<https://huggingface.co/api/page1>; rel=\"prev\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL == nil)
     }
@@ -131,7 +131,7 @@ struct PaginationTests {
             linkHeader: "https://huggingface.co/api/page2; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         // Should still extract the URL even without proper angle brackets
         #expect(nextURL != nil)
@@ -143,7 +143,7 @@ struct PaginationTests {
             linkHeader: "<>; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL == nil)
     }
@@ -154,7 +154,7 @@ struct PaginationTests {
             linkHeader: "<https://huggingface.co/api/page2> rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL == nil)
     }
@@ -165,7 +165,7 @@ struct PaginationTests {
             linkHeader: "<https://huggingface.co/api/page2>; rel=\"next\"; title=\"Next Page\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         #expect(nextURL?.absoluteString == "https://huggingface.co/api/page2")
@@ -178,7 +178,7 @@ struct PaginationTests {
                 "<https://huggingface.co/api/page2>; rel=\"next\", <https://huggingface.co/api/page3>; rel=\"next\""
         )
 
-        let nextURL = response.nextPageURL()
+        let nextURL = parseNextPageURL(from: response)
 
         #expect(nextURL != nil)
         // Should return the first "next" link found

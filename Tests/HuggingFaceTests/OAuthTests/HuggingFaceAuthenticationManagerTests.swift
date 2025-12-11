@@ -1,9 +1,13 @@
 import Foundation
+
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 import Testing
 
 @testable import HuggingFace
 
-#if swift(>=6.1)
+#if swift(>=6.1) && canImport(AuthenticationServices)
     @Suite("HuggingFace Authentication Manager Tests")
     struct HuggingFaceAuthenticationManagerTests {
         @Test("HuggingFaceAuthenticationManager can be initialized with valid parameters")
@@ -185,4 +189,4 @@ import Testing
             #expect(customScope == .other("custom-scope"))
         }
     }
-#endif  // swift(>=6.1)
+#endif  // canImport(AuthenticationServices) && swift(>=6.1)
