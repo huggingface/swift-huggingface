@@ -87,11 +87,7 @@ final class HTTPClient: @unchecked Sendable {
     }
 
     private func performFetch<T: Decodable>(request: URLRequest) async throws -> T {
-        #if canImport(FoundationNetworking)
-            let (data, response) = try await session.asyncData(for: request)
-        #else
-            let (data, response) = try await session.data(for: request)
-        #endif
+        let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
         if T.self == Bool.self {
@@ -118,11 +114,7 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> PaginatedResponse<T> {
         let request = try await createRequest(method, path, params: params, headers: headers)
-        #if canImport(FoundationNetworking)
-            let (data, response) = try await session.asyncData(for: request)
-        #else
-            let (data, response) = try await session.data(for: request)
-        #endif
+        let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
         do {
