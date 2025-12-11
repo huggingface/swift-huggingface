@@ -18,7 +18,7 @@ public struct Dataset: Identifiable, Codable, Sendable {
     public let visibility: Repo.Visibility?
 
     /// Whether the dataset is gated.
-    public let gated: GatedMode?
+    //public let gated: GatedMode?
 
     /// Whether the dataset is disabled.
     public let isDisabled: Bool?
@@ -57,7 +57,7 @@ public struct Dataset: Identifiable, Codable, Sendable {
         case sha
         case lastModified
         case visibility = "private"
-        case gated
+        //case gated
         case isDisabled = "disabled"
         case downloads
         case likes
