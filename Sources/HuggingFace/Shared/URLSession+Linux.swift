@@ -64,8 +64,7 @@ import Foundation
         ///   - request: The URL request to perform.
         ///   - fileURL: The URL of the file to upload.
         /// - Returns: A tuple containing the response data and URL response.
-        func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse)
-        {
+        func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse) {
             try await withCheckedThrowingContinuation { continuation in
                 let task = self.uploadTask(with: request, fromFile: fileURL) { data, response, error in
                     if let error = error {
