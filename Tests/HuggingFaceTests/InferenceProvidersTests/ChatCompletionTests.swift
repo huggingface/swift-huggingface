@@ -4,9 +4,6 @@ import Foundation
     import FoundationNetworking
 #endif
 import Testing
-#if canImport(FoundationNetworking)
-    import FoundationNetworking
-#endif
 
 @testable import HuggingFace
 
