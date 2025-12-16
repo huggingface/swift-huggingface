@@ -213,11 +213,7 @@ public extension HubClient {
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
 
-        #if canImport(FoundationNetworking)
-            let (data, response) = try await session.asyncData(for: request)
-        #else
-            let (data, response) = try await session.data(for: request)
-        #endif
+        let (data, response) = try await session.data(for: request)
         _ = try httpClient.validateResponse(response, data: data)
 
         // Store in cache if we have etag and commit info
@@ -550,11 +546,7 @@ public extension HubClient {
         request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
 
         do {
-            #if canImport(FoundationNetworking)
-                let (_, response) = try await session.asyncData(for: request)
-            #else
-                let (_, response) = try await session.data(for: request)
-            #endif
+            let (_, response) = try await session.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
                 return File(exists: false)
             }

@@ -120,11 +120,7 @@ public actor OAuthClient: Sendable {
         ]
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-        #if canImport(FoundationNetworking)
-            let (data, response) = try await urlSession.asyncData(for: request)
-        #else
-            let (data, response) = try await urlSession.data(for: request)
-        #endif
+        let (data, response) = try await urlSession.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
             (200 ... 299).contains(httpResponse.statusCode)
@@ -190,11 +186,7 @@ public actor OAuthClient: Sendable {
         ]
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-        #if canImport(FoundationNetworking)
-            let (data, response) = try await urlSession.asyncData(for: request)
-        #else
-            let (data, response) = try await urlSession.data(for: request)
-        #endif
+        let (data, response) = try await urlSession.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse,
             (200 ... 299).contains(httpResponse.statusCode)

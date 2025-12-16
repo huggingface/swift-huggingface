@@ -168,7 +168,7 @@ final class HTTPClient: @unchecked Sendable {
 
                     #if canImport(FoundationNetworking)
                         // Linux: Use buffered approach since true streaming is not available
-                        let (data, response) = try await session.asyncData(for: request)
+                        let (data, response) = try await session.data(for: request)
                         let httpResponse = try validateResponse(response, data: data)
 
                         guard (200 ..< 300).contains(httpResponse.statusCode) else {

@@ -14,7 +14,7 @@ import Foundation
         ///
         /// - Parameter request: The URL request to perform.
         /// - Returns: A tuple containing the response data and URL response.
-        func asyncData(for request: URLRequest) async throws -> (Data, URLResponse) {
+        func data(for request: URLRequest) async throws -> (Data, URLResponse) {
             try await withCheckedThrowingContinuation { continuation in
                 let task = self.dataTask(with: request) { data, response, error in
                     if let error = error {
@@ -141,7 +141,7 @@ import Foundation
         /// - Parameter request: The URL request to perform.
         /// - Returns: A tuple containing the response bytes and URL response.
         func asyncBytes(for request: URLRequest) async throws -> (LinuxAsyncBytes, URLResponse) {
-            let (data, response) = try await asyncData(for: request)
+            let (data, response) = try await data(for: request)
             return (LinuxAsyncBytes(data: data), response)
         }
     }
