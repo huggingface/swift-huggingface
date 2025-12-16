@@ -3,10 +3,6 @@ import Foundation
     import FoundationNetworking
 #endif
 
-#if canImport(FoundationNetworking)
-    import FoundationNetworking
-#endif
-
 /// Sort direction for list queries.
 public enum SortDirection: Int, Hashable, Sendable {
     /// Ascending order.
