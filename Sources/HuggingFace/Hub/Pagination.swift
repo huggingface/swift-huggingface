@@ -64,9 +64,13 @@ func parseNextPageURL(from linkHeader: String) -> URL? {
         if relPart.contains("rel=\"next\"") || relPart.contains("rel='next'") {
             // Extract URL from angle brackets
             let urlString = urlPart.trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
-            if let url = URL(string: urlString) {
-                return url
+
+            // Check for empty URL string to ensure consistent behavior across platforms
+            guard !urlString.isEmpty, let url = URL(string: urlString) else {
+                continue
             }
+
+            return url
         }
     }
 
