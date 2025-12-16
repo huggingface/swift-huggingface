@@ -48,7 +48,7 @@ import Testing
                 if let body = request.httpBody {
                     let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
                     #expect(json["model"] as? String == "zeroscope_v2_576w")
-                    #expect(json["prompt"] as? String == "A beautiful sunset over mountains")
+                    #expect(json["prompt"] as? String == "A cat playing with a ball")
                 }
 
                 let response = HTTPURLResponse(
@@ -104,7 +104,7 @@ import Testing
                 if let body = request.httpBody {
                     let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
                     #expect(json["model"] as? String == "zeroscope_v2_576w")
-                    #expect(json["prompt"] as? String == "A beautiful sunset over mountains")
+                    #expect(json["prompt"] as? String == "A dancing robot")
                 }
                 #expect(request.url?.path == "/v1/videos/generations")
                 #expect(request.httpMethod == "POST")
