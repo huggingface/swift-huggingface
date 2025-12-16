@@ -67,7 +67,7 @@ public struct FileTokenStorage: Sendable {
         try data.write(to: fileURL, options: .atomic)
 
         // Set file permissions to owner-only (0600) on Unix systems
-        #if os(Linux) || os(macOS)
+        #if !os(Windows)
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600],
                 ofItemAtPath: fileURL.path
