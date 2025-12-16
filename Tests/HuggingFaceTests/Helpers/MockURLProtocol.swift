@@ -10,43 +10,52 @@ import Testing
 // MARK: - Request Handler Storage
 
 /// Stores and manages handlers for MockURLProtocol's request handling.
-private actor RequestHandlerStorage {
-    private var requestHandler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
+private final class RequestHandlerStorage: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requestHandler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
 
     func setHandler(
-        _ handler: @Sendable @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+        _ handler: @Sendable @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
     ) {
+        lock.lock()
         requestHandler = handler
+        lock.unlock()
     }
 
     func clearHandler() {
+        lock.lock()
         requestHandler = nil
+        lock.unlock()
     }
 
-    func executeHandler(for request: URLRequest) async throws -> (HTTPURLResponse, Data) {
-        guard let handler = requestHandler else {
+    func executeHandler(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
+        lock.lock()
+        let handler = requestHandler
+        lock.unlock()
+
+        guard let handler else {
             throw NSError(
                 domain: "MockURLProtocolError",
                 code: 0,
                 userInfo: [NSLocalizedDescriptionKey: "No request handler set"]
             )
         }
-        return try await handler(request)
+        return try handler(request)
     }
 }
 
 // MARK: - Mock URL Protocol
 
 /// Custom URLProtocol for testing network requests
-final class MockURLProtocol: URLProtocol, @unchecked Sendable {
+final class MockURLProtocol: URLProtocol {
     /// Storage for request handlers
     fileprivate static let requestHandlerStorage = RequestHandlerStorage()
 
     /// Set a handler to process mock requests
     static func setHandler(
-        _ handler: @Sendable @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
+        _ handler: @Sendable @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
     ) async {
-        await requestHandlerStorage.setHandler(handler)
+        requestHandlerStorage.setHandler(handler)
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -58,21 +67,17 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        Task {
-            do {
-                let (response, data) = try await Self.requestHandlerStorage.executeHandler(
-                    for: self.request
-                )
-                self.client?.urlProtocol(
-                    self,
-                    didReceive: response,
-                    cacheStoragePolicy: .notAllowed
-                )
-                self.client?.urlProtocol(self, didLoad: data)
-                self.client?.urlProtocolDidFinishLoading(self)
-            } catch {
-                self.client?.urlProtocol(self, didFailWithError: error)
-            }
+        do {
+            let (response, data) = try Self.requestHandlerStorage.executeHandler(for: self.request)
+            self.client?.urlProtocol(
+                self,
+                didReceive: response,
+                cacheStoragePolicy: .notAllowed
+            )
+            self.client?.urlProtocol(self, didLoad: data)
+            self.client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            self.client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
@@ -138,13 +143,13 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
             // Serialize all MockURLProtocol tests to prevent interference
             try await MockURLProtocolLock.shared.withLock {
                 // Clear handler before test
-                await MockURLProtocol.requestHandlerStorage.clearHandler()
+                MockURLProtocol.requestHandlerStorage.clearHandler()
 
                 // Execute the test
                 try await function()
 
                 // Clear handler after test
-                await MockURLProtocol.requestHandlerStorage.clearHandler()
+                MockURLProtocol.requestHandlerStorage.clearHandler()
             }
         }
     }
