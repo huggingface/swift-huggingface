@@ -656,34 +656,73 @@ private extension URL {
             // Fallback MIME type lookup for Linux
             let ext = pathExtension.lowercased()
             switch ext {
-            case "json": return "application/json"
-            case "txt": return "text/plain"
-            case "html", "htm": return "text/html"
-            case "css": return "text/css"
-            case "js": return "application/javascript"
-            case "xml": return "application/xml"
-            case "pdf": return "application/pdf"
-            case "zip": return "application/zip"
-            case "gz", "gzip": return "application/gzip"
-            case "tar": return "application/x-tar"
-            case "png": return "image/png"
-            case "jpg", "jpeg": return "image/jpeg"
-            case "gif": return "image/gif"
-            case "svg": return "image/svg+xml"
-            case "webp": return "image/webp"
-            case "mp3": return "audio/mpeg"
-            case "wav": return "audio/wav"
-            case "mp4": return "video/mp4"
-            case "webm": return "video/webm"
-            case "bin", "safetensors", "gguf", "ggml": return "application/octet-stream"
-            case "pt", "pth": return "application/octet-stream"
-            case "onnx": return "application/octet-stream"
-            case "md": return "text/markdown"
-            case "yaml", "yml": return "application/x-yaml"
-            case "toml": return "application/toml"
-            case "py": return "text/x-python"
-            case "swift": return "text/x-swift"
-            default: return "application/octet-stream"
+            // MARK: - JSON
+            case "json":
+                return "application/json"
+            // MARK: - Text
+            case "txt":
+                return "text/plain"
+            case "md":
+                return "text/markdown"
+            // MARK: - HTML and Markup
+            case "html", "htm":
+                return "text/html"
+            case "xml":
+                return "application/xml"
+            case "svg":
+                return "image/svg+xml"
+            case "yaml", "yml":
+                return "application/x-yaml"
+            case "toml":
+                return "application/toml"
+            // MARK: - Code
+            case "js":
+                return "application/javascript"
+            case "py":
+                return "text/x-python"
+            case "swift":
+                return "text/x-swift"
+            case "css":
+                return "text/css"
+            // MARK: - Archives and Compressed
+            case "zip":
+                return "application/zip"
+            case "gz", "gzip":
+                return "application/gzip"
+            case "tar":
+                return "application/x-tar"
+            // MARK: - PDF and Documents
+            case "pdf":
+                return "application/pdf"
+            // MARK: - Images
+            case "png":
+                return "image/png"
+            case "jpg", "jpeg":
+                return "image/jpeg"
+            case "gif":
+                return "image/gif"
+            case "webp":
+                return "image/webp"
+            // MARK: - Audio
+            case "mp3":
+                return "audio/mpeg"
+            case "wav":
+                return "audio/wav"
+            // MARK: - Video
+            case "mp4":
+                return "video/mp4"
+            case "webm":
+                return "video/webm"
+            // MARK: - ML/Model/Raw Data
+            case "bin", "safetensors", "gguf", "ggml":
+                return "application/octet-stream"
+            case "pt", "pth":
+                return "application/octet-stream"
+            case "onnx":
+                return "application/octet-stream"
+            // MARK: - Default
+            default:
+                return "application/octet-stream"
             }
         #endif
     }
