@@ -39,7 +39,7 @@ import Foundation
         ///   - request: The URL request to perform.
         ///   - data: The data to upload.
         /// - Returns: A tuple containing the response data and URL response.
-        func asyncUpload(for request: URLRequest, from data: Data) async throws -> (Data, URLResponse) {
+        func upload(for request: URLRequest, from data: Data) async throws -> (Data, URLResponse) {
             try await withCheckedThrowingContinuation { continuation in
                 let task = self.uploadTask(with: request, from: data) { data, response, error in
                     if let error = error {
@@ -64,7 +64,7 @@ import Foundation
         ///   - request: The URL request to perform.
         ///   - fileURL: The URL of the file to upload.
         /// - Returns: A tuple containing the response data and URL response.
-        func asyncUpload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse)
+        func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> (Data, URLResponse)
         {
             try await withCheckedThrowingContinuation { continuation in
                 let task = self.uploadTask(with: request, fromFile: fileURL) { data, response, error in

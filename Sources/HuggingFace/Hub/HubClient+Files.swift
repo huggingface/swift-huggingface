@@ -81,11 +81,7 @@ public extension HubClient {
                 .buildToTempFile()
             defer { try? FileManager.default.removeItem(at: tempFile) }
 
-            #if canImport(FoundationNetworking)
-                let (data, response) = try await session.asyncUpload(for: request, fromFile: tempFile)
-            #else
-                let (data, response) = try await session.upload(for: request, fromFile: tempFile)
-            #endif
+            let (data, response) = try await session.upload(for: request, fromFile: tempFile)
             _ = try httpClient.validateResponse(response, data: data)
 
             if data.isEmpty {
@@ -102,11 +98,7 @@ public extension HubClient {
                 .addFile(name: "file", fileURL: fileURL, mimeType: mimeType)
                 .buildInMemory()
 
-            #if canImport(FoundationNetworking)
-                let (data, response) = try await session.asyncUpload(for: request, from: body)
-            #else
-                let (data, response) = try await session.upload(for: request, from: body)
-            #endif
+            let (data, response) = try await session.upload(for: request, from: body)
             _ = try httpClient.validateResponse(response, data: data)
 
             if data.isEmpty {
