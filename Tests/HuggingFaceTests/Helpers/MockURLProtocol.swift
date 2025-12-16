@@ -12,22 +12,15 @@ import Testing
 /// Stores and manages handlers for MockURLProtocol's request handling.
 private actor RequestHandlerStorage {
     private var requestHandler: (@Sendable (URLRequest) async throws -> (HTTPURLResponse, Data))?
-    private var isLocked = false
 
     func setHandler(
         _ handler: @Sendable @escaping (URLRequest) async throws -> (HTTPURLResponse, Data)
-    ) async {
-        // Wait for any existing handler to be released
-        while isLocked {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+    ) {
         requestHandler = handler
-        isLocked = true
     }
 
-    func clearHandler() async {
+    func clearHandler() {
         requestHandler = nil
-        isLocked = false
     }
 
     func executeHandler(for request: URLRequest) async throws -> (HTTPURLResponse, Data) {
@@ -95,36 +88,41 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     ///
     /// Provides mutual exclusion across async test execution to prevent
     /// interference between parallel test suites using shared mock handlers.
-    ///
-    /// Note: We can't use `NSLock` or `OSAllocatedUnfairLock` here because:
-    /// - They're synchronous locks designed for very short critical sections
-    /// - They block threads (bad for Swift concurrency's cooperative thread pool)
-    /// - They can't be held across suspension points (await calls)
-    ///
-    /// An actor-based lock is idiomatic for Swift's async/await model.
     private actor MockURLProtocolLock {
         static let shared = MockURLProtocolLock()
 
+        private var waiters: [CheckedContinuation<Void, Never>] = []
         private var isLocked = false
 
         private init() {}
 
-        func withLock<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
-            // Wait for lock to be available
-            while isLocked {
-                try? await Task.sleep(for: .milliseconds(10))
+        func acquire() async {
+            if isLocked {
+                await withCheckedContinuation { continuation in
+                    waiters.append(continuation)
+                }
+            } else {
+                isLocked = true
             }
+        }
 
-            // Acquire lock
-            isLocked = true
+        func release() {
+            if let next = waiters.first {
+                waiters.removeFirst()
+                next.resume()
+            } else {
+                isLocked = false
+            }
+        }
 
-            // Execute operation and ensure lock is released even on error
+        func withLock<T: Sendable>(_ operation: @Sendable () async throws -> T) async rethrows -> T {
+            await acquire()
             do {
                 let result = try await operation()
-                isLocked = false
+                release()
                 return result
             } catch {
-                isLocked = false
+                release()
                 throw error
             }
         }
