@@ -18,13 +18,13 @@ jobs:
         include:
           - swift: "6.0"
             xcode: "16.0"
-            runs-on: macos-15
-          - macos: "15"
-            swift: "6.1"
+            macos: "15"
+          - swift: "6.1"
             xcode: "16.3"
-          - macos: "26"
-            swift: "6.2"
+            macos: "15"
+          - swift: "6.2"
             xcode: "26.0"
+            macos: "26"
     timeout-minutes: 10
     steps:
       - name: Checkout code
