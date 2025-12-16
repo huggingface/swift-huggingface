@@ -43,14 +43,14 @@ func parseNextPageURL(from response: HTTPURLResponse) -> URL? {
     guard let linkHeader = response.value(forHTTPHeaderField: "Link") else {
         return nil
     }
-    return parseNextPageURL(fromLinkHeader: linkHeader)
+    return parseNextPageURL(from: linkHeader)
 }
 
 /// Parses a Link header string to extract the next page URL.
 ///
 /// - Parameter linkHeader: The Link header value.
 /// - Returns: The URL for the next page, or `nil` if not found.
-func parseNextPageURL(fromLinkHeader linkHeader: String) -> URL? {
+func parseNextPageURL(from linkHeader: String) -> URL? {
     // Parse Link header format: <https://example.com/page2>; rel="next"
     let links = linkHeader.components(separatedBy: ",")
     for link in links {
