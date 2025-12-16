@@ -134,9 +134,12 @@ import Foundation
 
         /// Streams bytes from a URL request.
         ///
-        /// This provides a simplified streaming interface for Linux where `bytes(for:)` is not available.
-        /// Note: This implementation buffers the entire response, so it's not suitable for very large responses.
-        /// For true streaming on Linux, consider using a different HTTP client library.
+        /// This provides a simplified streaming-like interface for Linux where `bytes(for:)` is not available.
+        ///
+        /// - Important: This implementation **buffers the entire response in memory** before streaming bytes.
+        ///   It is **not** true streaming and is **not suitable for large responses or long‑lived streams**,
+        ///   as it may cause excessive memory usage.
+        ///   For true streaming on Linux, consider using a different HTTP client library.
         ///
         /// - Parameter request: The URL request to perform.
         /// - Returns: A tuple containing the response bytes and URL response.
