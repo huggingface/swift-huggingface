@@ -664,6 +664,10 @@ private extension URL {
                 return "text/plain"
             case "md":
                 return "text/markdown"
+            case "csv":
+                return "text/csv"
+            case "tsv":
+                return "text/tab-separated-values"
             // MARK: - HTML and Markup
             case "html", "htm":
                 return "text/html"
@@ -684,6 +688,8 @@ private extension URL {
                 return "text/x-swift"
             case "css":
                 return "text/css"
+            case "ipynb":
+                return "application/x-ipynb+json"
             // MARK: - Archives and Compressed
             case "zip":
                 return "application/zip"
@@ -691,6 +697,10 @@ private extension URL {
                 return "application/gzip"
             case "tar":
                 return "application/x-tar"
+            case "bz2":
+                return "application/x-bzip2"
+            case "7z":
+                return "application/x-7z-compressed"
             // MARK: - PDF and Documents
             case "pdf":
                 return "application/pdf"
@@ -703,11 +713,21 @@ private extension URL {
                 return "image/gif"
             case "webp":
                 return "image/webp"
+            case "bmp":
+                return "image/bmp"
+            case "tiff", "tif":
+                return "image/tiff"
             // MARK: - Audio
+            case "m4a":
+                return "audio/mp4"
             case "mp3":
                 return "audio/mpeg"
             case "wav":
                 return "audio/wav"
+            case "flac":
+                return "audio/flac"
+            case "ogg":
+                return "audio/ogg"
             // MARK: - Video
             case "mp4":
                 return "video/mp4"
@@ -719,6 +739,10 @@ private extension URL {
             case "pt", "pth":
                 return "application/octet-stream"
             case "onnx":
+                return "application/octet-stream"
+            case "ckpt":
+                return "application/octet-stream"
+            case "npz":
                 return "application/octet-stream"
             // MARK: - Default
             default:
