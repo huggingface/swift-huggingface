@@ -215,7 +215,7 @@ public actor OAuthClient: Sendable {
         #else
             // This should be cryptographically secure, see: https://forums.swift.org/t/random-data-uint8-random-or-secrandomcopybytes/56165/9
             var generator = SystemRandomNumberGenerator()
-            buffer = buffer.map { _ in UInt8.random(in: 0 ... 8, using: &generator) }
+            buffer = buffer.map { _ in UInt8.random(in: 0 ... 255, using: &generator) }
         #endif
 
         let verifier = Data(buffer).urlSafeBase64EncodedString()
