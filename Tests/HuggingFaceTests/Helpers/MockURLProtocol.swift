@@ -65,27 +65,20 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     override func startLoading() {
-        // Capture values before entering the Task to avoid data races.
-        // We use nonisolated(unsafe) because URLProtocol is inherently non-Sendable,
-        // but we know the URLSession will keep this instance alive during loading.
-        let capturedRequest = request
-        nonisolated(unsafe) let capturedClient = client
-        nonisolated(unsafe) let capturedSelf = self
-
         Task {
             do {
                 let (response, data) = try await Self.requestHandlerStorage.executeHandler(
-                    for: capturedRequest
+                    for: self.request
                 )
-                capturedClient?.urlProtocol(
-                    capturedSelf,
+                self.client?.urlProtocol(
+                    self,
                     didReceive: response,
                     cacheStoragePolicy: .notAllowed
                 )
-                capturedClient?.urlProtocol(capturedSelf, didLoad: data)
-                capturedClient?.urlProtocolDidFinishLoading(capturedSelf)
+                self.client?.urlProtocol(self, didLoad: data)
+                self.client?.urlProtocolDidFinishLoading(self)
             } catch {
-                capturedClient?.urlProtocol(capturedSelf, didFailWithError: error)
+                self.client?.urlProtocol(self, didFailWithError: error)
             }
         }
     }
