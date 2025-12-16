@@ -90,13 +90,6 @@ final class HTTPClient: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
-        // Debug: print raw response body to aid troubleshooting
-        if let bodyString = String(data: data, encoding: .utf8) {
-            print("HTTPClient response \(httpResponse.statusCode): \(bodyString)")
-        } else {
-            print("HTTPClient response \(httpResponse.statusCode): <\(data.count) bytes; non-UTF8>")
-        }
-
         if T.self == Bool.self {
             // If T is Bool, we return true for successful response
             return true as! T
