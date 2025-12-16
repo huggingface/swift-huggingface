@@ -9,7 +9,7 @@ for running AI tasks like chat completion, text-to-image generation, and more.
 ## Requirements
 
 - Swift 6.0+
-- macOS 14.0+ / iOS 17.0+ / watchOS 10.0+ / tvOS 17.0+ / visionOS 1.0+
+- macOS 14.0+ / iOS 17.0+ / watchOS 10.0+ / tvOS 17.0+ / visionOS 1.0+ / Linux
 
 ## Installation
 
@@ -19,7 +19,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.4.0")
+    .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.5.0")
 ]
 ```
 
