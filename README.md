@@ -609,7 +609,6 @@ while page.nextURL != nil {
 
     print("Page: \(page.items.count) models")
 }
-
 ```
 
 #### Error Handling
