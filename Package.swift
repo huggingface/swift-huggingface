@@ -36,5 +36,9 @@ let package = Package(
             name: "HuggingFaceTests",
             dependencies: ["HuggingFace"]
         ),
+        .testTarget(
+            name: "Benchmarks",
+            dependencies: ["HuggingFace"]
+        ),
     ]
 )
