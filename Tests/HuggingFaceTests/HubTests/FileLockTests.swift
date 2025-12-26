@@ -23,12 +23,12 @@ struct FileLockTests {
     // MARK: - Basic Lock Tests
 
     @Test("Lock can be acquired on new file")
-    func acquireLockNewFile() throws {
+    func acquireLockNewFile() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
         var executed = false
-        try lock.withLock {
+        try await lock.withLock {
             executed = true
         }
 
@@ -36,11 +36,11 @@ struct FileLockTests {
     }
 
     @Test("Lock file is created with .lock extension")
-    func lockFileCreated() throws {
+    func lockFileCreated() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
-        try lock.withLock {
+        try await lock.withLock {
             // Lock file should exist while we hold the lock
             #expect(FileManager.default.fileExists(atPath: lock.lockPath.path))
         }
@@ -55,18 +55,16 @@ struct FileLockTests {
         #expect(lock.lockPath.deletingPathExtension().lastPathComponent == "blob-abc123")
     }
 
-    @Test("Nested lock execution works")
-    func nestedLockExecution() throws {
+    @Test("Sequential lock execution works")
+    func sequentialLockExecution() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
         var value = 0
-        try lock.withLock {
+        try await lock.withLock {
             value = 1
-            // Cannot acquire the same lock again from the same thread
-            // but sequential operations work
         }
-        try lock.withLock {
+        try await lock.withLock {
             value = 2
         }
 
@@ -74,11 +72,11 @@ struct FileLockTests {
     }
 
     @Test("Lock returns value from closure")
-    func lockReturnsValue() throws {
+    func lockReturnsValue() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
-        let result = try lock.withLock {
+        let result = try await lock.withLock {
             return 42
         }
 
@@ -86,14 +84,14 @@ struct FileLockTests {
     }
 
     @Test("Lock propagates errors from closure")
-    func lockPropagatesErrors() throws {
+    func lockPropagatesErrors() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
         struct TestError: Error {}
 
-        #expect(throws: TestError.self) {
-            try lock.withLock {
+        await #expect(throws: TestError.self) {
+            try await lock.withLock {
                 throw TestError()
             }
         }
@@ -160,7 +158,7 @@ struct FileLockTests {
             for i in 0 ..< 5 {
                 let sourceFile = i % 2 == 0 ? sourceFile1 : sourceFile2
                 group.addTask {
-                    try? cache.storeFile(
+                    try? await cache.storeFile(
                         at: sourceFile,
                         repo: repoID,
                         kind: .model,
@@ -197,7 +195,7 @@ struct FileLockTests {
         await withTaskGroup(of: Void.self) { group in
             for i in 0 ..< 5 {
                 group.addTask {
-                    try? cache.storeData(
+                    try? await cache.storeData(
                         data,
                         repo: repoID,
                         kind: .model,

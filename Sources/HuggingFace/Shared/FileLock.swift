@@ -53,7 +53,7 @@ public struct FileLock: Sendable {
     /// - Returns: The value returned by the closure.
     /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
-    public func withLock<T>(_ body: () throws -> T) throws -> T {
+    public func withLockSync<T>(_ body: () throws -> T) throws -> T {
         let handle = try acquireLock()
         defer { releaseLock(handle) }
         return try body()
@@ -127,6 +127,8 @@ public struct FileLock: Sendable {
     private func releaseLock(_ handle: FileHandle) {
         flock(handle.fileDescriptor, LOCK_UN)
         try? handle.close()
+        // Clean up the lock file after releasing
+        try? FileManager.default.removeItem(at: lockPath)
     }
 }
 

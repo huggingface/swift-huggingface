@@ -140,6 +140,33 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("snapshots")
     }
 
+    /// Returns the snapshot path for a specific revision, resolving refs if needed.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
+    ///   - revision: Git revision (branch, tag, commit hash, or ref)
+    /// - Returns: Path to the snapshot directory if it exists, `nil` otherwise.
+    public func snapshotPath(repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL? {
+        // First try direct commit hash
+        let directPath = snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(revision)
+        if FileManager.default.fileExists(atPath: directPath.path) {
+            return directPath
+        }
+
+        // Try resolving as a ref (branch/tag)
+        if let resolvedCommit = resolveRevision(repo: repo, kind: kind, ref: revision) {
+            let resolvedPath = snapshotsDirectory(repo: repo, kind: kind)
+                .appendingPathComponent(resolvedCommit)
+            if FileManager.default.fileExists(atPath: resolvedPath.path) {
+                return resolvedPath
+            }
+        }
+
+        return nil
+    }
+
     // MARK: - Revision Resolution
 
     /// Resolves a reference (branch/tag) to its commit hash.
@@ -161,6 +188,9 @@ public struct HubCache: Sendable {
 
     /// Updates the reference file with a new commit hash.
     ///
+    /// Only writes if the file doesn't exist or the content differs,
+    /// matching Python's huggingface_hub behavior to avoid unnecessary writes.
+    ///
     /// - Parameters:
     ///   - repo: The repository identifier.
     ///   - kind: The kind of repository.
@@ -175,6 +205,14 @@ public struct HubCache: Sendable {
             at: refFile.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+
+        // Skip write if already up to date
+        if let existing = try? String(contentsOf: refFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            existing == commit
+        {
+            return
+        }
 
         try commit.write(to: refFile, atomically: true, encoding: .utf8)
     }
@@ -272,7 +310,7 @@ public struct HubCache: Sendable {
         filename: String,
         etag: String,
         ref: String? = nil
-    ) throws {
+    ) async throws {
         let normalizedEtag = normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
@@ -294,7 +332,7 @@ public struct HubCache: Sendable {
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lock = FileLock(path: blobPath)
 
-        try lock.withLock {
+        try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
                 try FileManager.default.copyItem(at: sourceURL, to: blobPath)
             }
@@ -349,7 +387,7 @@ public struct HubCache: Sendable {
         filename: String,
         etag: String,
         ref: String? = nil
-    ) throws {
+    ) async throws {
         let normalizedEtag = normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
@@ -371,7 +409,7 @@ public struct HubCache: Sendable {
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lock = FileLock(path: blobPath)
 
-        try lock.withLock {
+        try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
                 try data.write(to: blobPath, options: .atomic)
             }
@@ -494,6 +532,64 @@ public struct HubCache: Sendable {
         try validatePathValue(filename, allowSlashes: true, withinDirectory: baseDirectory)
     }
 
+    // MARK: - Symlink Creation
+
+    /// Creates a symlink in the snapshots directory pointing to a blob.
+    ///
+    /// This is used by the download code to create the snapshot entry after
+    /// the blob has been downloaded to the cache.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - revision: The commit hash for this snapshot.
+    ///   - filename: The filename within the repository.
+    ///   - etag: The etag of the blob file.
+    public func createSnapshotSymlink(
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        filename: String,
+        etag: String
+    ) throws {
+        let normalizedEtag = normalizeEtag(etag)
+
+        // Validate path components
+        try validatePathComponent(normalizedEtag)
+        try validatePathComponent(revision)
+
+        let snapshotsDir = snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(revision)
+
+        try validateFilename(filename, withinDirectory: snapshotsDir)
+
+        // Create snapshots directory
+        try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+
+        // Create snapshot entry path
+        let snapshotPath = snapshotsDir.appendingPathComponent(filename)
+
+        // Create parent directories for nested filenames
+        let snapshotParent = snapshotPath.deletingLastPathComponent()
+        if snapshotParent != snapshotsDir {
+            try FileManager.default.createDirectory(
+                at: snapshotParent,
+                withIntermediateDirectories: true
+            )
+        }
+
+        // Remove existing snapshot entry if present
+        try? FileManager.default.removeItem(at: snapshotPath)
+
+        // Create symlink to blob
+        let relativeBlobPath = relativePathToBlob(from: snapshotPath, blobName: normalizedEtag)
+        if !createSymlink(at: snapshotPath, pointingTo: relativeBlobPath) {
+            // Symlinks not supported - copy the blob instead
+            let blobPath = blobsDirectory(repo: repo, kind: kind).appendingPathComponent(normalizedEtag)
+            try FileManager.default.copyItem(at: blobPath, to: snapshotPath)
+        }
+    }
+
     /// Calculates the relative path from a snapshot file to its blob.
     ///
     /// The path needs to go up to the repo directory, then into blobs.
@@ -539,11 +635,21 @@ public enum HubCacheError: Error, LocalizedError {
     /// A path component contains unsafe characters that could enable path traversal attacks.
     case invalidPathComponent(String)
 
+    /// File integrity check failed (hash mismatch).
+    case integrityError(expected: String, actual: String)
+
+    /// Offline mode is enabled but the requested resource is not available in cache.
+    case offlineModeError(String)
+
     public var errorDescription: String? {
         switch self {
         case .invalidPathComponent(let component):
             return
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
+        case .integrityError(let expected, let actual):
+            return "File integrity check failed: expected \(expected), got \(actual)"
+        case .offlineModeError(let message):
+            return "Offline mode: \(message)"
         }
     }
 }

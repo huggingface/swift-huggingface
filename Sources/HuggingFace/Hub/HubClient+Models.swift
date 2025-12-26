@@ -46,12 +46,14 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "facebook/bart-large-cnn").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most model data.
+    ///   - filesMetadata: Whether to retrieve metadata for files (size, LFS metadata, etc).
     /// - Returns: Information about the model.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func getModel(
         _ id: Repo.ID,
         revision: String? = nil,
-        full: Bool? = nil
+        full: Bool? = nil,
+        filesMetadata: Bool? = nil
     ) async throws -> Model {
         var url = httpClient.host
             .appending(path: "api")
@@ -67,6 +69,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
+        if let filesMetadata { params["blobs"] = .bool(filesMetadata) }
 
         return try await httpClient.fetch(.get, url: url, params: params)
     }
