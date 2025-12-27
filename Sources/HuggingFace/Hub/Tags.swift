@@ -26,16 +26,15 @@ public struct Tags: Sendable {
 // MARK: - Codable
 
 extension Tags: Codable {
-    private enum CodingKeys: String, CodingKey { case tags }
-
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.storage = try container.decode([String: [Entry]].self, forKey: .tags)
+        // The API returns tags directly as a dictionary without a wrapper
+        let container = try decoder.singleValueContainer()
+        self.storage = try container.decode([String: [Entry]].self)
     }
 
     public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(storage, forKey: .tags)
+        var container = encoder.singleValueContainer()
+        try container.encode(storage)
     }
 }
 

@@ -61,12 +61,15 @@ import Testing
             }
 
             let client = createMockClient()
-            let result = try await client.listModels()
+            var models: [Model] = []
+            for try await model in client.listAllModels() {
+                models.append(model)
+            }
 
-            #expect(result.items.count == 2)
-            #expect(result.items[0].id == "facebook/bart-large")
-            #expect(result.items[0].author == "facebook")
-            #expect(result.items[1].id == "google/bert-base-uncased")
+            #expect(models.count == 2)
+            #expect(models[0].id == "facebook/bart-large")
+            #expect(models[0].author == "facebook")
+            #expect(models[1].id == "google/bert-base-uncased")
         }
 
         @Test("List models with search parameter", .mockURLSession)
@@ -98,10 +101,143 @@ import Testing
             }
 
             let client = createMockClient()
-            let result = try await client.listModels(search: "bert")
+            var models: [Model] = []
+            for try await model in client.listAllModels(search: "bert") {
+                models.append(model)
+            }
 
-            #expect(result.items.count == 1)
-            #expect(result.items[0].id == "google/bert-base-uncased")
+            #expect(models.count == 1)
+            #expect(models[0].id == "google/bert-base-uncased")
+        }
+
+        @Test("List all models with automatic pagination", .mockURLSession)
+        func testListAllModels() async throws {
+            let mockResponsePage1 = """
+                [
+                    {
+                        "id": "facebook/bart-large",
+                        "author": "facebook",
+                        "downloads": 1000000,
+                        "likes": 500,
+                        "pipeline_tag": "text-generation"
+                    },
+                    {
+                        "id": "google/bert-base-uncased",
+                        "author": "google",
+                        "downloads": 2000000,
+                        "likes": 1000,
+                        "pipeline_tag": "fill-mask"
+                    }
+                ]
+                """
+
+            let mockResponsePage2 = """
+                [
+                    {
+                        "id": "openai/gpt-2",
+                        "author": "openai",
+                        "downloads": 3000000,
+                        "likes": 1500,
+                        "pipeline_tag": "text-generation"
+                    }
+                ]
+                """
+
+            // Use nonisolated(unsafe) for test counter since MockURLProtocol handler is Sendable
+            nonisolated(unsafe) var requestCount = 0
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    #expect(request.url?.path == "/api/models")
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=abc123>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data(mockResponsePage1.utf8))
+                } else {
+                    #expect(request.url?.absoluteString.contains("cursor=abc123") == true)
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(mockResponsePage2.utf8))
+                }
+            }
+
+            let client = createMockClient()
+            var models: [Model] = []
+            for try await model in client.listAllModels() {
+                models.append(model)
+            }
+
+            #expect(models.count == 3)
+            #expect(models[0].id == "facebook/bart-large")
+            #expect(models[1].id == "google/bert-base-uncased")
+            #expect(models[2].id == "openai/gpt-2")
+            #expect(requestCount == 2)  // Two pages fetched
+        }
+
+        @Test("List all models respects limit", .mockURLSession)
+        func listAllModelsWithLimit() async throws {
+            let mockResponse = """
+                [
+                    {
+                        "id": "facebook/bart-large",
+                        "author": "facebook",
+                        "downloads": 1000000,
+                        "likes": 500,
+                        "pipeline_tag": "text-generation"
+                    },
+                    {
+                        "id": "google/bert-base-uncased",
+                        "author": "google",
+                        "downloads": 2000000,
+                        "likes": 1000,
+                        "pipeline_tag": "fill-mask"
+                    },
+                    {
+                        "id": "openai/gpt-2",
+                        "author": "openai",
+                        "downloads": 3000000,
+                        "likes": 1500,
+                        "pipeline_tag": "text-generation"
+                    }
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/models")
+                #expect(request.url?.query?.contains("limit=2") == true)
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [
+                        "Content-Type": "application/json",
+                        "Link": "<https://huggingface.co/api/models?cursor=abc123>; rel=\"next\"",
+                    ]
+                )!
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            var models: [Model] = []
+            for try await model in client.listAllModels(limit: 2) {
+                models.append(model)
+            }
+
+            #expect(models.count == 2)  // Stopped at limit even though page had 3
+            #expect(models[0].id == "facebook/bart-large")
+            #expect(models[1].id == "google/bert-base-uncased")
         }
 
         @Test("Get specific model", .mockURLSession)
@@ -177,18 +313,17 @@ import Testing
 
         @Test("Get model tags", .mockURLSession)
         func testGetModelTags() async throws {
+            // Mock response matches real API format (no "tags" wrapper)
             let mockResponse = """
                 {
-                    "tags": {
-                        "pipeline_tag": [
-                            {"id": "text-classification", "label": "Text Classification"},
-                            {"id": "text-generation", "label": "Text Generation"}
-                        ],
-                        "library": [
-                            {"id": "pytorch", "label": "PyTorch"},
-                            {"id": "transformers", "label": "Transformers"}
-                        ]
-                    }
+                    "pipeline_tag": [
+                        {"id": "text-classification", "label": "Text Classification"},
+                        {"id": "text-generation", "label": "Text Generation"}
+                    ],
+                    "library": [
+                        {"id": "pytorch", "label": "PyTorch"},
+                        {"id": "transformers", "label": "Transformers"}
+                    ]
                 }
                 """
 
@@ -308,6 +443,144 @@ import Testing
             let model = try await client.getModel(repoID)
 
             #expect(model.id == "private/model")
+        }
+    }
+
+    // MARK: - Integration Tests (Real API Calls)
+
+    /// Integration tests that make real API calls to the Hugging Face Hub.
+    /// These tests verify that our implementation works correctly with the actual API,
+    /// catching issues like response format changes or pagination header changes.
+    @Suite("Model Integration Tests", .serialized)
+    struct ModelIntegrationTests {
+        let client = HubClient()
+
+        @Test("List models returns results from real API")
+        func listModelsFromAPI() async throws {
+            var count = 0
+            for try await model in client.listAllModels(limit: 10) {
+                count += 1
+                // Verify basic model properties are populated
+                #expect(!model.id.rawValue.isEmpty)
+            }
+
+            #expect(count > 0)
+            #expect(count <= 10)
+        }
+
+        @Test("List models with search parameter")
+        func listModelsWithSearch() async throws {
+            var count = 0
+            for try await model in client.listAllModels(search: "bert", limit: 10) {
+                count += 1
+                // Verify search results contain "bert" in the model ID
+                #expect(model.id.rawValue.lowercased().contains("bert"))
+            }
+
+            #expect(count > 0)
+        }
+
+        @Test("List models with author filter")
+        func listModelsWithAuthor() async throws {
+            var count = 0
+            for try await model in client.listAllModels(author: "google", limit: 10) {
+                count += 1
+                // Verify all models are from the specified author by checking namespace
+                // (the author field may not be populated in list responses)
+                #expect(model.id.namespace == "google")
+            }
+
+            #expect(count > 0)
+        }
+
+        @Test("Paginate over models from real API")
+        func paginateModels() async throws {
+            // Make real API calls and verify pagination works
+            var count = 0
+            for try await _ in client.listAllModels(limit: 5) {
+                count += 1
+            }
+
+            #expect(count == 5)
+        }
+
+        @Test("Pagination fetches multiple pages")
+        func paginationFetchesMultiplePages() async throws {
+            // Request more items than a single page returns (default page size is typically 20-100)
+            // to ensure pagination actually works across pages
+            var count = 0
+            for try await _ in client.listAllModels(limit: 50) {
+                count += 1
+            }
+
+            #expect(count == 50)
+        }
+
+        @Test("Get model info for known model")
+        func getModelInfo() async throws {
+            // Use a well-known model that's unlikely to be deleted
+            let repoID: Repo.ID = "google-bert/bert-base-uncased"
+            let model = try await client.getModel(repoID)
+
+            #expect(model.id == "google-bert/bert-base-uncased")
+            #expect(model.author == "google-bert")
+            #expect(model.downloads ?? 0 > 0)
+        }
+
+        @Test("Get model tags from real API")
+        func getModelTags() async throws {
+            let tags = try await client.getModelTags()
+
+            // Verify we get some tag categories
+            #expect(!tags.isEmpty)
+            // Common tag categories that should exist
+            #expect(tags["pipeline_tag"] != nil || tags["library"] != nil)
+        }
+
+        // MARK: - Sorting Tests
+
+        @Test("List models sorted by downloads")
+        func listModelsSortByDownloads() async throws {
+            var count = 0
+            for try await model in client.listAllModels(sort: "downloads", limit: 10) {
+                count += 1
+                // Sorted results should have downloads populated
+                #expect(model.downloads != nil)
+            }
+            #expect(count == 10)
+        }
+
+        @Test("List models sorted by likes")
+        func listModelsSortByLikes() async throws {
+            var count = 0
+            for try await model in client.listAllModels(sort: "likes", limit: 10) {
+                count += 1
+                // Sorted results should have likes populated
+                #expect(model.likes != nil)
+            }
+            #expect(count == 10)
+        }
+
+        @Test("List models with filter parameter")
+        func listModelsWithFilter() async throws {
+            var count = 0
+            for try await model in client.listAllModels(filter: "text-generation", limit: 10) {
+                count += 1
+                // Models with filter should have the pipeline tag
+                #expect(model.pipelineTag == "text-generation" || model.tags?.contains("text-generation") == true)
+            }
+            #expect(count > 0)
+        }
+
+        @Test("List models with full parameter")
+        func listModelsWithFull() async throws {
+            var count = 0
+            for try await model in client.listAllModels(limit: 5, full: true) {
+                count += 1
+                // Full response should include additional metadata
+                #expect(model.sha != nil || model.lastModified != nil)
+            }
+            #expect(count > 0)
         }
     }
 

@@ -2,8 +2,61 @@ import Foundation
 
 // MARK: - Models API
 
-extension HubClient {
-    /// Lists models from the Hub.
+public extension HubClient {
+    /// Lists models from the Hub with automatic pagination.
+    ///
+    /// This method returns an async sequence that automatically handles pagination,
+    /// yielding individual models as they are fetched:
+    /// ```swift
+    /// for try await model in client.listAllModels(author: "google") {
+    ///     print(model.name)
+    /// }
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - search: Filter based on substrings for repos and their usernames.
+    ///   - author: Filter models by an author or organization.
+    ///   - filter: Filter based on tags (e.g., "text-classification").
+    ///   - sort: Property to use when sorting (e.g., "downloads", "author").
+    ///   - direction: Direction in which to sort.
+    ///   - limit: Maximum number of models to return. Also used as page size for API requests.
+    ///   - full: Whether to fetch most model data, such as all tags, the files, etc.
+    ///   - config: Whether to also fetch the repo config.
+    /// - Returns: An async sequence of models.
+    func listAllModels(
+        search: String? = nil,
+        author: String? = nil,
+        filter: String? = nil,
+        sort: String? = nil,
+        direction: SortDirection? = nil,
+        limit: Int? = nil,
+        full: Bool? = nil,
+        config: Bool? = nil
+    ) -> PaginatedSequence<Model> {
+        var params: [String: Value] = [:]
+
+        if let search { params["search"] = .string(search) }
+        if let author { params["author"] = .string(author) }
+        if let filter { params["filter"] = .string(filter) }
+        if let sort { params["sort"] = .string(sort) }
+        if let direction { params["direction"] = .int(direction.rawValue) }
+        if let limit { params["limit"] = .int(limit) }
+        if let full { params["full"] = .bool(full) }
+        if let config { params["config"] = .bool(config) }
+
+        let capturedParams = params
+        return PaginatedSequence(
+            limit: limit,
+            firstPage: { [httpClient] in
+                try await httpClient.fetchPaginated(.get, "/api/models", params: capturedParams)
+            },
+            nextPage: { [httpClient] url in
+                try await httpClient.fetchPaginated(.get, url: url)
+            }
+        )
+    }
+
+    /// Lists models from the Hub (single page).
     ///
     /// - Parameters:
     ///   - search: Filter based on substrings for repos and their usernames.
@@ -16,7 +69,13 @@ extension HubClient {
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: A paginated response containing model information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func listModels(
+    @available(
+        *,
+        deprecated,
+        message:
+            "Use listAllModels() instead, which provides automatic pagination matching huggingface_hub's list_models()."
+    )
+    func listModels(
         search: String? = nil,
         author: String? = nil,
         filter: String? = nil,
@@ -48,7 +107,7 @@ extension HubClient {
     ///   - full: Whether to fetch most model data.
     /// - Returns: Information about the model.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func getModel(
+    func getModel(
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil
@@ -75,7 +134,7 @@ extension HubClient {
     ///
     /// - Returns: Tag information organized by type.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func getModelTags() async throws -> Tags {
+    func getModelTags() async throws -> Tags {
         return try await httpClient.fetch(.get, "/api/models-tags-by-type")
     }
 
@@ -88,7 +147,7 @@ extension HubClient {
     ///   - fields: Additional form fields to include with the access request (e.g., "reason", "institution").
     /// - Returns: `true` if the request was submitted successfully.
     /// - Throws: An error if the request fails.
-    public func requestModelAccess(
+    func requestModelAccess(
         _ id: Repo.ID,
         fields: [String: String]? = nil
     ) async throws -> Bool {
@@ -103,7 +162,7 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: `true` if the request was cancelled successfully.
     /// - Throws: An error if the request fails.
-    public func cancelModelAccessRequest(_ id: Repo.ID) async throws -> Bool {
+    func cancelModelAccessRequest(_ id: Repo.ID) async throws -> Bool {
         let url = httpClient.host
             .appending(path: "api")
             .appending(path: "models")
@@ -120,7 +179,7 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: `true` if access was granted successfully.
     /// - Throws: An error if the request fails.
-    public func grantModelAccess(_ id: Repo.ID) async throws -> Bool {
+    func grantModelAccess(_ id: Repo.ID) async throws -> Bool {
         let url = httpClient.host
             .appending(path: "api")
             .appending(path: "models")
@@ -137,7 +196,7 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: `true` if the request was handled successfully.
     /// - Throws: An error if the request fails.
-    public func handleModelAccessRequest(_ id: Repo.ID) async throws -> Bool {
+    func handleModelAccessRequest(_ id: Repo.ID) async throws -> Bool {
         let url = httpClient.host
             .appending(path: "api")
             .appending(path: "models")
@@ -156,7 +215,7 @@ extension HubClient {
     ///   - status: The status to filter by ("pending", "accepted", "rejected").
     /// - Returns: A list of access requests.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func listModelAccessRequests(
+    func listModelAccessRequests(
         _ id: Repo.ID,
         status: AccessRequest.Status
     ) async throws -> [AccessRequest] {
@@ -175,7 +234,7 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: User access report data.
     /// - Throws: An error if the request fails.
-    public func getModelUserAccessReport(_ id: Repo.ID) async throws -> Data {
+    func getModelUserAccessReport(_ id: Repo.ID) async throws -> Data {
         let url = httpClient.host
             .appending(path: id.namespace)
             .appending(path: id.name)
@@ -192,7 +251,7 @@ extension HubClient {
     ///   - resourceGroupId: The resource group ID to set, or nil to unset.
     /// - Returns: Resource group response information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func setModelResourceGroup(
+    func setModelResourceGroup(
         _ id: Repo.ID,
         resourceGroupId: String?
     ) async throws -> ResourceGroup {
@@ -215,7 +274,7 @@ extension HubClient {
     /// - Parameter id: The repository identifier.
     /// - Returns: `true` if the scan was initiated successfully.
     /// - Throws: An error if the request fails.
-    public func scanModel(_ id: Repo.ID) async throws -> Bool {
+    func scanModel(_ id: Repo.ID) async throws -> Bool {
         let url = httpClient.host
             .appending(path: "api")
             .appending(path: "models")
@@ -235,7 +294,7 @@ extension HubClient {
     ///   - message: An optional message for the tag.
     /// - Returns: `true` if the tag was created successfully.
     /// - Throws: An error if the request fails.
-    public func createModelTag(
+    func createModelTag(
         _ id: Repo.ID,
         revision: String,
         tag: String,
@@ -266,7 +325,7 @@ extension HubClient {
     ///   - message: The commit message for the squashed commit.
     /// - Returns: The new commit ID.
     /// - Throws: An error if the request fails or the response cannot be decoded.
-    public func superSquashModel(
+    func superSquashModel(
         _ id: Repo.ID,
         revision: String,
         message: String

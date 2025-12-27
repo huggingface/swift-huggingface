@@ -15,6 +15,75 @@ enum HTTPMethod: String, Hashable, Sendable {
     case head = "HEAD"
 }
 
+// MARK: - Rate Limit Parsing
+
+/// Parses rate limit reset time from HTTP response headers.
+///
+/// Follows IETF draft: https://www.ietf.org/archive/id/draft-ietf-httpapi-ratelimit-headers-09.html
+/// Also falls back to standard Retry-After header.
+///
+/// - Parameter response: The HTTP response to parse.
+/// - Returns: The number of seconds until the rate limit resets, or nil if not found.
+func parseRateLimitResetSeconds(from response: HTTPURLResponse) -> Double? {
+    // First, try IETF draft ratelimit header: "api";r=0;t=55
+    // We need the 't' value (seconds until reset)
+    if let ratelimit = response.value(forHTTPHeaderField: "ratelimit")
+        ?? response.value(forHTTPHeaderField: "RateLimit")
+    {
+        // Parse format: "resource_type";r=remaining;t=reset_seconds
+        // Split on semicolons and find part starting with "t="
+        for part in ratelimit.split(separator: ";") {
+            let trimmed = part.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("t="), let seconds = Double(String(trimmed.dropFirst(2))) {
+                return seconds
+            }
+        }
+    }
+
+    // Fall back to standard Retry-After header
+    if let retryAfter = response.value(forHTTPHeaderField: "Retry-After"),
+        let seconds = Double(retryAfter)
+    {
+        return seconds
+    }
+
+    return nil
+}
+
+// MARK: - Retry Configuration
+
+/// Configuration for HTTP request retry behavior with exponential backoff.
+/// Matches huggingface_hub's http_backoff behavior.
+struct RetryConfiguration: Sendable {
+    /// Maximum number of retries before giving up.
+    let maxRetries: Int
+
+    /// Initial wait time in seconds before first retry.
+    let baseWaitTime: TimeInterval
+
+    /// Maximum wait time in seconds between retries.
+    let maxWaitTime: TimeInterval
+
+    /// HTTP status codes that trigger a retry.
+    let retryOnStatusCodes: Set<Int>
+
+    /// Default configuration matching huggingface_hub.
+    static let `default` = RetryConfiguration(
+        maxRetries: 5,
+        baseWaitTime: 1.0,
+        maxWaitTime: 8.0,
+        retryOnStatusCodes: [429, 500, 502, 503, 504]
+    )
+
+    /// No retries - for first page requests.
+    static let none = RetryConfiguration(
+        maxRetries: 0,
+        baseWaitTime: 0,
+        maxWaitTime: 0,
+        retryOnStatusCodes: []
+    )
+}
+
 /// Base HTTP client with common functionality for all Hugging Face API clients.
 final class HTTPClient: @unchecked Sendable {
     /// The host URL for requests.
@@ -114,19 +183,85 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> PaginatedResponse<T> {
         let request = try await createRequest(method, path, params: params, headers: headers)
-        let (data, response) = try await session.data(for: request)
-        let httpResponse = try validateResponse(response, data: data)
+        return try await performFetchPaginated(request: request, retry: .none)
+    }
 
-        do {
-            let items = try jsonDecoder.decode([T].self, from: data)
-            let nextURL = parseNextPageURL(from: httpResponse)
-            return PaginatedResponse(items: items, nextURL: nextURL)
-        } catch {
-            throw HTTPClientError.decodingError(
-                response: httpResponse,
-                detail: "Error decoding response: \(error.localizedDescription)"
-            )
+    func fetchPaginated<T: Decodable>(
+        _ method: HTTPMethod,
+        url: URL,
+        params: [String: Value]? = nil,
+        headers: [String: String]? = nil,
+        retry: RetryConfiguration = .default
+    ) async throws -> PaginatedResponse<T> {
+        let request = try await createRequest(method, url: url, params: params, headers: headers)
+        return try await performFetchPaginated(request: request, retry: retry)
+    }
+
+    private func performFetchPaginated<T: Decodable>(
+        request: URLRequest,
+        retry: RetryConfiguration
+    ) async throws -> PaginatedResponse<T> {
+        var lastError: Error?
+        var sleepTime = retry.baseWaitTime
+
+        for attempt in 0 ... retry.maxRetries {
+            do {
+                let (data, response) = try await session.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw HTTPClientError.unexpectedError("Invalid HTTP response")
+                }
+
+                // Check if we should retry based on status code
+                if retry.retryOnStatusCodes.contains(httpResponse.statusCode), attempt < retry.maxRetries {
+                    // Retry on these status codes
+                    lastError = HTTPClientError.responseError(
+                        response: httpResponse,
+                        detail: "HTTP \(httpResponse.statusCode)"
+                    )
+
+                    // For rate limiting (429), check for rate limit headers
+                    let waitTime: TimeInterval =
+                        if httpResponse.statusCode == 429,
+                            let seconds = parseRateLimitResetSeconds(from: httpResponse)
+                        {
+                            seconds + 1  // +1s to avoid rounding issues
+                        } else {
+                            sleepTime
+                        }
+
+                    try await Task.sleep(for: .seconds(waitTime))
+                    sleepTime = min(retry.maxWaitTime, sleepTime * 2)  // Exponential backoff
+                    continue
+                }
+
+                let validated = try validateResponse(response, data: data)
+
+                do {
+                    let items = try jsonDecoder.decode([T].self, from: data)
+                    let nextURL = parseNextPageURL(from: validated)
+                    return PaginatedResponse(items: items, nextURL: nextURL)
+                } catch {
+                    throw HTTPClientError.decodingError(
+                        response: validated,
+                        detail: "Error decoding response: \(error.localizedDescription)"
+                    )
+                }
+            } catch let error as HTTPClientError {
+                throw error  // Don't retry our own errors
+            } catch {
+                // Retry on network errors (timeout, connection issues)
+                if attempt < retry.maxRetries {
+                    lastError = error
+                    try await Task.sleep(for: .seconds(sleepTime))
+                    sleepTime = min(retry.maxWaitTime, sleepTime * 2)
+                    continue
+                }
+                throw error
+            }
         }
+
+        throw lastError ?? HTTPClientError.unexpectedError("Retry failed")
     }
 
     func fetchStream<T: Decodable & Sendable>(
