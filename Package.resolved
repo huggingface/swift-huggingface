@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/Replay.git",
       "state" : {
-        "revision" : "f3425e7cb4ba9297daa765642d826cb86069bb29",
-        "version" : "0.1.0"
+        "revision" : "5c1ecf32947741135cc9dc17398f295c60045147",
+        "version" : "0.1.1"
       }
     },
     {
