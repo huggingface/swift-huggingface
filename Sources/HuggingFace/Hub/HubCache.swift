@@ -96,10 +96,16 @@ public struct HubCache: Sendable {
 
     /// The fallback cache directory when resolution fails.
     private static var fallbackDirectory: URL {
+        #if os(macOS)
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".cache")
             .appendingPathComponent("huggingface")
             .appendingPathComponent("hub")
+        #else
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("huggingface")
+            .appendingPathComponent("hub")
+        #endif
     }
 
     // MARK: - Repository Path

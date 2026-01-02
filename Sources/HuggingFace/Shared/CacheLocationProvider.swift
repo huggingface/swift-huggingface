@@ -173,14 +173,20 @@ public indirect enum CacheLocationProvider: Sendable {
                 let expandedPath = NSString(string: hfHome).expandingTildeInPath
                 return URL(fileURLWithPath: expandedPath).appendingPathComponent("hub")
             },
-            // 3. Default: ~/.cache/huggingface/hub
+            // 3. Default: ~/.cache/huggingface/hub (macOS) or Caches/huggingface/hub (iOS)
             {
+                #if os(macOS)
                 let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
                 return
                     homeDirectory
                     .appendingPathComponent(".cache")
                     .appendingPathComponent("huggingface")
                     .appendingPathComponent("hub")
+                #else
+                return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+                    .appendingPathComponent("huggingface")
+                    .appendingPathComponent("hub")
+                #endif
             },
         ]
 
