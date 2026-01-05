@@ -45,9 +45,12 @@ public struct Dataset: Identifiable, Codable, Sendable {
     public struct SiblingInfo: Codable, Sendable {
         /// The relative path of the file.
         public let relativeFilename: String
+        /// The size of the file in bytes (available when blobs=true).
+        public let size: Int?
 
         private enum CodingKeys: String, CodingKey {
             case relativeFilename = "rfilename"
+            case size
         }
     }
 

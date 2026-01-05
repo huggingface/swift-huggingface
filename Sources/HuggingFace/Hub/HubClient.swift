@@ -58,11 +58,22 @@ public final class HubClient: Sendable {
     /// The underlying HTTP client.
     internal let httpClient: HTTPClient
 
+    /// Session for fetching file metadata without following CDN redirects.
+    /// Uses `SameHostRedirectDelegate` to capture X-Linked-Etag and X-Repo-Commit headers.
+    internal let metadataSession: URLSession
+
     /// The cache for downloaded files, or `nil` if caching is disabled.
     ///
     /// When set, downloaded files are stored in a Python-compatible cache structure,
     /// allowing cache reuse between Swift and Python Hugging Face clients.
     public let cache: HubCache?
+
+    /// Override for offline mode detection.
+    ///
+    /// When `true`, the client will only use cached files and skip network requests.
+    /// When `false`, the client will always attempt network requests.
+    /// When `nil` (default), offline mode is auto-detected based on network connectivity.
+    public let useOfflineMode: Bool?
 
     /// The host URL for requests made by the client.
     public var host: URL {
@@ -95,17 +106,20 @@ public final class HubClient: Sendable {
     ///   - session: The URL session for network requests.
     ///   - userAgent: The value for the `User-Agent` header, if any.
     ///   - cache: The cache for downloaded files. Pass `nil` to disable caching.
+    ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         userAgent: String? = nil,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        useOfflineMode: Bool? = nil
     ) {
         self.init(
             session: session,
             host: Self.detectHost(),
             userAgent: userAgent,
             tokenProvider: .environment,
-            cache: cache
+            cache: cache,
+            useOfflineMode: useOfflineMode
         )
     }
 
@@ -118,19 +132,22 @@ public final class HubClient: Sendable {
     ///   - bearerToken: The Bearer token for authentication, if any. Defaults to `nil`.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///            Pass `nil` to disable caching.
+    ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         bearerToken: String? = nil,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        useOfflineMode: Bool? = nil
     ) {
         self.init(
             session: session,
             host: host,
             userAgent: userAgent,
             tokenProvider: bearerToken.map { .fixed(token: $0) } ?? .none,
-            cache: cache
+            cache: cache,
+            useOfflineMode: useOfflineMode
         )
     }
 
@@ -143,12 +160,14 @@ public final class HubClient: Sendable {
     ///   - tokenProvider: The token provider for authentication.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///            Pass `nil` to disable caching.
+    ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         tokenProvider: TokenProvider,
-        cache: HubCache? = .default
+        cache: HubCache? = .default,
+        useOfflineMode: Bool? = nil
     ) {
         self.httpClient = HTTPClient(
             host: host,
@@ -156,7 +175,13 @@ public final class HubClient: Sendable {
             tokenProvider: tokenProvider,
             session: session
         )
+        self.metadataSession = URLSession(
+            configuration: .default,
+            delegate: SameHostRedirectDelegate.shared,
+            delegateQueue: nil
+        )
         self.cache = cache
+        self.useOfflineMode = useOfflineMode
     }
 
     // MARK: - Auto-detection
@@ -173,5 +198,21 @@ public final class HubClient: Sendable {
             return url
         }
         return defaultHost
+    }
+
+    // MARK: - Offline Mode
+
+    /// Determines whether offline mode should be used.
+    ///
+    /// Returns `true` if:
+    /// - `useOfflineMode` is explicitly set to `true`, or
+    /// - `useOfflineMode` is `nil` and the network is unavailable
+    ///
+    /// - Returns: Whether to operate in offline mode.
+    func shouldUseOfflineMode() async -> Bool {
+        if let override = useOfflineMode {
+            return override
+        }
+        return await NetworkMonitor.shared.state.shouldUseOfflineMode()
     }
 }

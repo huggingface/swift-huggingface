@@ -1,27 +1,19 @@
-import Foundation
+// TODO: Delete this file before merging PR - kept only to demonstrate unreliable concurrent file access
 
-/// A file-based lock for coordinating access to shared resources.
+import Foundation
+import os
+
+private let logger = Logger()
+
+/// Original file lock implementation kept for comparison testing.
 ///
-/// `FileLock` provides file locking using `flock(2)` to enable safe
-/// concurrent access to cache files from multiple processes.
+/// This implementation has a bug where multiple `FileLockOriginal` instances
+/// for the same path each open their own file descriptor. Since `flock(2)` locks
+/// are per file descriptor (not per file), each instance can acquire the "same" lock
+/// simultaneously, defeating the purpose of locking.
 ///
-/// ## Usage
-///
-/// ```swift
-/// let lock = FileLock(path: blobPath)
-/// try lock.withLock {
-///     // Exclusive access to the resource
-///     try data.write(to: blobPath)
-/// }
-/// ```
-///
-/// The lock is automatically released when the closure completes or throws.
-///
-/// ## Lock File Location
-///
-/// The lock file is created alongside the target path with a `.lock` extension.
-/// For example, locking `/cache/blobs/abc123` creates `/cache/blobs/abc123.lock`.
-public struct FileLock: Sendable {
+/// Use `FileLock` from swift-filelock instead.
+struct FileLockOriginal: Sendable {
     /// The path to the lock file.
     public let lockPath: URL
 
@@ -31,13 +23,21 @@ public struct FileLock: Sendable {
     /// Delay between retry attempts in seconds.
     public let retryDelay: TimeInterval
 
+    /// Interval between log messages while waiting for a lock.
+    private static let logInterval: Int = 10
+
     /// Creates a file lock for the specified path.
     ///
     /// - Parameters:
-    ///   - path: The path to the resource being protected.
-    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 5.
+    ///   - path: The base path for the lock file. A `.lock` extension will be appended.
+    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 600 (10 minutes with 1s delay).
     ///   - retryDelay: Delay between retry attempts in seconds. Defaults to 1.0.
-    public init(path: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 1.0) {
+    ///
+    /// The default timeout is generous because the lock is held during file downloads,
+    /// which can take minutes for large models. Python's `huggingface_hub` uses `WeakFileLock`
+    /// which waits indefinitely by default and logs every 10 seconds while waiting. We use a
+    /// 10-minute timeout as a practical upper bound while matching the logging behavior.
+    public init(path: URL, maxRetries: Int = 600, retryDelay: TimeInterval = 1.0) {
         self.lockPath = path.appendingPathExtension("lock")
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
@@ -51,9 +51,9 @@ public struct FileLock: Sendable {
     ///
     /// - Parameter body: The closure to execute while holding the lock.
     /// - Returns: The value returned by the closure.
-    /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
+    /// - Throws: `FileLockOriginalError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
-    public func withLock<T>(_ body: () throws -> T) throws -> T {
+    public func withLockSync<T>(_ body: () throws -> T) throws -> T {
         let handle = try acquireLock()
         defer { releaseLock(handle) }
         return try body()
@@ -63,7 +63,7 @@ public struct FileLock: Sendable {
     ///
     /// - Parameter body: The async closure to execute while holding the lock.
     /// - Returns: The value returned by the closure.
-    /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
+    /// - Throws: `FileLockOriginalError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
     public func withLock<T>(_ body: () async throws -> T) async throws -> T {
         let handle = try await acquireLockAsync()
@@ -84,7 +84,7 @@ public struct FileLock: Sendable {
         }
 
         guard let handle = FileHandle(forWritingAtPath: lockPath.path) else {
-            throw FileLockError.acquisitionFailed(lockPath)
+            throw FileLockOriginalError.acquisitionFailed(lockPath)
         }
 
         return handle
@@ -96,40 +96,55 @@ public struct FileLock: Sendable {
 
     private func acquireLock() throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         for attempt in 0 ... maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info(
+                        "Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)"
+                    )
+                }
                 Thread.sleep(forTimeInterval: retryDelay)
             }
         }
 
         try? handle.close()
-        throw FileLockError.acquisitionFailed(lockPath)
+        throw FileLockOriginalError.acquisitionFailed(lockPath)
     }
 
     private func acquireLockAsync() async throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         for attempt in 0 ... maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info(
+                        "Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)"
+                    )
+                }
                 try await Task.sleep(for: .seconds(retryDelay))
             }
         }
 
         try? handle.close()
-        throw FileLockError.acquisitionFailed(lockPath)
+        throw FileLockOriginalError.acquisitionFailed(lockPath)
     }
 
     private func releaseLock(_ handle: FileHandle) {
         flock(handle.fileDescriptor, LOCK_UN)
         try? handle.close()
+        // Lock file left in place to avoid race conditions (see tox-dev/filelock#31).
     }
 }
 
 /// Errors that can occur during file locking operations.
-public enum FileLockError: Error, LocalizedError {
+public enum FileLockOriginalError: Error, LocalizedError {
     /// The lock could not be acquired after the maximum number of retries.
     case acquisitionFailed(URL)
 

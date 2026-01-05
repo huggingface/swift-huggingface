@@ -152,6 +152,8 @@ import Foundation
     // MARK: - Linux Download Delegate
 
     /// A delegate for tracking download progress on Linux.
+    /// Safe to mark @unchecked Sendable: mutable state is only accessed from URLSession's
+    /// delegate queue, which serializes all callbacks.
     private final class LinuxDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         let progress: Progress
         let continuation: CheckedContinuation<(URL, URLResponse), Error>
