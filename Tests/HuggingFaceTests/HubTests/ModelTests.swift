@@ -451,7 +451,13 @@ import Testing
     /// Integration tests that make real API calls to the Hugging Face Hub.
     /// These tests verify that our implementation works correctly with the actual API,
     /// catching issues like response format changes or pagination header changes.
-    @Suite("Model Integration Tests", .serialized)
+    ///
+    /// Skip these tests in CI by setting the `SKIP_INTEGRATION_TESTS` environment variable.
+    @Suite(
+        "Model Integration Tests",
+        .serialized,
+        .enabled(if: ProcessInfo.processInfo.environment["SKIP_INTEGRATION_TESTS"] == nil)
+    )
     struct ModelIntegrationTests {
         let client = HubClient()
 
