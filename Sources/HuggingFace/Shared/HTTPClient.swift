@@ -249,7 +249,8 @@ final class HTTPClient: @unchecked Sendable {
                     )
                 }
             } catch let error as HTTPClientError {
-                throw error  // Don't retry our own errors
+                // HTTPClientError is thrown after validation - the retry check already happened
+                throw error
             } catch {
                 // Retry on network errors (timeout, connection issues)
                 if attempt < retry.maxRetries {
