@@ -1012,6 +1012,8 @@ public extension HubClient {
         // Size-weighted progress: total is sum of file sizes (bytes)
         let totalBytes = entries.reduce(Int64(0)) { $0 + Int64($1.size ?? 1) }
         let totalProgress = Progress(totalUnitCount: totalBytes)
+        totalProgress.kind = .file
+        totalProgress.fileOperationKind = .downloading
         let startTime = CFAbsoluteTimeGetCurrent()
         progressHandler?(totalProgress)
 
