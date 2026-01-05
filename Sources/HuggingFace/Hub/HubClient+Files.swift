@@ -786,7 +786,8 @@ public extension HubClient {
                 if expectedTotalSize > 0 && totalBytesWritten != expectedTotalSize {
                     throw HubCacheError.integrityError(
                         expected: "\(expectedTotalSize) bytes",
-                        actual: "\(totalBytesWritten) bytes"
+                        actual: "\(totalBytesWritten) bytes",
+                        file: etag
                     )
                 }
 
@@ -1854,17 +1855,6 @@ private extension URL {
     }
 }
 
-/// Normalizes an ETag by removing the weak validator prefix and quotes.
-private func normalizeEtag(_ etag: String) -> String {
-    var result = etag
-    // Strip weak validator prefix if present (e.g., W/"abc" -> "abc")
-    if result.hasPrefix("W/") {
-        result = String(result.dropFirst(2))
-    }
-    // Strip surrounding quotes
-    return result.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-}
-
 /// Checks if a string is a valid Git commit hash (40 hex characters).
 private func isCommitHash(_ string: String) -> Bool {
     guard string.count == 40 else { return false }
@@ -1949,7 +1939,7 @@ extension HubClient {
 
         return FileMetadata(
             commitHash: commitHash,
-            etag: etag.map { normalizeEtag($0) }
+            etag: etag.map { HubCache.normalizeEtag($0) }
         )
     }
 }

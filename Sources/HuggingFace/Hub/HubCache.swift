@@ -282,7 +282,7 @@ public struct HubCache: Sendable {
     ///   - etag: The normalized etag of the blob.
     /// - Returns: The URL to the blob if it exists, `nil` otherwise.
     public func cachedBlobPath(repo: Repo.ID, kind: Repo.Kind, etag: String) -> URL? {
-        let normalizedEtag = normalizeEtag(etag)
+        let normalizedEtag = Self.normalizeEtag(etag)
         let blobPath = blobsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(normalizedEtag)
 
@@ -325,7 +325,7 @@ public struct HubCache: Sendable {
         etag: String,
         ref: String? = nil
     ) async throws {
-        let normalizedEtag = normalizeEtag(etag)
+        let normalizedEtag = Self.normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
         try validatePathComponent(normalizedEtag)
@@ -406,7 +406,7 @@ public struct HubCache: Sendable {
         etag: String,
         ref: String? = nil
     ) async throws {
-        let normalizedEtag = normalizeEtag(etag)
+        let normalizedEtag = Self.normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
         try validatePathComponent(normalizedEtag)
@@ -472,17 +472,14 @@ public struct HubCache: Sendable {
     ///
     /// - Parameter etag: The raw etag from the HTTP response.
     /// - Returns: The normalized etag suitable for use as a filename.
-    public func normalizeEtag(_ etag: String) -> String {
+    public static func normalizeEtag(_ etag: String) -> String {
         var normalized = etag
-
         // Remove weak validator prefix
         if normalized.hasPrefix("W/") {
             normalized = String(normalized.dropFirst(2))
         }
-
         // Remove surrounding quotes
         normalized = normalized.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-
         return normalized
     }
 
@@ -574,7 +571,7 @@ public struct HubCache: Sendable {
         filename: String,
         etag: String
     ) throws {
-        let normalizedEtag = normalizeEtag(etag)
+        let normalizedEtag = Self.normalizeEtag(etag)
 
         // Validate path components
         try validatePathComponent(normalizedEtag)
@@ -658,7 +655,7 @@ public enum HubCacheError: Error, LocalizedError {
     case invalidPathComponent(String)
 
     /// File integrity check failed (hash mismatch).
-    case integrityError(expected: String, actual: String)
+    case integrityError(expected: String, actual: String, file: String)
 
     /// Offline mode is enabled but the requested resource is not available in cache.
     case offlineModeError(String)
@@ -668,8 +665,8 @@ public enum HubCacheError: Error, LocalizedError {
         case .invalidPathComponent(let component):
             return
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
-        case .integrityError(let expected, let actual):
-            return "File integrity check failed: expected \(expected), got \(actual)"
+        case .integrityError(let expected, let actual, let file):
+            return "File integrity check failed for '\(file)': expected \(expected), got \(actual)"
         case .offlineModeError(let message):
             return "Offline mode: \(message)"
         }
