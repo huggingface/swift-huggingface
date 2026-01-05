@@ -58,6 +58,10 @@ public final class HubClient: Sendable {
     /// The underlying HTTP client.
     internal let httpClient: HTTPClient
 
+    /// Session for fetching file metadata without following CDN redirects.
+    /// Uses `SameHostRedirectDelegate` to capture X-Linked-Etag and X-Repo-Commit headers.
+    internal let metadataSession: URLSession
+
     /// The cache for downloaded files, or `nil` if caching is disabled.
     ///
     /// When set, downloaded files are stored in a Python-compatible cache structure,
@@ -170,6 +174,11 @@ public final class HubClient: Sendable {
             userAgent: userAgent,
             tokenProvider: tokenProvider,
             session: session
+        )
+        self.metadataSession = URLSession(
+            configuration: .default,
+            delegate: SameHostRedirectDelegate.shared,
+            delegateQueue: nil
         )
         self.cache = cache
         self.useOfflineMode = useOfflineMode

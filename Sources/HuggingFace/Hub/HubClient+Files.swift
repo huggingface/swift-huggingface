@@ -1910,12 +1910,7 @@ extension HubClient {
     func fetchFileMetadata(url: URL) async throws -> FileMetadata {
         let request = try await httpClient.createRequest(.head, url: url)
 
-        // Create a session that follows same-host redirects but blocks CDN redirects
-        let config = URLSessionConfiguration.default
-        let session = URLSession(configuration: config, delegate: SameHostRedirectDelegate.shared, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-
-        let (_, response) = try await session.data(for: request)
+        let (_, response) = try await metadataSession.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             return FileMetadata(commitHash: nil, etag: nil)
@@ -1939,7 +1934,7 @@ extension HubClient {
 /// - Relative redirects (e.g., renamed repos on same host) are followed automatically.
 /// - Absolute redirects (e.g., to CDN) are blocked so we can capture X-Repo-Commit and X-Linked-Etag headers.
 /// Safe to mark @unchecked Sendable: stateless singleton with no mutable state.
-private final class SameHostRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class SameHostRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = SameHostRedirectDelegate()
     private override init() { super.init() }
 
