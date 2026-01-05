@@ -19,7 +19,9 @@ public extension HubClient {
     ///   - filter: Filter based on tags (e.g., "text-classification").
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
-    ///   - limit: Maximum number of models to return. Also used as page size for API requests.
+    ///   - limit: Maximum total number of models to return across all pages. This also sets the
+///            API's per-page size for efficiency. For example, `limit: 100` returns at most
+///            100 models total (matching Python's `list_models(limit=100)` behavior).
     ///   - full: Whether to fetch most model data, such as all tags, the files, etc.
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: An async sequence of models.

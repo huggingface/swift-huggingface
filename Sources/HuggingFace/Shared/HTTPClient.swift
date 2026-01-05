@@ -75,7 +75,8 @@ struct RetryConfiguration: Sendable {
         retryOnStatusCodes: [429, 500, 502, 503, 504]
     )
 
-    /// No retries - for first page requests.
+    /// No retries - used for first page requests where we want immediate failure feedback.
+    /// Subsequent pages use `.default` retry to handle transient failures during pagination.
     static let none = RetryConfiguration(
         maxRetries: 0,
         baseWaitTime: 0,
