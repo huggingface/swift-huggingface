@@ -162,7 +162,7 @@ private func makeProgressStream() -> (
             // Record file timestamp
             let configPath = destination.appendingPathComponent("config.json")
             let attrs1 = try FileManager.default.attributesOfItem(atPath: configPath.path)
-            let timestamp1 = attrs1[.modificationDate] as! Date
+            let timestamp1 = try #require(attrs1[.modificationDate] as? Date)
 
             // Short delay
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -175,7 +175,7 @@ private func makeProgressStream() -> (
             )
 
             let attrs2 = try FileManager.default.attributesOfItem(atPath: configPath.path)
-            let timestamp2 = attrs2[.modificationDate] as! Date
+            let timestamp2 = try #require(attrs2[.modificationDate] as? Date)
 
             // File should not have been modified (cache hit)
             #expect(timestamp1 == timestamp2)

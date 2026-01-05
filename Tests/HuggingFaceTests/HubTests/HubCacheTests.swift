@@ -180,27 +180,21 @@ struct HubCacheTests {
 
     @Test("Normalize etag removes quotes")
     func normalizeEtagQuotes() throws {
-        let cache = HubCache(cacheDirectory: tempDirectory)
-
-        let normalized = cache.normalizeEtag("\"abc123\"")
+        let normalized = HubCache.normalizeEtag("\"abc123\"")
 
         #expect(normalized == "abc123")
     }
 
     @Test("Normalize etag removes weak validator prefix")
     func normalizeEtagWeakPrefix() throws {
-        let cache = HubCache(cacheDirectory: tempDirectory)
-
-        let normalized = cache.normalizeEtag("W/\"abc123\"")
+        let normalized = HubCache.normalizeEtag("W/\"abc123\"")
 
         #expect(normalized == "abc123")
     }
 
     @Test("Normalize etag handles plain etag")
     func normalizeEtagPlain() throws {
-        let cache = HubCache(cacheDirectory: tempDirectory)
-
-        let normalized = cache.normalizeEtag("abc123")
+        let normalized = HubCache.normalizeEtag("abc123")
 
         #expect(normalized == "abc123")
     }
