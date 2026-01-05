@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger()
 
 /// A file-based lock for coordinating access to shared resources.
 ///
@@ -8,10 +11,10 @@ import Foundation
 /// ## Usage
 ///
 /// ```swift
-/// let lock = FileLock(path: blobPath)
-/// try lock.withLock {
+/// let lock = FileLock(path: metadataDir.appending(path: "file"))
+/// try await lock.withLock {
 ///     // Exclusive access to the resource
-///     try data.write(to: blobPath)
+///     try data.write(to: targetPath)
 /// }
 /// ```
 ///
@@ -19,8 +22,8 @@ import Foundation
 ///
 /// ## Lock File Location
 ///
-/// The lock file is created alongside the target path with a `.lock` extension.
-/// For example, locking `/cache/blobs/abc123` creates `/cache/blobs/abc123.lock`.
+/// The lock file is created at the specified path with a `.lock` extension.
+/// Callers typically pass a path in a metadata directory to keep lock files hidden from users.
 public struct FileLock: Sendable {
     /// The path to the lock file.
     public let lockPath: URL
@@ -31,13 +34,21 @@ public struct FileLock: Sendable {
     /// Delay between retry attempts in seconds.
     public let retryDelay: TimeInterval
 
+    /// Interval between log messages while waiting for a lock.
+    private static let logInterval: Int = 10
+
     /// Creates a file lock for the specified path.
     ///
     /// - Parameters:
-    ///   - path: The path to the resource being protected.
-    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 5.
+    ///   - path: The base path for the lock file. A `.lock` extension will be appended.
+    ///   - maxRetries: Maximum number of lock acquisition attempts. Defaults to 600 (10 minutes with 1s delay).
     ///   - retryDelay: Delay between retry attempts in seconds. Defaults to 1.0.
-    public init(path: URL, maxRetries: Int = 5, retryDelay: TimeInterval = 1.0) {
+    ///
+    /// The default timeout is generous because the lock is held during file downloads,
+    /// which can take minutes for large models. Python's `huggingface_hub` uses `WeakFileLock`
+    /// which waits indefinitely by default and logs every 10 seconds while waiting. We use a
+    /// 10-minute timeout as a practical upper bound while matching the logging behavior.
+    public init(path: URL, maxRetries: Int = 600, retryDelay: TimeInterval = 1.0) {
         self.lockPath = path.appendingPathExtension("lock")
         self.maxRetries = maxRetries
         self.retryDelay = retryDelay
@@ -98,10 +109,15 @@ public struct FileLock: Sendable {
 
     private func acquireLock() throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
-        for attempt in 0 ... maxRetries {
+        for attempt in 0...maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                }
                 Thread.sleep(forTimeInterval: retryDelay)
             }
         }
@@ -112,10 +128,15 @@ public struct FileLock: Sendable {
 
     private func acquireLockAsync() async throws -> FileHandle {
         let handle = try prepareLockFile()
+        let startTime = CFAbsoluteTimeGetCurrent()
 
-        for attempt in 0 ... maxRetries {
+        for attempt in 0...maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
+                if attempt > 0, attempt % Self.logInterval == 0 {
+                    let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                }
                 try await Task.sleep(for: .seconds(retryDelay))
             }
         }
@@ -127,8 +148,7 @@ public struct FileLock: Sendable {
     private func releaseLock(_ handle: FileHandle) {
         flock(handle.fileDescriptor, LOCK_UN)
         try? handle.close()
-        // Clean up the lock file after releasing
-        try? FileManager.default.removeItem(at: lockPath)
+        // Lock file left in place to avoid race conditions (see tox-dev/filelock#31).
     }
 }
 
