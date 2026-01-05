@@ -1,5 +1,5 @@
 {
-  "originHash" : "e37736907e37a8bab75e0e84934e15f18e6586dfd87dad6089a376a5d9f43c5b",
+  "originHash" : "37c8f5c7f7d09ee67f650a65e095ec5741ec2aa8455eb5ebe3fe2cc2618b0316",
   "pins" : [
     {
       "identity" : "eventsource",
@@ -33,8 +33,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/DePasqualeOrg/swift-filelock.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "40659d1840a2278135b9d1c581e11161c885929a"
+        "revision" : "36da4b004a91e915170fae065e7d46a7a8bf0e3d",
+        "version" : "0.1.0"
       }
     }
   ],

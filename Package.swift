@@ -20,9 +20,9 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
-        .package(url: "https://github.com/DePasqualeOrg/swift-filelock", branch: "main"),
+        .package(url: "https://github.com/mattt/EventSource", from: "1.0.0"),
+        .package(url: "https://github.com/apple/swift-crypto", "1.0.0" ..< "5.0.0"),
+        .package(url: "https://github.com/DePasqualeOrg/swift-filelock", from: "0.1.0"),
     ],
     targets: [
         .target(
