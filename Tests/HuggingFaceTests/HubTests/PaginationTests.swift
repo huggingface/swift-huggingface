@@ -438,10 +438,367 @@ struct PaginationTests {
     }
 }
 
+#if swift(>=6.1)
+    // MARK: - Retry Logic Tests
+
+    /// Tests for HTTP retry logic in pagination with exponential backoff.
+    @Suite("Retry Logic Tests", .serialized)
+    struct RetryLogicTests {
+        /// Helper to create a URL session with mock protocol handlers
+        func createMockClient() -> HubClient {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MockURLProtocol.self]
+            let session = URLSession(configuration: configuration)
+            return HubClient(
+                session: session,
+                host: URL(string: "https://huggingface.co")!,
+                userAgent: "TestClient/1.0"
+            )
+        }
+
+        // MARK: - First Page Behavior
+
+        @Test(
+            "First page does not retry on server errors",
+            arguments: [429, 500, 502, 503, 504]
+        )
+        func firstPageNoRetry(statusCode: Int) async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: statusCode,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data("{\"error\": \"Error\"}".utf8))
+            }
+
+            let client = createMockClient()
+
+            await #expect(throws: HTTPClientError.self) {
+                for try await _ in client.listAllModels() {}
+            }
+
+            // First page uses .none retry config - only 1 request, no retries
+            #expect(requestCount == 1)
+        }
+
+        // MARK: - Subsequent Page Retry Behavior
+
+        @Test(
+            "Subsequent page retries on server errors and succeeds",
+            arguments: [429, 500, 502, 503, 504]
+        )
+        func retryOnServerError(statusCode: Int) async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    // First page succeeds with next link
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                } else if requestCount == 2 {
+                    // Second page fails with the test status code
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: statusCode,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Retry-After": "0"]
+                    )!
+                    return (response, Data())
+                } else {
+                    // Retry succeeds
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data("[{\"id\": \"model/2\"}]".utf8))
+                }
+            }
+
+            let client = createMockClient()
+            var models: [Model] = []
+            for try await model in client.listAllModels() {
+                models.append(model)
+            }
+
+            #expect(models.count == 2)
+            #expect(requestCount == 3)  // first page + error + retry success
+        }
+
+        @Test(
+            "Does not retry on client errors",
+            arguments: [400, 401, 403, 404, 422]
+        )
+        func noRetryOnClientError(statusCode: Int) async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                }
+
+                // Client errors should not be retried
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: statusCode,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data("{\"error\": \"Client Error\"}".utf8))
+            }
+
+            let client = createMockClient()
+
+            await #expect(throws: HTTPClientError.self) {
+                for try await _ in client.listAllModels() {}
+            }
+
+            // No retry on client errors - just 2 requests total
+            #expect(requestCount == 2)
+        }
+
+        // MARK: - Retry Exhaustion
+
+        @Test("Exhausts all retries and throws error", .mockURLSession)
+        func exhaustsRetriesAndThrows() async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                }
+
+                // All subsequent requests fail
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data("{\"error\": \"Service Unavailable\"}".utf8))
+            }
+
+            let client = createMockClient()
+
+            await #expect(throws: HTTPClientError.self) {
+                for try await _ in client.listAllModels() {}
+            }
+
+            // RetryConfiguration.default has maxRetries=5
+            // Loop runs for attempts 0...5 = 6 attempts for second page
+            // Total: 1 (first page) + 6 (second page attempts) = 7
+            #expect(requestCount == 7)
+        }
+
+        // MARK: - Rate Limit Header Behavior
+
+        @Test("Uses RateLimit header wait time on 429", .mockURLSession)
+        func usesRateLimitHeaderForWaitTime() async throws {
+            nonisolated(unsafe) var requestCount = 0
+            nonisolated(unsafe) var timestamps: [Date] = []
+
+            await MockURLProtocol.setHandler { request in
+                timestamps.append(Date())
+                requestCount += 1
+
+                if requestCount == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                } else if requestCount == 2 {
+                    // 429 with RateLimit header saying wait 1 second
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 429,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["RateLimit": "\"api\";r=0;t=1"]
+                    )!
+                    return (response, Data())
+                } else {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data("[{\"id\": \"model/2\"}]".utf8))
+                }
+            }
+
+            let client = createMockClient()
+            var models: [Model] = []
+            for try await model in client.listAllModels() {
+                models.append(model)
+            }
+
+            #expect(models.count == 2)
+            #expect(requestCount == 3)
+
+            // Verify wait time: header says t=1, code adds +1 for safety = 2 seconds
+            if timestamps.count >= 3 {
+                let delay = timestamps[2].timeIntervalSince(timestamps[1])
+                #expect(delay >= 1.5)
+            }
+        }
+
+        // MARK: - Network Error Retry
+
+        @Test("Retries on network errors", .mockURLSession)
+        func retriesOnNetworkError() async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                } else if requestCount == 2 {
+                    // Simulate network error
+                    throw URLError(.notConnectedToInternet)
+                } else {
+                    // Retry succeeds
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data("[{\"id\": \"model/2\"}]".utf8))
+                }
+            }
+
+            let client = createMockClient()
+            var models: [Model] = []
+            for try await model in client.listAllModels() {
+                models.append(model)
+            }
+
+            #expect(models.count == 2)
+            #expect(requestCount == 3)  // first page + network error + retry success
+        }
+
+        // MARK: - Task Cancellation
+
+        @Test("Respects task cancellation during retry", .mockURLSession)
+        func respectsTaskCancellation() async throws {
+            nonisolated(unsafe) var requestCount = 0
+
+            await MockURLProtocol.setHandler { request in
+                requestCount += 1
+
+                if requestCount == 1 {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link": "<https://huggingface.co/api/models?cursor=page2>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data("[{\"id\": \"model/1\"}]".utf8))
+                }
+
+                // Keep returning 503 to trigger retry loop
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 503,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let client = createMockClient()
+
+            let task = Task {
+                var models: [Model] = []
+                for try await model in client.listAllModels() {
+                    models.append(model)
+                }
+                return models
+            }
+
+            // Give time for first page to complete and retry loop to start
+            try await Task.sleep(for: .milliseconds(100))
+
+            // Cancel the task
+            task.cancel()
+
+            // Task should throw CancellationError
+            await #expect(throws: (any Error).self) {
+                _ = try await task.value
+            }
+
+            // Should have made fewer requests than exhausting all retries (7)
+            #expect(requestCount < 7)
+        }
+    }
+#endif  // swift(>=6.1)
+
 // MARK: - Integration Tests (Real API Calls)
 
 /// Integration tests for pagination that make real API calls.
-@Suite("Pagination Integration Tests")
+///
+/// Skip these tests in CI by setting the `SKIP_INTEGRATION_TESTS` environment variable.
+@Suite(
+    "Pagination Integration Tests",
+    .enabled(if: ProcessInfo.processInfo.environment["SKIP_INTEGRATION_TESTS"] == nil)
+)
 struct PaginationIntegrationTests {
     @Test("Paginate over Hugging Face API models")
     func paginateHuggingFaceAPI() async throws {
