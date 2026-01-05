@@ -441,7 +441,8 @@ private func makeProgressStream() -> (
             let snapshotsDir = cache.snapshotsDirectory(repo: repoID, kind: .model)
             if let contents = try? FileManager.default.contentsOfDirectory(atPath: snapshotsDir.path) {
                 for commitDir in contents {
-                    let snapshotFile = snapshotsDir
+                    let snapshotFile =
+                        snapshotsDir
                         .appendingPathComponent(commitDir)
                         .appendingPathComponent(filename)
                     try? FileManager.default.removeItem(at: snapshotFile)
@@ -530,7 +531,8 @@ private func makeProgressStream() -> (
             let snapshotsDir = cache.snapshotsDirectory(repo: repoID, kind: .model)
             if let contents = try? FileManager.default.contentsOfDirectory(atPath: snapshotsDir.path) {
                 for commitDir in contents {
-                    let snapshotFile = snapshotsDir
+                    let snapshotFile =
+                        snapshotsDir
                         .appendingPathComponent(commitDir)
                         .appendingPathComponent(filename)
                     try? FileManager.default.removeItem(at: snapshotFile)
@@ -594,7 +596,7 @@ private func makeProgressStream() -> (
             // Launch concurrent downloads of the same file
             let concurrentCount = 5
             try await withThrowingTaskGroup(of: URL.self) { group in
-                for i in 0..<concurrentCount {
+                for i in 0 ..< concurrentCount {
                     let dest = Self.downloadDestination.appending(path: "concurrent-dest-\(i)")
                     try? FileManager.default.removeItem(at: dest)
                     try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
@@ -624,7 +626,7 @@ private func makeProgressStream() -> (
 
             // Verify all destination files have identical content
             var contents: [Data] = []
-            for i in 0..<concurrentCount {
+            for i in 0 ..< concurrentCount {
                 let dest = Self.downloadDestination
                     .appending(path: "concurrent-dest-\(i)")
                     .appendingPathComponent(filename)
