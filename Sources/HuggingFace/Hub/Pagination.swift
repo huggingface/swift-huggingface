@@ -25,6 +25,10 @@ public struct PaginatedSequence<T: Decodable & Sendable>: AsyncSequence, Sendabl
         firstPage: @escaping @Sendable () async throws -> PaginatedResponse<T>,
         nextPage: @escaping @Sendable (URL) async throws -> PaginatedResponse<T>
     ) {
+        // Match Python's islice behavior: negative values are invalid
+        if let limit, limit < 0 {
+            preconditionFailure("limit must be non-negative, got \(limit)")
+        }
         self.limit = limit
         firstPageFetcher = firstPage
         nextPageFetcher = nextPage
