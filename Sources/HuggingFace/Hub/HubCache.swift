@@ -1,3 +1,4 @@
+import FileLock
 import Foundation
 
 #if canImport(FoundationNetworking)
@@ -341,7 +342,7 @@ public struct HubCache: Sendable {
         // Store blob (content-addressed) with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lockPath = locksDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: lockPath)
+        let lock = FileLock(lockPath: lockPath.appendingPathExtension("lock"))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
@@ -422,7 +423,7 @@ public struct HubCache: Sendable {
         // Store blob with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lockPath = locksDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: lockPath)
+        let lock = FileLock(lockPath: lockPath.appendingPathExtension("lock"))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {

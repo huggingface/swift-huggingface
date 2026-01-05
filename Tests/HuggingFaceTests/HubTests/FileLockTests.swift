@@ -1,3 +1,4 @@
+import FileLock
 import Foundation
 
 #if canImport(FoundationNetworking)
@@ -7,7 +8,7 @@ import Testing
 
 @testable import HuggingFace
 
-@Suite("FileLock Tests")
+@Suite("FileLock Integration Tests")
 struct FileLockTests {
     let tempDirectory: URL
 
@@ -20,121 +21,85 @@ struct FileLockTests {
         )
     }
 
-    // MARK: - Basic Lock Tests
+    // MARK: - Comparison Tests
 
-    @Test("Lock can be acquired on new file")
-    func acquireLockNewFile() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
+    // TODO: Delete this test before merging PR - kept only to demonstrate unreliable concurrent file access
+    @Test("FileLockOriginal fails to serialize concurrent access from separate instances")
+    func fileLockOriginalRaceCondition() async throws {
+        // This test demonstrates the bug in FileLockOriginal:
+        // When multiple instances are created for the same path, each opens its own
+        // file descriptor. Since flock() locks are per-descriptor (not per-file),
+        // each instance can acquire the "lock" simultaneously.
 
-        var executed = false
-        try await lock.withLock {
-            executed = true
-        }
+        let lockPath = tempDirectory.appendingPathComponent("race-test")
+        let dataPath = tempDirectory.appendingPathComponent("counter.txt")
 
-        #expect(executed)
-    }
+        // Initialize counter file
+        try "0".write(to: dataPath, atomically: true, encoding: .utf8)
 
-    @Test("Lock file is created with .lock extension")
-    func lockFileCreated() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        try await lock.withLock {
-            // Lock file should exist while we hold the lock
-            #expect(FileManager.default.fileExists(atPath: lock.lockPath.path))
-        }
-    }
-
-    @Test("Lock path has correct extension")
-    func lockPathExtension() throws {
-        let targetPath = tempDirectory.appendingPathComponent("blob-abc123")
-        let lock = FileLock(path: targetPath)
-
-        #expect(lock.lockPath.pathExtension == "lock")
-        #expect(lock.lockPath.deletingPathExtension().lastPathComponent == "blob-abc123")
-    }
-
-    @Test("Sequential lock execution works")
-    func sequentialLockExecution() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        var value = 0
-        try await lock.withLock {
-            value = 1
-        }
-        try await lock.withLock {
-            value = 2
-        }
-
-        #expect(value == 2)
-    }
-
-    @Test("Lock returns value from closure")
-    func lockReturnsValue() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        let result = try await lock.withLock {
-            return 42
-        }
-
-        #expect(result == 42)
-    }
-
-    @Test("Lock propagates errors from closure")
-    func lockPropagatesErrors() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        struct TestError: Error {}
-
-        await #expect(throws: TestError.self) {
-            try await lock.withLock {
-                throw TestError()
-            }
-        }
-    }
-
-    // MARK: - Concurrent Access Tests
-
-    @Test("Concurrent writes are serialized")
-    func concurrentWritesSerialized() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("concurrent-test.txt")
-        let dataPath = tempDirectory.appendingPathComponent("data.txt")
-        let lock = FileLock(path: targetPath)
-
-        // Create the data file
-        try "".write(to: dataPath, atomically: true, encoding: .utf8)
-
-        // Run multiple concurrent tasks that each try to append to the file
+        let iterations = 50
         await withTaskGroup(of: Void.self) { group in
-            for i in 0 ..< 10 {
+            for _ in 0..<iterations {
                 group.addTask {
-                    do {
-                        try await lock.withLock {
-                            // Read current content
-                            let current = try String(contentsOf: dataPath, encoding: .utf8)
-                            // Append our value
-                            let new = current + "\(i)\n"
-                            // Small delay to increase chance of race conditions without lock
-                            try await Task.sleep(for: .milliseconds(10))
-                            // Write back
-                            try new.write(to: dataPath, atomically: true, encoding: .utf8)
-                        }
-                    } catch {
-                        // Lock acquisition may fail in test due to timing
+                    // Each task creates its own FileLockOriginal instance
+                    let lock = FileLockOriginal(path: lockPath)
+                    try? await lock.withLock {
+                        // Read-modify-write should be atomic if lock works correctly
+                        let current = Int(try! String(contentsOf: dataPath, encoding: .utf8))!
+                        // Small delay to increase chance of race condition
+                        try? await Task.sleep(for: .milliseconds(1))
+                        try! String(current + 1).write(to: dataPath, atomically: true, encoding: .utf8)
                     }
                 }
             }
         }
 
-        // Verify file has content (some writes may have been skipped due to lock contention)
-        let finalContent = try String(contentsOf: dataPath, encoding: .utf8)
-        let lines = finalContent.split(separator: "\n")
-        // At least some writes should have succeeded
-        #expect(lines.count > 0)
+        let finalValue = Int(try String(contentsOf: dataPath, encoding: .utf8))!
+
+        // With proper locking, finalValue should equal iterations (50)
+        // With the buggy implementation, concurrent access causes lost updates
+        #expect(
+            finalValue < iterations,
+            "FileLockOriginal should fail to serialize (got \(finalValue), expected < \(iterations))"
+        )
+    }
+
+    @Test("FileLock properly serializes concurrent access from separate instances")
+    func fileLockProperSerialization() async throws {
+        // This test demonstrates that the new FileLock from swift-filelock
+        // properly serializes access even when multiple instances are created
+        // for the same path, because it uses a shared context per path.
+
+        let lockPath = tempDirectory.appendingPathComponent("proper-test.lock")
+        let dataPath = tempDirectory.appendingPathComponent("counter2.txt")
+
+        // Initialize counter file
+        try "0".write(to: dataPath, atomically: true, encoding: .utf8)
+
+        let iterations = 50
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0..<iterations {
+                group.addTask {
+                    // Each task creates its own FileLock instance, but they share context
+                    let lock = FileLock(lockPath: lockPath)
+                    try? await lock.withLock {
+                        // Read-modify-write is properly serialized
+                        let current = Int(try! String(contentsOf: dataPath, encoding: .utf8))!
+                        // Small delay to increase chance of race condition if lock is broken
+                        try? await Task.sleep(for: .milliseconds(1))
+                        try! String(current + 1).write(to: dataPath, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+
+        let finalValue = Int(try String(contentsOf: dataPath, encoding: .utf8))!
+
+        // With proper locking, finalValue should equal iterations (50)
+        #expect(
+            finalValue == iterations,
+            "FileLock should properly serialize (got \(finalValue), expected \(iterations))"
+        )
     }
 
     // MARK: - HubCache Integration Tests
@@ -177,9 +142,6 @@ struct FileLockTests {
 
         let storedContent = try String(contentsOf: blobPath, encoding: .utf8)
         #expect(storedContent == content)
-
-        // Verify lock file was created (and may still exist)
-        // Lock file existence is implementation detail, just verify no corruption
     }
 
     @Test("HubCache storeData uses locking")

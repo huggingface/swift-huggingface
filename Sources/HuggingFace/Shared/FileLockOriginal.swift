@@ -1,30 +1,19 @@
+// TODO: Delete this file before merging PR - kept only to demonstrate unreliable concurrent file access
+
 import Foundation
 import os
 
 private let logger = Logger()
 
-/// A file-based lock for coordinating access to shared resources.
+/// Original file lock implementation kept for comparison testing.
 ///
-/// `FileLock` provides file locking using `flock(2)` to enable safe
-/// concurrent access to cache files from multiple processes.
+/// This implementation has a bug where multiple `FileLockOriginal` instances
+/// for the same path each open their own file descriptor. Since `flock(2)` locks
+/// are per file descriptor (not per file), each instance can acquire the "same" lock
+/// simultaneously, defeating the purpose of locking.
 ///
-/// ## Usage
-///
-/// ```swift
-/// let lock = FileLock(path: metadataDir.appending(path: "file"))
-/// try await lock.withLock {
-///     // Exclusive access to the resource
-///     try data.write(to: targetPath)
-/// }
-/// ```
-///
-/// The lock is automatically released when the closure completes or throws.
-///
-/// ## Lock File Location
-///
-/// The lock file is created at the specified path with a `.lock` extension.
-/// Callers typically pass a path in a metadata directory to keep lock files hidden from users.
-public struct FileLock: Sendable {
+/// Use `FileLock` from swift-filelock instead.
+struct FileLockOriginal: Sendable {
     /// The path to the lock file.
     public let lockPath: URL
 
@@ -62,7 +51,7 @@ public struct FileLock: Sendable {
     ///
     /// - Parameter body: The closure to execute while holding the lock.
     /// - Returns: The value returned by the closure.
-    /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
+    /// - Throws: `FileLockOriginalError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
     public func withLockSync<T>(_ body: () throws -> T) throws -> T {
         let handle = try acquireLock()
@@ -74,7 +63,7 @@ public struct FileLock: Sendable {
     ///
     /// - Parameter body: The async closure to execute while holding the lock.
     /// - Returns: The value returned by the closure.
-    /// - Throws: `FileLockError.acquisitionFailed` if the lock cannot be acquired,
+    /// - Throws: `FileLockOriginalError.acquisitionFailed` if the lock cannot be acquired,
     ///           or any error thrown by the closure.
     public func withLock<T>(_ body: () async throws -> T) async throws -> T {
         let handle = try await acquireLockAsync()
@@ -95,7 +84,7 @@ public struct FileLock: Sendable {
         }
 
         guard let handle = FileHandle(forWritingAtPath: lockPath.path) else {
-            throw FileLockError.acquisitionFailed(lockPath)
+            throw FileLockOriginalError.acquisitionFailed(lockPath)
         }
 
         return handle
@@ -121,7 +110,7 @@ public struct FileLock: Sendable {
         }
 
         try? handle.close()
-        throw FileLockError.acquisitionFailed(lockPath)
+        throw FileLockOriginalError.acquisitionFailed(lockPath)
     }
 
     private func acquireLockAsync() async throws -> FileHandle {
@@ -140,7 +129,7 @@ public struct FileLock: Sendable {
         }
 
         try? handle.close()
-        throw FileLockError.acquisitionFailed(lockPath)
+        throw FileLockOriginalError.acquisitionFailed(lockPath)
     }
 
     private func releaseLock(_ handle: FileHandle) {
@@ -151,7 +140,7 @@ public struct FileLock: Sendable {
 }
 
 /// Errors that can occur during file locking operations.
-public enum FileLockError: Error, LocalizedError {
+public enum FileLockOriginalError: Error, LocalizedError {
     /// The lock could not be acquired after the maximum number of retries.
     case acquisitionFailed(URL)
 
