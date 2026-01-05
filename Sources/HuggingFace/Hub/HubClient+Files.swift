@@ -1091,6 +1091,15 @@ public extension HubClient {
     /// In offline mode (explicit or auto-detected), this method returns cached files
     /// without making network requests. An error is thrown if required files are not cached.
     ///
+    /// Downloads can be cancelled by cancelling the enclosing task:
+    /// ```swift
+    /// let task = Task {
+    ///     try await client.downloadSnapshot(of: "repo/id", to: destination)
+    /// }
+    /// // Later:
+    /// task.cancel()
+    /// ```
+    ///
     /// - Parameters:
     ///   - repo: Repository identifier
     ///   - kind: Kind of repository
