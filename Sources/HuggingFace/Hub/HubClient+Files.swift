@@ -174,6 +174,14 @@ public extension HubClient {
 
 // MARK: - Download Operations
 
+/// Constants for download operations.
+private enum DownloadConstants {
+    /// Size of the buffer for streaming downloads (64 KB).
+    static let bufferSize = 65536
+    /// Interval between speed updates during downloads (250 ms).
+    static let speedUpdateIntervalNanoseconds: UInt64 = 250_000_000
+}
+
 public extension HubClient {
     /// Download file data using URLSession.dataTask
     /// - Parameters:
@@ -606,7 +614,7 @@ public extension HubClient {
                 // Stream bytes to file
                 var totalBytesWritten = resumeSize
                 var buffer = Data()
-                let bufferSize = 65536
+                let bufferSize = DownloadConstants.bufferSize
 
                 for try await byte in asyncBytes {
                     try Task.checkCancellation()
@@ -1030,7 +1038,7 @@ public extension HubClient {
         // Track speed updates - updated periodically, handler called after file completions
         let speedUpdateTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)  // 250ms
+                try? await Task.sleep(nanoseconds: DownloadConstants.speedUpdateIntervalNanoseconds)
                 let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                 let bytesCompleted = totalProgress.completedUnitCount
                 // Only report speed after we've actually downloaded something
