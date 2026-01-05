@@ -10,16 +10,15 @@ public struct Tags: Sendable {
     }
 
     /// Information about a single tag.
-    public struct Entry: Identifiable, Sendable {
+    public struct Entry: Identifiable, Sendable, Codable {
         /// The tag identifier.
         public let id: String
 
         /// The tag label.
         public let label: String
 
-        /// The number of repositories with this tag.
-        public let count: Int?
-
+        /// The tag type (e.g., "library", "license", "pipeline_tag").
+        public let type: String
     }
 }
 
@@ -38,35 +37,6 @@ extension Tags: Codable {
     }
 }
 
-extension Tags.Entry: Codable {
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case label
-        case modelCount
-        case datasetCount
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(String.self, forKey: .id)
-        self.label = try container.decode(String.self, forKey: .label)
-        if let modelCount = try container.decodeIfPresent(Int.self, forKey: .modelCount) {
-            self.count = modelCount
-        } else if let datasetCount = try container.decodeIfPresent(Int.self, forKey: .datasetCount) {
-            self.count = datasetCount
-        } else {
-            self.count = nil
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(id, forKey: .id)
-        try container.encode(label, forKey: .label)
-        try container.encode(count, forKey: .modelCount)
-        try container.encode(count, forKey: .datasetCount)
-    }
-}
 
 // MARK: - Collection
 

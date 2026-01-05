@@ -170,18 +170,17 @@ import Testing
 
         @Test("Get dataset tags", .mockURLSession)
         func testGetDatasetTags() async throws {
+            // Mock response matches real API format (no "tags" wrapper)
             let mockResponse = """
                 {
-                    "tags": {
-                        "task_categories": [
-                            {"id": "question-answering", "label": "Question Answering"},
-                            {"id": "text-classification", "label": "Text Classification"}
-                        ],
-                        "languages": [
-                            {"id": "en", "label": "English"},
-                            {"id": "fr", "label": "French"}
-                        ]
-                    }
+                    "task_categories": [
+                        {"id": "question-answering", "label": "Question Answering", "type": "task_categories"},
+                        {"id": "text-classification", "label": "Text Classification", "type": "task_categories"}
+                    ],
+                    "languages": [
+                        {"id": "en", "label": "English", "type": "languages"},
+                        {"id": "fr", "label": "French", "type": "languages"}
+                    ]
                 }
                 """
 

@@ -317,12 +317,12 @@ import Testing
             let mockResponse = """
                 {
                     "pipeline_tag": [
-                        {"id": "text-classification", "label": "Text Classification"},
-                        {"id": "text-generation", "label": "Text Generation"}
+                        {"id": "text-classification", "label": "Text Classification", "type": "pipeline_tag"},
+                        {"id": "text-generation", "label": "Text Generation", "type": "pipeline_tag"}
                     ],
                     "library": [
-                        {"id": "pytorch", "label": "PyTorch"},
-                        {"id": "transformers", "label": "Transformers"}
+                        {"id": "pytorch", "label": "PyTorch", "type": "library"},
+                        {"id": "transformers", "label": "Transformers", "type": "library"}
                     ]
                 }
                 """
