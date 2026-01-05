@@ -205,6 +205,7 @@ final class HTTPClient: @unchecked Sendable {
         var sleepTime = retry.baseWaitTime
 
         for attempt in 0 ... retry.maxRetries {
+            try Task.checkCancellation()
             do {
                 let (data, response) = try await session.data(for: request)
 
