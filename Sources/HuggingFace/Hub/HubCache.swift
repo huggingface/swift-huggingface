@@ -130,6 +130,19 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("blobs")
     }
 
+    /// Returns the locks directory for a repository.
+    ///
+    /// Lock files are stored in a separate `.locks` directory at the cache root,
+    /// mirroring Python's `huggingface_hub` behavior. This keeps lock files separate
+    /// from the content-addressable blobs.
+    ///
+    /// Reference: https://github.com/huggingface/huggingface_hub/blob/main/src/huggingface_hub/file_download.py#L1069
+    public func locksDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
+        let repoName = repo.description.replacingOccurrences(of: "/", with: "--")
+        let dirName = "\(kind.pluralized)--\(repoName)"
+        return cacheDirectory.appendingPathComponent(".locks").appendingPathComponent(dirName)
+    }
+
     /// Returns the refs directory for a repository.
     public func refsDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("refs")
@@ -325,12 +338,16 @@ public struct HubCache: Sendable {
         // Validate filename before creating directories or writing files
         try validateFilename(filename, withinDirectory: snapshotsDir)
 
+        let locksDir = locksDirectory(repo: repo, kind: kind)
+
         try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: locksDir, withIntermediateDirectories: true)
 
         // Store blob (content-addressed) with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: blobPath)
+        let lockPath = locksDir.appendingPathComponent(normalizedEtag)
+        let lock = FileLock(path: lockPath)
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
@@ -402,12 +419,16 @@ public struct HubCache: Sendable {
         // Validate filename before creating directories or writing files
         try validateFilename(filename, withinDirectory: snapshotsDir)
 
+        let locksDir = locksDirectory(repo: repo, kind: kind)
+
         try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: snapshotsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: locksDir, withIntermediateDirectories: true)
 
         // Store blob with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: blobPath)
+        let lockPath = locksDir.appendingPathComponent(normalizedEtag)
+        let lock = FileLock(path: lockPath)
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {

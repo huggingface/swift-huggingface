@@ -456,7 +456,9 @@ public extension HubClient {
         }
 
         // Acquire lock to prevent parallel downloads of the same blob
-        let lock = FileLock(path: blobPath)
+        let locksDir = cache.locksDirectory(repo: repo, kind: kind)
+        let lockPath = locksDir.appendingPathComponent(normalizedEtag)
+        let lock = FileLock(path: lockPath)
         return try await lock.withLock {
             // Double-check blob doesn't exist after acquiring lock
             if fileManager.fileExists(atPath: blobPath.path) {
