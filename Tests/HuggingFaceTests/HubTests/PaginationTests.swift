@@ -7,24 +7,6 @@ import Testing
 
 @testable import HuggingFace
 
-/// Thread-safe counter for testing fetch counts in Sendable closures.
-private final class Counter: @unchecked Sendable {
-    private var _value: Int = 0
-    private let lock = NSLock()
-
-    var value: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return _value
-    }
-
-    func increment() {
-        lock.lock()
-        _value += 1
-        lock.unlock()
-    }
-}
-
 @Suite("Pagination Tests")
 struct PaginationTests {
     // MARK: - PaginatedSequence Tests
@@ -463,10 +445,10 @@ struct PaginationTests {
             arguments: [429, 500, 502, 503, 504]
         )
         func firstPageNoRetry(statusCode: Int) async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
                 let response = HTTPURLResponse(
                     url: request.url!,
                     statusCode: statusCode,
@@ -483,7 +465,7 @@ struct PaginationTests {
             }
 
             // First page uses .none retry config - only 1 request, no retries
-            #expect(requestCount == 1)
+            #expect(requestCount.value == 1)
         }
 
         // MARK: - Subsequent Page Retry Behavior
@@ -493,12 +475,12 @@ struct PaginationTests {
             arguments: [429, 500, 502, 503, 504]
         )
         func retryOnServerError(statusCode: Int) async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     // First page succeeds with next link
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -510,7 +492,7 @@ struct PaginationTests {
                         ]
                     )!
                     return (response, Data("[{\"id\": \"model/1\"}]".utf8))
-                } else if requestCount == 2 {
+                } else if requestCount.value == 2 {
                     // Second page fails with the test status code
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -538,7 +520,7 @@ struct PaginationTests {
             }
 
             #expect(models.count == 2)
-            #expect(requestCount == 3)  // first page + error + retry success
+            #expect(requestCount.value == 3)  // first page + error + retry success
         }
 
         @Test(
@@ -546,12 +528,12 @@ struct PaginationTests {
             arguments: [400, 401, 403, 404, 422]
         )
         func noRetryOnClientError(statusCode: Int) async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 200,
@@ -581,19 +563,19 @@ struct PaginationTests {
             }
 
             // No retry on client errors - just 2 requests total
-            #expect(requestCount == 2)
+            #expect(requestCount.value == 2)
         }
 
         // MARK: - Retry Exhaustion
 
         @Test("Exhausts all retries and throws error", .mockURLSession)
         func exhaustsRetriesAndThrows() async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 200,
@@ -625,21 +607,21 @@ struct PaginationTests {
             // RetryConfiguration.default has maxRetries=5
             // Loop runs for attempts 0...5 = 6 attempts for second page
             // Total: 1 (first page) + 6 (second page attempts) = 7
-            #expect(requestCount == 7)
+            #expect(requestCount.value == 7)
         }
 
         // MARK: - Rate Limit Header Behavior
 
         @Test("Uses RateLimit header wait time on 429", .mockURLSession)
         func usesRateLimitHeaderForWaitTime() async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
             nonisolated(unsafe) var timestamps: [Date] = []
 
             await MockURLProtocol.setHandler { request in
                 timestamps.append(Date())
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 200,
@@ -650,7 +632,7 @@ struct PaginationTests {
                         ]
                     )!
                     return (response, Data("[{\"id\": \"model/1\"}]".utf8))
-                } else if requestCount == 2 {
+                } else if requestCount.value == 2 {
                     // 429 with RateLimit header saying wait 1 second
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -677,7 +659,7 @@ struct PaginationTests {
             }
 
             #expect(models.count == 2)
-            #expect(requestCount == 3)
+            #expect(requestCount.value == 3)
 
             // Verify wait time: header says t=1, code adds +1 for safety = 2 seconds
             if timestamps.count >= 3 {
@@ -690,12 +672,12 @@ struct PaginationTests {
 
         @Test("Retries on network errors", .mockURLSession)
         func retriesOnNetworkError() async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 200,
@@ -706,7 +688,7 @@ struct PaginationTests {
                         ]
                     )!
                     return (response, Data("[{\"id\": \"model/1\"}]".utf8))
-                } else if requestCount == 2 {
+                } else if requestCount.value == 2 {
                     // Simulate network error
                     throw URLError(.notConnectedToInternet)
                 } else {
@@ -728,19 +710,19 @@ struct PaginationTests {
             }
 
             #expect(models.count == 2)
-            #expect(requestCount == 3)  // first page + network error + retry success
+            #expect(requestCount.value == 3)  // first page + network error + retry success
         }
 
         // MARK: - Task Cancellation
 
         @Test("Respects task cancellation during retry", .mockURLSession)
         func respectsTaskCancellation() async throws {
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
 
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 200,
@@ -785,7 +767,7 @@ struct PaginationTests {
             }
 
             // Should have made fewer requests than exhausting all retries (7)
-            #expect(requestCount < 7)
+            #expect(requestCount.value < 7)
         }
     }
 #endif  // swift(>=6.1)

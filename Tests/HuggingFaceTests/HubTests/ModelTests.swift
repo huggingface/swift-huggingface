@@ -143,12 +143,11 @@ import Testing
                 ]
                 """
 
-            // Use nonisolated(unsafe) for test counter since MockURLProtocol handler is Sendable
-            nonisolated(unsafe) var requestCount = 0
+            let requestCount = Counter()
             await MockURLProtocol.setHandler { request in
-                requestCount += 1
+                requestCount.increment()
 
-                if requestCount == 1 {
+                if requestCount.value == 1 {
                     #expect(request.url?.path == "/api/models")
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -182,7 +181,7 @@ import Testing
             #expect(models[0].id == "facebook/bart-large")
             #expect(models[1].id == "google/bert-base-uncased")
             #expect(models[2].id == "openai/gpt-2")
-            #expect(requestCount == 2)  // Two pages fetched
+            #expect(requestCount.value == 2)  // Two pages fetched
         }
 
         @Test("List all models respects limit", .mockURLSession)
