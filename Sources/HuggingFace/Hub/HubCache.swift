@@ -18,14 +18,17 @@ import Foundation
 ///
 /// ```
 /// ~/.cache/huggingface/hub/
+/// ├── .locks/                              # Lock files for concurrent access
+/// │   └── models--<namespace>--<repo>/
+/// │       └── <etag>.lock                  # Prevents parallel downloads of same blob
 /// ├── models--<namespace>--<repo>/
 /// │   ├── blobs/
-/// │   │   └── <etag>           # actual file content
+/// │   │   └── <etag>                       # Actual file content
 /// │   ├── refs/
-/// │   │   └── main             # contains commit hash
+/// │   │   └── main                         # Contains commit hash
 /// │   └── snapshots/
 /// │       └── <commit_hash>/
-/// │           └── <filename>   # symlink → ../../blobs/<etag>
+/// │           └── <filename>               # Symlink → ../../blobs/<etag>
 /// ```
 ///
 /// ## Cache Location
