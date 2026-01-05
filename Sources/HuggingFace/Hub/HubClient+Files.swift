@@ -658,123 +658,145 @@ public extension HubClient {
             let fileManager = FileManager.default
             let incompletePath = blobsDir.appendingPathComponent("\(etag).incomplete")
 
-            // Check for incomplete file to resume
-            var resumeSize: Int64 = 0
-            if fileManager.fileExists(atPath: incompletePath.path),
-                let attrs = try? fileManager.attributesOfItem(atPath: incompletePath.path),
-                let size = attrs[.size] as? Int64
-            {
-                resumeSize = size
-            } else {
-                fileManager.createFile(atPath: incompletePath.path, contents: nil)
-            }
+            // Track whether we should ignore any existing incomplete file and start fresh.
+            // This is set to true after receiving a 416 response, which indicates the
+            // Range header we sent was invalid (e.g., incomplete file is larger than
+            // the actual file, or the file changed on the server).
+            var shouldStartFresh = false
 
-            // Add Range header if resuming
-            var resumeRequest = request
-            if resumeSize > 0 {
-                resumeRequest.setValue("bytes=\(resumeSize)-", forHTTPHeaderField: "Range")
-            }
-
-            // Start streaming download
-            let (asyncBytes, response) = try await session.bytes(for: resumeRequest)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw HTTPClientError.unexpectedError("Invalid HTTP response")
-            }
-
-            let statusCode = httpResponse.statusCode
-            guard (200 ..< 300).contains(statusCode) else {
-                if statusCode == 416 {
-                    // Range not satisfiable - delete incomplete and retry
-                    try? fileManager.removeItem(at: incompletePath)
-                    return try await downloadToCacheApple(
-                        request: request,
-                        blobPath: blobPath,
-                        etag: etag,
-                        blobsDir: blobsDir,
-                        progress: progress
-                    )
-                }
-                throw HTTPClientError.responseError(
-                    response: httpResponse,
-                    detail: "Download failed with status \(statusCode)"
-                )
-            }
-
-            // Determine expected total size
-            let contentLength = Int64(httpResponse.value(forHTTPHeaderField: "Content-Length") ?? "") ?? 0
-            let expectedTotalSize: Int64
-            if statusCode == 206 {
-                expectedTotalSize = resumeSize + contentLength
-            } else {
-                if resumeSize > 0 {
+            while true {
+                // Check for incomplete file to resume (skip if we're retrying after 416)
+                var resumeSize: Int64 = 0
+                if !shouldStartFresh,
+                    fileManager.fileExists(atPath: incompletePath.path),
+                    let attrs = try? fileManager.attributesOfItem(atPath: incompletePath.path),
+                    let size = attrs[.size] as? Int64
+                {
+                    resumeSize = size
+                } else {
                     try? fileManager.removeItem(at: incompletePath)
                     fileManager.createFile(atPath: incompletePath.path, contents: nil)
-                    resumeSize = 0
                 }
-                expectedTotalSize = contentLength
-            }
 
-            // Set up progress tracking
-            if let progress, progress.totalUnitCount == 0 {
-                progress.totalUnitCount = expectedTotalSize
-            }
-            progress?.completedUnitCount = resumeSize
-            let startTime = CFAbsoluteTimeGetCurrent()
+                // Add Range header if resuming
+                var resumeRequest = request
+                if resumeSize > 0 {
+                    resumeRequest.setValue("bytes=\(resumeSize)-", forHTTPHeaderField: "Range")
+                }
 
-            // Open file for appending
-            let fileHandle = try FileHandle(forWritingTo: incompletePath)
-            defer { try? fileHandle.close() }
+                // Start streaming download
+                let (asyncBytes, response) = try await session.bytes(for: resumeRequest)
 
-            if resumeSize > 0 {
-                try fileHandle.seekToEnd()
-            }
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw HTTPClientError.unexpectedError("Invalid HTTP response")
+                }
 
-            // Stream bytes to file
-            var totalBytesWritten = resumeSize
-            var buffer = Data()
-            let bufferSize = 65536
+                let statusCode = httpResponse.statusCode
 
-            for try await byte in asyncBytes {
-                try Task.checkCancellation()
-                buffer.append(byte)
+                // Handle 416 Range Not Satisfiable: the Range header we sent was invalid.
+                // This typically happens when:
+                // 1. The incomplete file is larger than the actual file on the server
+                // 2. The file changed on the server since we started downloading
+                // 3. The incomplete file contains corrupted/invalid data
+                // Solution: delete the incomplete file and retry once without a Range header.
+                if statusCode == 416 {
+                    guard !shouldStartFresh else {
+                        // We already retried without Range header and still got 416.
+                        // This shouldn't happen; fail to avoid infinite loop.
+                        throw HTTPClientError.responseError(
+                            response: httpResponse,
+                            detail: "Download failed: server returned 416 after fresh retry"
+                        )
+                    }
+                    shouldStartFresh = true
+                    continue
+                }
 
-                if buffer.count >= bufferSize {
-                    try fileHandle.write(contentsOf: buffer)
-                    totalBytesWritten += Int64(buffer.count)
-                    buffer.removeAll(keepingCapacity: true)
+                guard (200 ..< 300).contains(statusCode) else {
+                    throw HTTPClientError.responseError(
+                        response: httpResponse,
+                        detail: "Download failed with status \(statusCode)"
+                    )
+                }
 
-                    progress?.completedUnitCount = totalBytesWritten
-                    if expectedTotalSize > 0 {
-                        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                        if elapsed > 0 {
-                            progress?.setUserInfoObject(
-                                Double(totalBytesWritten - resumeSize) / elapsed,
-                                forKey: .throughputKey
-                            )
+                // Determine expected total size
+                let contentLength = Int64(httpResponse.value(forHTTPHeaderField: "Content-Length") ?? "") ?? 0
+                let expectedTotalSize: Int64
+                if statusCode == 206 {
+                    expectedTotalSize = resumeSize + contentLength
+                } else {
+                    if resumeSize > 0 {
+                        try? fileManager.removeItem(at: incompletePath)
+                        fileManager.createFile(atPath: incompletePath.path, contents: nil)
+                        resumeSize = 0
+                    }
+                    expectedTotalSize = contentLength
+                }
+
+                // Set up progress tracking
+                if let progress, progress.totalUnitCount == 0 {
+                    progress.totalUnitCount = expectedTotalSize
+                }
+                progress?.completedUnitCount = resumeSize
+                let startTime = CFAbsoluteTimeGetCurrent()
+
+                // Open file for appending
+                let fileHandle = try FileHandle(forWritingTo: incompletePath)
+                defer { try? fileHandle.close() }
+
+                if resumeSize > 0 {
+                    try fileHandle.seekToEnd()
+                }
+
+                // Stream bytes to file
+                var totalBytesWritten = resumeSize
+                var buffer = Data()
+                let bufferSize = 65536
+
+                for try await byte in asyncBytes {
+                    try Task.checkCancellation()
+                    buffer.append(byte)
+
+                    if buffer.count >= bufferSize {
+                        try fileHandle.write(contentsOf: buffer)
+                        totalBytesWritten += Int64(buffer.count)
+                        buffer.removeAll(keepingCapacity: true)
+
+                        progress?.completedUnitCount = totalBytesWritten
+                        if expectedTotalSize > 0 {
+                            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                            if elapsed > 0 {
+                                progress?.setUserInfoObject(
+                                    Double(totalBytesWritten - resumeSize) / elapsed,
+                                    forKey: .throughputKey
+                                )
+                            }
                         }
                     }
                 }
+
+                if !buffer.isEmpty {
+                    try fileHandle.write(contentsOf: buffer)
+                    totalBytesWritten += Int64(buffer.count)
+                }
+
+                try fileHandle.close()
+
+                // Verify file size
+                if expectedTotalSize > 0 && totalBytesWritten != expectedTotalSize {
+                    throw HubCacheError.integrityError(
+                        expected: "\(expectedTotalSize) bytes",
+                        actual: "\(totalBytesWritten) bytes"
+                    )
+                }
+
+                // Move incomplete to final blob path
+                try? fileManager.removeItem(at: blobPath)
+                try fileManager.moveItem(at: incompletePath, to: blobPath)
+
+                // Download complete
+                return
             }
-
-            if !buffer.isEmpty {
-                try fileHandle.write(contentsOf: buffer)
-                totalBytesWritten += Int64(buffer.count)
-            }
-
-            try fileHandle.close()
-
-            // Verify file size
-            if expectedTotalSize > 0 && totalBytesWritten != expectedTotalSize {
-                throw HubCacheError.integrityError(
-                    expected: "\(expectedTotalSize) bytes",
-                    actual: "\(totalBytesWritten) bytes"
-                )
-            }
-
-            // Move incomplete to final blob path
-            try? fileManager.removeItem(at: blobPath)
-            try fileManager.moveItem(at: incompletePath, to: blobPath)
         }
     #endif
 
