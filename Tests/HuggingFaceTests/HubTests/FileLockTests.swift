@@ -39,7 +39,7 @@ struct FileLockTests {
 
         let iterations = 50
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<iterations {
+            for _ in 0 ..< iterations {
                 group.addTask {
                     // Each task creates its own FileLockOriginal instance
                     let lock = FileLockOriginal(path: lockPath)
@@ -78,10 +78,10 @@ struct FileLockTests {
 
         let iterations = 50
         await withTaskGroup(of: Void.self) { group in
-            for _ in 0..<iterations {
+            for _ in 0 ..< iterations {
                 group.addTask {
                     // Each task creates its own FileLock instance, but they share context
-                    let lock = FileLock(lockPath: lockPath)
+                    let lock = await FileLock(lockPath: lockPath)
                     try? await lock.withLock {
                         // Read-modify-write is properly serialized
                         let current = Int(try! String(contentsOf: dataPath, encoding: .utf8))!

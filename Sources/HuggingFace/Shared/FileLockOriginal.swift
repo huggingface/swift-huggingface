@@ -100,12 +100,14 @@ struct FileLockOriginal: Sendable {
         let handle = try prepareLockFile()
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        for attempt in 0...maxRetries {
+        for attempt in 0 ... maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
                 if attempt > 0, attempt % Self.logInterval == 0 {
                     let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                    logger.info(
+                        "Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)"
+                    )
                 }
                 Thread.sleep(forTimeInterval: retryDelay)
             }
@@ -119,12 +121,14 @@ struct FileLockOriginal: Sendable {
         let handle = try prepareLockFile()
         let startTime = CFAbsoluteTimeGetCurrent()
 
-        for attempt in 0...maxRetries {
+        for attempt in 0 ... maxRetries {
             if tryLock(handle) { return handle }
             if attempt < maxRetries {
                 if attempt > 0, attempt % Self.logInterval == 0 {
                     let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                    logger.info("Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)")
+                    logger.info(
+                        "Waiting for lock on \(self.lockPath.lastPathComponent) (elapsed: \(String(format: "%.1f", elapsed))s)"
+                    )
                 }
                 try await Task.sleep(for: .seconds(retryDelay))
             }

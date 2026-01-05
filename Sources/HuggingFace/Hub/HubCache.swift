@@ -351,7 +351,7 @@ public struct HubCache: Sendable {
         // Store blob (content-addressed) with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lockPath = locksDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(lockPath: lockPath.appendingPathExtension("lock"))
+        let lock = await FileLock(lockPath: lockPath.appendingPathExtension("lock"))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
@@ -432,7 +432,7 @@ public struct HubCache: Sendable {
         // Store blob with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lockPath = locksDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(lockPath: lockPath.appendingPathExtension("lock"))
+        let lock = await FileLock(lockPath: lockPath.appendingPathExtension("lock"))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
