@@ -79,7 +79,7 @@ public indirect enum CacheLocationProvider: Sendable {
     ///
     /// 1. `HF_HUB_CACHE` environment variable
     /// 2. `HF_HOME` environment variable + `/hub`
-    /// 3. `~/.cache/huggingface/hub` (standard location)
+    /// 3. `~/.cache/huggingface/hub` (macOS) or `Library/Caches/huggingface/hub` (other platforms)
     ///
     /// This follows the same detection logic as the Python `huggingface_hub` library,
     /// enabling cache sharing between Swift and Python clients.
@@ -108,8 +108,7 @@ public indirect enum CacheLocationProvider: Sendable {
     /// ```swift
     /// let provider = CacheLocationProvider.custom {
     ///     // Custom logic to determine cache location
-    ///     return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-    ///         .first?.appendingPathComponent("HuggingFace")
+    ///     return URL.cachesDirectory.appendingPathComponent("HuggingFace")
     /// }
     /// ```
     ///
@@ -156,7 +155,7 @@ public indirect enum CacheLocationProvider: Sendable {
     /// Checks in order:
     /// 1. `HF_HUB_CACHE` environment variable
     /// 2. `HF_HOME` environment variable + `/hub`
-    /// 3. `~/.cache/huggingface/hub` (default)
+    /// 3. `~/.cache/huggingface/hub` (macOS) or `Library/Caches/huggingface/hub` (other platforms)
     private func resolveFromEnvironment(
         _ env: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL? {
@@ -176,16 +175,16 @@ public indirect enum CacheLocationProvider: Sendable {
             // 3. Default: ~/.cache/huggingface/hub (macOS) or Caches/huggingface/hub (iOS)
             {
                 #if os(macOS)
-                let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-                return
-                    homeDirectory
-                    .appendingPathComponent(".cache")
-                    .appendingPathComponent("huggingface")
-                    .appendingPathComponent("hub")
+                    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+                    return
+                        homeDirectory
+                        .appendingPathComponent(".cache")
+                        .appendingPathComponent("huggingface")
+                        .appendingPathComponent("hub")
                 #else
-                return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-                    .appendingPathComponent("huggingface")
-                    .appendingPathComponent("hub")
+                    return URL.cachesDirectory
+                        .appendingPathComponent("huggingface")
+                        .appendingPathComponent("hub")
                 #endif
             },
         ]
