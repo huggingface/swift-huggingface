@@ -3,6 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+import Replay
 import Testing
 
 @testable import HuggingFace
@@ -12,10 +13,10 @@ import Testing
     /// Tests for the Text to Video API
     @Suite("Text to Video Tests", .serialized)
     struct TextToVideoTests {
-        /// Helper to create a URL session with mock protocol handlers
-        func createMockClient() -> InferenceClient {
+        /// Helper to create a URL session with Replay protocol handlers
+        func createClient() -> InferenceClient {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.protocolClasses = [MockURLProtocol.self]
+            configuration.protocolClasses = [PlaybackURLProtocol.self]
             let session = URLSession(configuration: configuration)
             return InferenceClient(
                 session: session,
@@ -24,44 +25,34 @@ import Testing
             )
         }
 
-        @Test("Basic text to video generation", .mockURLSession)
-        func testBasicTextToVideo() async throws {
-            let mockResponse = """
-                {
-                    "video": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-                    "mime_type": "video/mp4",
-                    "metadata": {
-                        "model": "zeroscope_v2_576w",
-                        "width": 576,
-                        "height": 320,
-                        "num_frames": 24,
-                        "frame_rate": 8
+        @Test(
+            "Basic text to video generation",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/videos/generations",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "video": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                            "mime_type": "video/mp4",
+                            "metadata": {
+                                "model": "zeroscope_v2_576w",
+                                "width": 576,
+                                "height": 320,
+                                "num_frames": 24,
+                                "frame_rate": 8
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/v1/videos/generations")
-                #expect(request.httpMethod == "POST")
-
-                // Verify request body contains expected parameters
-                if let body = request.httpBody {
-                    let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
-                    #expect(json["model"] as? String == "zeroscope_v2_576w")
-                    #expect(json["prompt"] as? String == "A cat playing with a ball")
-                }
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testBasicTextToVideo() async throws {
+            let client = createClient()
             let result = try await client.textToVideo(
                 model: "zeroscope_v2_576w",
                 prompt: "A cat playing with a ball"
@@ -77,49 +68,40 @@ import Testing
             #expect(result.metadata?["height"] == .int(320))
         }
 
-        @Test("Text to video with all parameters", .mockURLSession)
-        func testTextToVideoWithAllParameters() async throws {
-            let mockResponse = """
-                {
-                    "video": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
-                    "mime_type": "video/mp4",
-                    "metadata": {
-                        "model": "zeroscope_v2_576w",
-                        "width": 1024,
-                        "height": 576,
-                        "num_frames": 48,
-                        "frame_rate": 24,
-                        "num_videos": 2,
-                        "guidance_scale": 7.5,
-                        "num_inference_steps": 50,
-                        "seed": 123,
-                        "duration": 2.0,
-                        "motion_strength": 0.8
+        @Test(
+            "Text to video with all parameters",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/videos/generations",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "video": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                            "mime_type": "video/mp4",
+                            "metadata": {
+                                "model": "zeroscope_v2_576w",
+                                "width": 1024,
+                                "height": 576,
+                                "num_frames": 48,
+                                "frame_rate": 24,
+                                "num_videos": 2,
+                                "guidance_scale": 7.5,
+                                "num_inference_steps": 50,
+                                "seed": 123,
+                                "duration": 2.0,
+                                "motion_strength": 0.8
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                // Verify request body contains expected parameters
-                if let body = request.httpBody {
-                    let json = try JSONSerialization.jsonObject(with: body) as! [String: Any]
-                    #expect(json["model"] as? String == "zeroscope_v2_576w")
-                    #expect(json["prompt"] as? String == "A dancing robot")
-                }
-                #expect(request.url?.path == "/v1/videos/generations")
-                #expect(request.httpMethod == "POST")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testTextToVideoWithAllParameters() async throws {
+            let client = createClient()
             let result = try await client.textToVideo(
                 model: "zeroscope_v2_576w",
                 prompt: "A dancing robot",
@@ -148,26 +130,26 @@ import Testing
             #expect(result.metadata?["duration"] == .int(2))
         }
 
-        @Test("Text to video handles error response", .mockURLSession)
+        @Test(
+            "Text to video handles error response",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/videos/generations",
+                        503,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "error": "Model not available"
+                        }
+                        """
+                    }
+                ]
+            )
+        )
         func testTextToVideoHandlesError() async throws {
-            let errorResponse = """
-                {
-                    "error": "Model not available"
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 503,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(errorResponse.utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
 
             await #expect(throws: HTTPClientError.self) {
                 _ = try await client.textToVideo(

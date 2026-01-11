@@ -21,6 +21,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
+        .package(url: "https://github.com/mattt/Replay.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
     ],
     targets: [
@@ -34,7 +35,10 @@ let package = Package(
         ),
         .testTarget(
             name: "HuggingFaceTests",
-            dependencies: ["HuggingFace"]
+            dependencies: [
+                .target(name: "HuggingFace"),
+                .product(name: "Replay", package: "Replay"),
+            ]
         ),
     ]
 )

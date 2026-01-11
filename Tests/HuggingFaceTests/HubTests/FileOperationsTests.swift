@@ -3,6 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+import Replay
 import Testing
 
 @testable import HuggingFace
@@ -10,59 +11,56 @@ import Testing
 #if swift(>=6.1)
     @Suite("File Operations Tests", .serialized)
     struct FileOperationsTests {
-        func createMockClient(bearerToken: String? = "test_token") -> HubClient {
+        private func createClient(bearerToken: String? = "test_token") -> HubClient {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.protocolClasses = [MockURLProtocol.self]
+            configuration.protocolClasses = [PlaybackURLProtocol.self]
             let session = URLSession(configuration: configuration)
             return HubClient(
                 session: session,
                 host: URL(string: "https://huggingface.co")!,
                 userAgent: "TestClient/1.0",
-                bearerToken: bearerToken
+                bearerToken: bearerToken,
+                cache: nil
             )
         }
 
         // MARK: - List Files Tests
 
-        @Test("List files in repository", .mockURLSession)
-        func testListFiles() async throws {
-            let mockResponse = """
-                [
-                    {
-                        "path": "README.md",
-                        "type": "file",
-                        "oid": "abc123",
-                        "size": 1234
-                    },
-                    {
-                        "path": "config.json",
-                        "type": "file",
-                        "oid": "def456",
-                        "size": 567
-                    },
-                    {
-                        "path": "model",
-                        "type": "directory"
+        @Test(
+            "List files in repository",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/api/models/facebook/bart-large/tree/main?recursive=true",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        [
+                            {
+                                "path": "README.md",
+                                "type": "file",
+                                "oid": "abc123",
+                                "size": 1234
+                            },
+                            {
+                                "path": "config.json",
+                                "type": "file",
+                                "oid": "def456",
+                                "size": 567
+                            },
+                            {
+                                "path": "model",
+                                "type": "directory"
+                            }
+                        ]
+                        """
                     }
                 ]
-                """
-
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/api/models/facebook/bart-large/tree/main")
-                #expect(request.url?.query?.contains("recursive=true") == true)
-                #expect(request.httpMethod == "GET")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+            )
+        )
+        func testListFiles() async throws {
+            let client = createClient()
             let repoID: Repo.ID = "facebook/bart-large"
             let files = try await client.listFiles(in: repoID, kind: .model, revision: "main")
 
@@ -74,37 +72,31 @@ import Testing
             #expect(files[2].type == .directory)
         }
 
-        @Test("List files without recursive", .mockURLSession)
-        func testListFilesNonRecursive() async throws {
-            let mockResponse = """
-                [
-                    {
-                        "path": "README.md",
-                        "type": "file",
-                        "oid": "abc123",
-                        "size": 1234
+        @Test(
+            "List files without recursive",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/api/models/user/repo/tree/main",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        [
+                            {
+                                "path": "README.md",
+                                "type": "file",
+                                "oid": "abc123",
+                                "size": 1234
+                            }
+                        ]
+                        """
                     }
                 ]
-                """
-
-            await MockURLProtocol.setHandler { request in
-                // Verify recursive is NOT in query
-                #expect(
-                    request.url?.query?.contains("recursive") == false
-                        || request.url?.query == nil
-                )
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+            )
+        )
+        func testListFilesNonRecursive() async throws {
+            let client = createClient()
             let repoID: Repo.ID = "user/repo"
             let files = try await client.listFiles(in: repoID, kind: .model, recursive: false)
 
@@ -113,28 +105,24 @@ import Testing
 
         // MARK: - File Info Tests
 
-        @Test("Get file info - file exists", .mockURLSession)
+        @Test(
+            "Get file info - file exists",
+            .replay(
+                stubs: [
+                    .head(
+                        "https://huggingface.co/facebook/bart-large/resolve/main/README.md",
+                        206,
+                        [
+                            "Content-Length": "12345",
+                            "ETag": "\"abc123def\"",
+                            "X-Repo-Commit": "commit-sha-123",
+                        ]
+                    )
+                ]
+            )
+        )
         func testFileInfoExists() async throws {
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/facebook/bart-large/resolve/main/README.md")
-                #expect(request.httpMethod == "HEAD")
-                #expect(request.value(forHTTPHeaderField: "Range") == "bytes=0-0")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 206,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [
-                        "Content-Length": "12345",
-                        "ETag": "\"abc123def\"",
-                        "X-Repo-Commit": "commit-sha-123",
-                    ]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "facebook/bart-large"
             let info = try await client.getFile(
                 at: "README.md",
@@ -150,23 +138,23 @@ import Testing
             #expect(info.isLFS == false)
         }
 
-        @Test("Get file info - LFS file", .mockURLSession)
+        @Test(
+            "Get file info - LFS file",
+            .replay(
+                stubs: [
+                    .head(
+                        "https://huggingface.co/user/model/resolve/main/pytorch_model.bin",
+                        200,
+                        [
+                            "Content-Length": "100000000",
+                            "X-Linked-Size": "100000000",
+                        ]
+                    )
+                ]
+            )
+        )
         func testFileInfoLFS() async throws {
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [
-                        "Content-Length": "100000000",
-                        "X-Linked-Size": "100000000",
-                    ]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             let info = try await client.getFile(at: "pytorch_model.bin", in: repoID)
 
@@ -174,20 +162,20 @@ import Testing
             #expect(info.isLFS == true)
         }
 
-        @Test("Get file info - file does not exist", .mockURLSession)
+        @Test(
+            "Get file info - file does not exist",
+            .replay(
+                stubs: [
+                    .head(
+                        "https://huggingface.co/user/model/resolve/main/nonexistent.txt",
+                        404,
+                        [:]
+                    )
+                ]
+            )
+        )
         func testFileInfoNotExists() async throws {
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 404,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             let info = try await client.getFile(at: "nonexistent.txt", in: repoID)
 
@@ -196,40 +184,40 @@ import Testing
 
         // MARK: - File Exists Tests
 
-        @Test("Check if file exists - true", .mockURLSession)
+        @Test(
+            "Check if file exists - true",
+            .replay(
+                stubs: [
+                    .head(
+                        "https://huggingface.co/user/model/resolve/main/README.md",
+                        200,
+                        [:]
+                    )
+                ]
+            )
+        )
         func testFileExists() async {
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             let exists = await client.fileExists(at: "README.md", in: repoID)
 
             #expect(exists == true)
         }
 
-        @Test("Check if file exists - false", .mockURLSession)
+        @Test(
+            "Check if file exists - false",
+            .replay(
+                stubs: [
+                    .head(
+                        "https://huggingface.co/user/model/resolve/main/nonexistent.txt",
+                        404,
+                        [:]
+                    )
+                ]
+            )
+        )
         func testFileNotExists() async {
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 404,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             let exists = await client.fileExists(at: "nonexistent.txt", in: repoID)
 
@@ -238,93 +226,82 @@ import Testing
 
         // MARK: - Download Tests
 
-        @Test("Download file data", .mockURLSession)
+        @Test(
+            "Download file data",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/user/model/resolve/main/test.txt",
+                        200,
+                        ["Content-Type": "text/plain"]
+                    ) {
+                        "Hello, World!"
+                    }
+                ]
+            )
+        )
         func testDownloadData() async throws {
             let expectedData = "Hello, World!".data(using: .utf8)!
 
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/user/model/resolve/main/test.txt")
-                #expect(request.httpMethod == "GET")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "text/plain"]
-                )!
-
-                return (response, expectedData)
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             let data = try await client.downloadContentsOfFile(at: "test.txt", from: repoID)
 
             #expect(data == expectedData)
         }
 
-        @Test("Download with raw endpoint", .mockURLSession)
+        @Test(
+            "Download with raw endpoint",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/user/model/raw/main/test.txt",
+                        200,
+                        [:]
+                    ) { "" }
+                ]
+            )
+        )
         func testDownloadRaw() async throws {
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/user/model/raw/main/test.txt")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data())
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             _ = try await client.downloadContentsOfFile(at: "test.txt", from: repoID, useRaw: true)
         }
 
         // MARK: - Delete Tests
 
-        @Test("Delete single file", .mockURLSession)
+        @Test(
+            "Delete single file",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://huggingface.co/api/models/user/model/commit/main",
+                        200,
+                        [:]
+                    ) { "true" }
+                ]
+            )
+        )
         func testDeleteFile() async throws {
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/api/models/user/model/commit/main")
-                #expect(request.httpMethod == "POST")
-                #expect(
-                    request.value(forHTTPHeaderField: "Content-Type") == "application/json"
-                )
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data("true".utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
             try await client.deleteFile(at: "test.txt", from: repoID, message: "Delete test file")
         }
 
-        @Test("Delete multiple files", .mockURLSession)
+        @Test(
+            "Delete multiple files",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://huggingface.co/api/datasets/org/dataset/commit/dev",
+                        200,
+                        [:]
+                    ) { "true" }
+                ]
+            )
+        )
         func testDeleteBatch() async throws {
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/api/datasets/org/dataset/commit/dev")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data("true".utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "org/dataset"
             try await client.deleteFiles(
                 at: ["file1.txt", "file2.txt", "dir/file3.txt"],
@@ -368,16 +345,20 @@ import Testing
 
         // MARK: - Error Handling Tests
 
-        @Test("Handle network error", .mockURLSession)
+        @Test(
+            "Handle network error",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/user/model/resolve/main/test.txt",
+                        500,
+                        ["Content-Type": "application/json"]
+                    ) { "{\"error\": \"Internal Server Error\"}" }
+                ]
+            )
+        )
         func testNetworkError() async throws {
-            await MockURLProtocol.setHandler { request in
-                throw NSError(
-                    domain: NSURLErrorDomain,
-                    code: NSURLErrorNotConnectedToInternet
-                )
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let repoID: Repo.ID = "user/model"
 
             await #expect(throws: Error.self) {
@@ -385,20 +366,20 @@ import Testing
             }
         }
 
-        @Test("Handle unauthorized access", .mockURLSession)
+        @Test(
+            "Handle unauthorized access",
+            .replay(
+                stubs: [
+                    .get(
+                        "https://huggingface.co/user/private-model/resolve/main/test.txt",
+                        401,
+                        [:]
+                    ) { "{\"error\": \"Unauthorized\"}" }
+                ]
+            )
+        )
         func testUnauthorized() async throws {
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 401,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-
-                return (response, Data("{\"error\": \"Unauthorized\"}".utf8))
-            }
-
-            let client = createMockClient(bearerToken: nil)
+            let client = createClient(bearerToken: nil)
             let repoID: Repo.ID = "user/private-model"
 
             await #expect(throws: HTTPClientError.self) {

@@ -3,6 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+import Replay
 import Testing
 #if canImport(FoundationNetworking)
     import FoundationNetworking
@@ -67,34 +68,28 @@ import Testing
             #expect(authURL == "mock_auth_code")
         }
 
-        @Test("OAuthClient handles token exchange with mocked response", .mockURLSession)
-        func testTokenExchange() async throws {
-            // Set up mock response
-            await MockURLProtocol.setHandler { request in
-                // Verify request method and content type
-                #expect(request.httpMethod == "POST")
-                #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
-
-                // Return mock token response
-                let tokenResponse = """
-                    {
-                        "access_token": "mock_access_token",
-                        "refresh_token": "mock_refresh_token",
-                        "expires_in": 3600,
-                        "token_type": "Bearer"
+        @Test(
+            "OAuthClient handles token exchange with mocked response",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://huggingface.co/oauth/token",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "access_token": "mock_access_token",
+                            "refresh_token": "mock_refresh_token",
+                            "expires_in": 3600,
+                            "token_type": "Bearer"
+                        }
+                        """
                     }
-                    """
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: nil,
-                    headerFields: nil
-                )!
-
-                return (response, tokenResponse.data(using: .utf8)!)
-            }
-
+                ]
+            )
+        )
+        func testTokenExchange() async throws {
             let config = OAuthClientConfiguration(
                 baseURL: URL(string: "https://huggingface.co")!,
                 redirectURL: URL(string: "myapp://oauth/callback")!,
@@ -104,7 +99,7 @@ import Testing
 
             // Create a custom URLSession that uses the mock protocol
             let sessionConfig = URLSessionConfiguration.ephemeral
-            sessionConfig.protocolClasses = [MockURLProtocol.self]
+            sessionConfig.protocolClasses = [PlaybackURLProtocol.self]
             let mockSession = URLSession(configuration: sessionConfig)
 
             let client = OAuthClient(configuration: config, session: mockSession)
@@ -122,34 +117,28 @@ import Testing
             #expect(token.isValid == true)
         }
 
-        @Test("OAuthClient handles token refresh with mocked response", .mockURLSession)
-        func testTokenRefresh() async throws {
-            // Set up mock response for token refresh
-            await MockURLProtocol.setHandler { request in
-                // Verify request method and content type
-                #expect(request.httpMethod == "POST")
-                #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded")
-
-                // Return mock token response
-                let tokenResponse = """
-                    {
-                        "access_token": "new_access_token",
-                        "refresh_token": "new_refresh_token",
-                        "expires_in": 3600,
-                        "token_type": "Bearer"
+        @Test(
+            "OAuthClient handles token refresh with mocked response",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://huggingface.co/oauth/token",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "access_token": "new_access_token",
+                            "refresh_token": "new_refresh_token",
+                            "expires_in": 3600,
+                            "token_type": "Bearer"
+                        }
+                        """
                     }
-                    """
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: nil,
-                    headerFields: nil
-                )!
-
-                return (response, tokenResponse.data(using: .utf8)!)
-            }
-
+                ]
+            )
+        )
+        func testTokenRefresh() async throws {
             let config = OAuthClientConfiguration(
                 baseURL: URL(string: "https://huggingface.co")!,
                 redirectURL: URL(string: "myapp://oauth/callback")!,
@@ -159,7 +148,7 @@ import Testing
 
             // Create a custom URLSession that uses the mock protocol
             let sessionConfig = URLSessionConfiguration.ephemeral
-            sessionConfig.protocolClasses = [MockURLProtocol.self]
+            sessionConfig.protocolClasses = [PlaybackURLProtocol.self]
             let mockSession = URLSession(configuration: sessionConfig)
 
             let client = OAuthClient(configuration: config, session: mockSession)
@@ -172,20 +161,21 @@ import Testing
             #expect(newToken.isValid == true)
         }
 
-        @Test("OAuthClient handles token exchange failure", .mockURLSession)
+        @Test(
+            "OAuthClient handles token exchange failure",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://huggingface.co/oauth/token",
+                        400,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        ""
+                    }
+                ]
+            )
+        )
         func testTokenExchangeFailure() async throws {
-            // Set up mock response with error
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 400,
-                    httpVersion: nil,
-                    headerFields: nil
-                )!
-
-                return (response, Data())
-            }
-
             let config = OAuthClientConfiguration(
                 baseURL: URL(string: "https://huggingface.co")!,
                 redirectURL: URL(string: "myapp://oauth/callback")!,
@@ -195,7 +185,7 @@ import Testing
 
             // Create a custom URLSession that uses the mock protocol
             let sessionConfig = URLSessionConfiguration.ephemeral
-            sessionConfig.protocolClasses = [MockURLProtocol.self]
+            sessionConfig.protocolClasses = [PlaybackURLProtocol.self]
             let mockSession = URLSession(configuration: sessionConfig)
 
             let client = OAuthClient(configuration: config, session: mockSession)

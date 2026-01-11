@@ -3,11 +3,8 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+import Replay
 import Testing
-
-#if canImport(FoundationNetworking)
-    import FoundationNetworking
-#endif
 
 @testable import HuggingFace
 
@@ -16,10 +13,9 @@ import Testing
     /// Tests for the Feature Extraction API
     @Suite("Feature Extraction Tests", .serialized)
     struct FeatureExtractionTests {
-        /// Helper to create a URL session with mock protocol handlers
-        func createMockClient() -> InferenceClient {
+        private func createClient() -> InferenceClient {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.protocolClasses = [MockURLProtocol.self]
+            configuration.protocolClasses = [PlaybackURLProtocol.self]
             let session = URLSession(configuration: configuration)
             return InferenceClient(
                 session: session,
@@ -28,32 +24,32 @@ import Testing
             )
         }
 
-        @Test("Basic feature extraction with single input", .mockURLSession)
-        func testBasicFeatureExtraction() async throws {
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-                    ],
-                    "metadata": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2",
-                        "dimension": 384
+        @Test(
+            "Basic feature extraction with single input",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "embeddings": [
+                                [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+                            ],
+                            "metadata": {
+                                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                                "dimension": 384
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testBasicFeatureExtraction() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "sentence-transformers/all-MiniLM-L6-v2",
                 input: "Hello, world!"
@@ -67,35 +63,35 @@ import Testing
             #expect(result.metadata?["dimension"] == .int(384))
         }
 
-        @Test("Feature extraction with multiple inputs", .mockURLSession)
-        func testFeatureExtractionWithMultipleInputs() async throws {
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [0.1, 0.2, 0.3, 0.4, 0.5],
-                        [0.6, 0.7, 0.8, 0.9, 1.0],
-                        [1.1, 1.2, 1.3, 1.4, 1.5]
-                    ],
-                    "metadata": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2",
-                        "dimension": 5,
-                        "input_count": 3
+        @Test(
+            "Feature extraction with multiple inputs",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "embeddings": [
+                                [0.1, 0.2, 0.3, 0.4, 0.5],
+                                [0.6, 0.7, 0.8, 0.9, 1.0],
+                                [1.1, 1.2, 1.3, 1.4, 1.5]
+                            ],
+                            "metadata": {
+                                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                                "dimension": 5,
+                                "input_count": 3
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testFeatureExtractionWithMultipleInputs() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "sentence-transformers/all-MiniLM-L6-v2",
                 inputs: ["First text", "Second text", "Third text"]
@@ -108,33 +104,33 @@ import Testing
             #expect(result.metadata?["input_count"] == .int(3))
         }
 
-        @Test("Feature extraction with all parameters", .mockURLSession)
-        func testFeatureExtractionWithAllParameters() async throws {
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [0.1, 0.2, 0.3, 0.4, 0.5]
-                    ],
-                    "metadata": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2",
-                        "normalized": true,
-                        "truncated": false
+        @Test(
+            "Feature extraction with all parameters",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "embeddings": [
+                                [0.1, 0.2, 0.3, 0.4, 0.5]
+                            ],
+                            "metadata": {
+                                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                                "normalized": true,
+                                "truncated": false
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testFeatureExtractionWithAllParameters() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "sentence-transformers/all-MiniLM-L6-v2",
                 input: "Test text",
@@ -151,36 +147,34 @@ import Testing
             #expect(result.metadata?["truncated"] == .bool(false))
         }
 
-        @Test("Feature extraction with large embedding dimensions", .mockURLSession)
-        func testFeatureExtractionWithLargeDimensions() async throws {
-            // Generate a large embedding vector (1536 dimensions like OpenAI's text-embedding-ada-002)
-            let largeEmbedding = (0 ..< 1536).map { Double($0) / 1000.0 }
-            let embeddingsJSON = largeEmbedding.map { String($0) }.joined(separator: ", ")
-
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [\(embeddingsJSON)]
-                    ],
-                    "metadata": {
-                        "model": "text-embedding-ada-002",
-                        "dimension": 1536
+        @Test(
+            "Feature extraction with large embedding dimensions",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        let largeEmbedding = (0 ..< 1536).map { Double($0) / 1000.0 }
+                        let embeddingsJSON = largeEmbedding.map { String($0) }.joined(separator: ", ")
+                        return """
+                            {
+                                "embeddings": [
+                                    [\(embeddingsJSON)]
+                                ],
+                                "metadata": {
+                                    "model": "text-embedding-ada-002",
+                                    "dimension": 1536
+                                }
+                            }
+                            """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testFeatureExtractionWithLargeDimensions() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "text-embedding-ada-002",
                 input: "Large embedding test"
@@ -193,35 +187,35 @@ import Testing
             #expect(result.metadata?["dimension"] == .int(1536))
         }
 
-        @Test("Feature extraction with multilingual text", .mockURLSession)
-        func testFeatureExtractionWithMultilingualText() async throws {
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [0.1, 0.2, 0.3, 0.4, 0.5],
-                        [0.6, 0.7, 0.8, 0.9, 1.0],
-                        [1.1, 1.2, 1.3, 1.4, 1.5]
-                    ],
-                    "metadata": {
-                        "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-                        "language": "mixed",
-                        "dimension": 384
+        @Test(
+            "Feature extraction with multilingual text",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "embeddings": [
+                                [0.1, 0.2, 0.3, 0.4, 0.5],
+                                [0.6, 0.7, 0.8, 0.9, 1.0],
+                                [1.1, 1.2, 1.3, 1.4, 1.5]
+                            ],
+                            "metadata": {
+                                "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                                "language": "mixed",
+                                "dimension": 384
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testFeatureExtractionWithMultilingualText() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
                 inputs: [
@@ -235,26 +229,26 @@ import Testing
             #expect(result.metadata?["language"] == .string("mixed"))
         }
 
-        @Test("Feature extraction handles error response", .mockURLSession)
+        @Test(
+            "Feature extraction handles error response",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        404,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "error": "Model not found"
+                        }
+                        """
+                    }
+                ]
+            )
+        )
         func testFeatureExtractionHandlesError() async throws {
-            let errorResponse = """
-                {
-                    "error": "Model not found"
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 404,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(errorResponse.utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
 
             await #expect(throws: HTTPClientError.self) {
                 _ = try await client.featureExtraction(
@@ -264,26 +258,26 @@ import Testing
             }
         }
 
-        @Test("Feature extraction handles invalid input", .mockURLSession)
+        @Test(
+            "Feature extraction handles invalid input",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        400,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "error": "Invalid input format"
+                        }
+                        """
+                    }
+                ]
+            )
+        )
         func testFeatureExtractionHandlesInvalidInput() async throws {
-            let errorResponse = """
-                {
-                    "error": "Invalid input format"
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 400,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(errorResponse.utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
 
             await #expect(throws: HTTPClientError.self) {
                 _ = try await client.featureExtraction(
@@ -293,32 +287,32 @@ import Testing
             }
         }
 
-        @Test("Feature extraction with custom parameters", .mockURLSession)
-        func testFeatureExtractionWithCustomParameters() async throws {
-            let mockResponse = """
-                {
-                    "embeddings": [
-                        [0.1, 0.2, 0.3, 0.4, 0.5]
-                    ],
-                    "metadata": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2",
-                        "custom_param": "custom_value"
+        @Test(
+            "Feature extraction with custom parameters",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/embeddings",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "embeddings": [
+                                [0.1, 0.2, 0.3, 0.4, 0.5]
+                            ],
+                            "metadata": {
+                                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                                "custom_param": "custom_value"
+                            }
+                        }
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testFeatureExtractionWithCustomParameters() async throws {
+            let client = createClient()
             let result = try await client.featureExtraction(
                 model: "sentence-transformers/all-MiniLM-L6-v2",
                 input: "Test text",

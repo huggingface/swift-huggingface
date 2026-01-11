@@ -3,6 +3,7 @@ import Foundation
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
+import Replay
 import Testing
 
 @testable import HuggingFace
@@ -12,10 +13,9 @@ import Testing
     /// Tests for the Chat Completion API
     @Suite("Chat Completion Tests", .serialized)
     struct ChatCompletionTests {
-        /// Helper to create a URL session with mock protocol handlers
-        func createMockClient() -> InferenceClient {
+        private func createClient() -> InferenceClient {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.protocolClasses = [MockURLProtocol.self]
+            configuration.protocolClasses = [PlaybackURLProtocol.self]
             let session = URLSession(configuration: configuration)
             return InferenceClient(
                 session: session,
@@ -24,48 +24,45 @@ import Testing
             )
         }
 
-        @Test("Basic chat completion request", .mockURLSession)
-        func testBasicChatCompletion() async throws {
-            let mockResponse = """
-                {
-                    "id": "chatcmpl-123",
-                    "object": "chat.completion",
-                    "created": 1677652288,
-                    "model": "gpt-3.5-turbo",
-                    "choices": [
+        @Test(
+            "Basic chat completion request",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
                         {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "Hello! How can I help you today?"
+                            "id": "chatcmpl-123",
+                            "object": "chat.completion",
+                            "created": 1677652288,
+                            "model": "gpt-3.5-turbo",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "Hello! How can I help you today?"
+                                    },
+                                    "finish_reason": "stop"
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 9,
+                                "completion_tokens": 12,
+                                "total_tokens": 21
                             },
-                            "finish_reason": "stop"
+                            "system_fingerprint": "fp_44709d6fcb"
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 9,
-                        "completion_tokens": 12,
-                        "total_tokens": 21
-                    },
-                    "system_fingerprint": "fp_44709d6fcb"
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/v1/chat/completions")
-                #expect(request.httpMethod == "POST")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                        """
+                    }
+                ]
+            )
+        )
+        func testBasicChatCompletion() async throws {
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .user, content: .text("Hello, world!"))
             ]
@@ -86,63 +83,60 @@ import Testing
             #expect(result.usage?.totalTokens == 21)
         }
 
-        @Test("Chat completion with all parameters", .mockURLSession)
-        func testChatCompletionWithAllParameters() async throws {
-            let mockResponse = """
-                {
-                    "id": "chatcmpl-456",
-                    "object": "chat.completion",
-                    "created": 1677652288,
-                    "model": "gpt-4",
-                    "choices": [
+        @Test(
+            "Chat completion with all parameters",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
                         {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "This is a creative response."
-                            },
-                            "finish_reason": "stop",
-                            "logprobs": {
-                                "content": [
-                                    {
-                                        "token": "This",
-                                        "logprob": -0.1,
-                                        "bytes": [84, 104, 105, 115],
-                                        "top_logprobs": [
+                            "id": "chatcmpl-456",
+                            "object": "chat.completion",
+                            "created": 1677652288,
+                            "model": "gpt-4",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "This is a creative response."
+                                    },
+                                    "finish_reason": "stop",
+                                    "logprobs": {
+                                        "content": [
                                             {
                                                 "token": "This",
                                                 "logprob": -0.1,
-                                                "bytes": [84, 104, 105, 115]
+                                                "bytes": [84, 104, 105, 115],
+                                                "top_logprobs": [
+                                                    {
+                                                        "token": "This",
+                                                        "logprob": -0.1,
+                                                        "bytes": [84, 104, 105, 115]
+                                                    }
+                                                ]
                                             }
                                         ]
                                     }
-                                ]
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 15,
+                                "completion_tokens": 8,
+                                "total_tokens": 23
                             }
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 15,
-                        "completion_tokens": 8,
-                        "total_tokens": 23
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/v1/chat/completions")
-                #expect(request.httpMethod == "POST")
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testChatCompletionWithAllParameters() async throws {
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .system, content: .text("You are a helpful assistant.")),
                 ChatCompletion.Message(role: .user, content: .text("Write a creative story.")),
@@ -185,44 +179,44 @@ import Testing
             #expect(result.choices[0].logprobs?.content?.count == 1)
         }
 
-        @Test("Chat completion with mixed content messages", .mockURLSession)
-        func testChatCompletionWithMixedContent() async throws {
-            let mockResponse = """
-                {
-                    "id": "chatcmpl-789",
-                    "object": "chat.completion",
-                    "created": 1677652288,
-                    "model": "gpt-4-vision",
-                    "choices": [
+        @Test(
+            "Chat completion with mixed content messages",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
                         {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "I can see the image you shared."
-                            },
-                            "finish_reason": "stop"
+                            "id": "chatcmpl-789",
+                            "object": "chat.completion",
+                            "created": 1677652288,
+                            "model": "gpt-4-vision",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "I can see the image you shared."
+                                    },
+                                    "finish_reason": "stop"
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 25,
+                                "completion_tokens": 10,
+                                "total_tokens": 35
+                            }
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 25,
-                        "completion_tokens": 10,
-                        "total_tokens": 35
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testChatCompletionWithMixedContent() async throws {
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(
                     role: .user,
@@ -242,54 +236,54 @@ import Testing
             #expect(result.model == "gpt-4-vision")
         }
 
-        @Test("Chat completion with tool calls", .mockURLSession)
-        func testChatCompletionWithToolCalls() async throws {
-            let mockResponse = """
-                {
-                    "id": "chatcmpl-tool",
-                    "object": "chat.completion",
-                    "created": 1677652288,
-                    "model": "gpt-4",
-                    "choices": [
+        @Test(
+            "Chat completion with tool calls",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
                         {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": null,
-                                "tool_calls": [
-                                    {
-                                        "id": "call_123",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "get_weather",
-                                            "arguments": "{\\"location\\": \\"New York\\"}"
-                                        }
-                                    }
-                                ]
-                            },
-                            "finish_reason": "tool_calls"
+                            "id": "chatcmpl-tool",
+                            "object": "chat.completion",
+                            "created": 1677652288,
+                            "model": "gpt-4",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": null,
+                                        "tool_calls": [
+                                            {
+                                                "id": "call_123",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "get_weather",
+                                                    "arguments": "{\\"location\\": \\"New York\\"}"
+                                                }
+                                            }
+                                        ]
+                                    },
+                                    "finish_reason": "tool_calls"
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 20,
+                                "completion_tokens": 15,
+                                "total_tokens": 35
+                            }
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 20,
-                        "completion_tokens": 15,
-                        "total_tokens": 35
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testChatCompletionWithToolCalls() async throws {
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .user, content: .text("What's the weather in New York?"))
             ]
@@ -305,44 +299,44 @@ import Testing
             #expect(result.choices[0].finishReason == ChatCompletion.FinishReason.toolCalls)
         }
 
-        @Test("Chat completion with JSON response format", .mockURLSession)
-        func testChatCompletionWithJSONResponseFormat() async throws {
-            let mockResponse = """
-                {
-                    "id": "chatcmpl-json",
-                    "object": "chat.completion",
-                    "created": 1677652288,
-                    "model": "gpt-4",
-                    "choices": [
+        @Test(
+            "Chat completion with JSON response format",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
                         {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": "{\\"name\\": \\"John\\", \\"age\\": 30}"
-                            },
-                            "finish_reason": "stop"
+                            "id": "chatcmpl-json",
+                            "object": "chat.completion",
+                            "created": 1677652288,
+                            "model": "gpt-4",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": "{\\"name\\": \\"John\\", \\"age\\": 30}"
+                                    },
+                                    "finish_reason": "stop"
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 10,
+                                "completion_tokens": 8,
+                                "total_tokens": 18
+                            }
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 10,
-                        "completion_tokens": 8,
-                        "total_tokens": 18
+                        """
                     }
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(mockResponse.utf8))
-            }
-
-            let client = createMockClient()
+                ]
+            )
+        )
+        func testChatCompletionWithJSONResponseFormat() async throws {
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .user, content: .text("Return a JSON object with name and age."))
             ]
@@ -357,40 +351,30 @@ import Testing
             #expect(result.choices[0].message.content == .text("{\"name\": \"John\", \"age\": 30}"))
         }
 
-        @Test("Chat completion streaming", .mockURLSession)
+        @Test(
+            "Chat completion streaming",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        200,
+                        ["Content-Type": "text/plain"]
+                    ) {
+                        """
+                        data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": null}]}
+
+                        data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"content": " there"}, "finish_reason": null}]}
+
+                        data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"content": "!"}, "finish_reason": "stop"}]}
+
+                        data: [DONE]
+                        """
+                    }
+                ]
+            )
+        )
         func testChatCompletionStreaming() async throws {
-            let mockStreamResponse = """
-                data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"role": "assistant", "content": "Hello"}, "finish_reason": null}]}
-
-                data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"content": " there"}, "finish_reason": null}]}
-
-                data: {"id": "chatcmpl-stream", "object": "chat.completion.chunk", "created": 1677652288, "model": "gpt-3.5-turbo", "choices": [{"index": 0, "delta": {"content": "!"}, "finish_reason": "stop"}]}
-
-                data: [DONE]
-                """
-
-            await MockURLProtocol.setHandler { request in
-                #expect(request.url?.path == "/v1/chat/completions")
-                #expect(request.httpMethod == "POST")
-
-                // Parse the request body to verify the parameters
-                if let httpBody = request.httpBody,
-                    let json = try? JSONSerialization.jsonObject(with: httpBody) as? [String: Any]
-                {
-                    #expect(json["stream"] as? Bool == true)
-                }
-
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 200,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "text/plain"]
-                )!
-
-                return (response, Data(mockStreamResponse.utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .user, content: .text("Say hello"))
             ]
@@ -413,26 +397,26 @@ import Testing
             #expect(chunks[2].choices[0].finishReason == .stop)
         }
 
-        @Test("Chat completion handles error response", .mockURLSession)
+        @Test(
+            "Chat completion handles error response",
+            .replay(
+                stubs: [
+                    .post(
+                        "https://router.huggingface.co/v1/chat/completions",
+                        429,
+                        ["Content-Type": "application/json"]
+                    ) {
+                        """
+                        {
+                            "error": "Rate limit exceeded"
+                        }
+                        """
+                    }
+                ]
+            )
+        )
         func testChatCompletionHandlesError() async throws {
-            let errorResponse = """
-                {
-                    "error": "Rate limit exceeded"
-                }
-                """
-
-            await MockURLProtocol.setHandler { request in
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 429,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: ["Content-Type": "application/json"]
-                )!
-
-                return (response, Data(errorResponse.utf8))
-            }
-
-            let client = createMockClient()
+            let client = createClient()
             let messages = [
                 ChatCompletion.Message(role: .user, content: .text("Hello"))
             ]

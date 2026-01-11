@@ -318,7 +318,7 @@ final class HTTPClient: @unchecked Sendable {
         var httpBody: Data? = nil
         switch method {
         case .get, .head:
-            if let params {
+            if let params, !params.isEmpty {
                 var queryItems: [URLQueryItem] = []
                 for (key, value) in params {
                     queryItems.append(URLQueryItem(name: key, value: value.description))
