@@ -41,10 +41,10 @@ jobs:
             ${{ runner.os }}-swift-${{ matrix.swift }}-spm-
 
       - name: Build
-        run: swift build -v
+        run: swift build
 
       - name: Test
-        run: swift test -v
+        run: swift test
 
   test-linux:
     name: Swift ${{ matrix.swift-version }} on Linux
@@ -67,7 +67,7 @@ jobs:
           toolchain: ${{ matrix.swift-version }}
 
       - name: Build
-        run: swift build -v
+        run: swift build
 
       - name: Test
-        run: swift test -v
+        run: swift test
