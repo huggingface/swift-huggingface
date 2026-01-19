@@ -1018,16 +1018,28 @@ private extension FileManager {
         var hasher = SHA256()
         let chunkSize = 1024 * 1024
 
-        while autoreleasepool(invoking: {
-            guard let nextChunk = try? fileHandle.read(upToCount: chunkSize),
-                !nextChunk.isEmpty
-            else {
-                return false
-            }
+        #if canImport(Darwin)
+            while autoreleasepool(invoking: {
+                guard let nextChunk = try? fileHandle.read(upToCount: chunkSize),
+                    !nextChunk.isEmpty
+                else {
+                    return false
+                }
 
-            hasher.update(data: nextChunk)
-            return true
-        }) {}
+                hasher.update(data: nextChunk)
+                return true
+            }) {}
+        #else
+            while true {
+                guard let nextChunk = try? fileHandle.read(upToCount: chunkSize),
+                    !nextChunk.isEmpty
+                else {
+                    break
+                }
+
+                hasher.update(data: nextChunk)
+            }
+        #endif
 
         let digest = hasher.finalize()
         return digest.map { String(format: "%02x", $0) }.joined()
