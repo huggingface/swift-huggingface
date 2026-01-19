@@ -75,14 +75,12 @@ struct MultipartBuilder {
         let tempFile = tempDir.appendingPathComponent(UUID().uuidString)
 
         // Create temp file
-        FileManager.default.createFile(atPath: tempFile.path, contents: nil)
+        guard FileManager.default.createFile(atPath: tempFile.path, contents: nil) else {
+            throw MultipartBuilderError.createTempFileFailed
+        }
 
         guard let handle = FileHandle(forWritingAtPath: tempFile.path) else {
-            throw NSError(
-                domain: "MultipartBuilder",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create temp file"]
-            )
+            throw MultipartBuilderError.openTempFileFailed
         }
 
         defer { try? handle.close() }
@@ -168,11 +166,7 @@ struct MultipartBuilder {
 
     private func streamFile(from url: URL, to handle: FileHandle) throws {
         guard let input = InputStream(url: url) else {
-            throw NSError(
-                domain: "MultipartBuilder",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to open file for reading"]
-            )
+            throw MultipartBuilderError.openInputStreamFailed
         }
 
         input.open()
@@ -187,13 +181,31 @@ struct MultipartBuilder {
                 let data = Data(bytes: buffer, count: bytesRead)
                 try handle.write(contentsOf: data)
             } else if bytesRead < 0 {
-                throw input.streamError
-                    ?? NSError(
-                        domain: "MultipartBuilder",
-                        code: 3,
-                        userInfo: [NSLocalizedDescriptionKey: "Error reading file"]
-                    )
+                throw MultipartBuilderError.readInputStreamFailed(underlying: input.streamError)
             }
+        }
+    }
+}
+
+// MARK: - Errors
+
+/// Errors that can occur during multipart building operations.
+public enum MultipartBuilderError: LocalizedError {
+    case createTempFileFailed
+    case openTempFileFailed
+    case openInputStreamFailed
+    case readInputStreamFailed(underlying: Error?)
+
+    public var errorDescription: String? {
+        switch self {
+        case .createTempFileFailed:
+            return "Failed to create temp file"
+        case .openTempFileFailed:
+            return "Failed to create temp file"
+        case .openInputStreamFailed:
+            return "Failed to open file for reading"
+        case .readInputStreamFailed:
+            return "Error reading file"
         }
     }
 }

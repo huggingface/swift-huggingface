@@ -80,7 +80,9 @@ public struct FileLock: Sendable {
         )
 
         if !FileManager.default.fileExists(atPath: lockPath.path) {
-            FileManager.default.createFile(atPath: lockPath.path, contents: nil)
+            guard FileManager.default.createFile(atPath: lockPath.path, contents: nil) else {
+                throw FileLockError.acquisitionFailed(lockPath)
+            }
         }
 
         guard let handle = FileHandle(forWritingAtPath: lockPath.path) else {
