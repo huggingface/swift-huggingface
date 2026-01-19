@@ -204,8 +204,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/swift-xet.git",
       "state" : {
-        "revision" : "6185aea25aa25e78197d78bd776b92b199aa82fb",
-        "version" : "0.2.0"
+        "revision" : "299ed22a2c8df8e91b3d0c6d929d96e37ee88911",
+        "version" : "0.2.2"
       }
     }
   ],
