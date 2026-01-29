@@ -762,6 +762,11 @@ public extension HubClient {
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
             let fileDestination = destination.appendingPathComponent(filename)
 
+            let fileProgressObserver = fileProgress.observe(\.fractionCompleted, options: [.new]) { prog, change in
+                guard let newValue = change.newValue else { return }
+                progressHandler?(progress)
+            }
+
             // downloadFile handles cache lookup and storage automatically
             _ = try await downloadFile(
                 at: filename,
@@ -773,10 +778,12 @@ public extension HubClient {
             )
 
             if Task.isCancelled {
+                fileProgressObserver.invalidate()
                 return destination
             }
 
             fileProgress.completedUnitCount = 100
+            fileProgressObserver.invalidate()
         }
 
         progressHandler?(progress)
