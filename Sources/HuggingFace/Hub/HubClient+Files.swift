@@ -736,7 +736,10 @@ public extension HubClient {
     ///   - destination: Local destination directory
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
-    ///   - progressHandler: Optional closure called with progress updates
+    ///   - progressHandler: Optional closure called with progress updates.
+    ///     Updates are delivered on the main actor
+    ///     and coalesced to at most every 100ms
+    ///     with a 1% minimum delta between updates.
     /// - Returns: URL to the local snapshot directory
     func downloadSnapshot(
         of repo: Repo.ID,
