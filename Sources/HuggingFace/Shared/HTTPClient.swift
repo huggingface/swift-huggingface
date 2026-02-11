@@ -114,7 +114,9 @@ final class HTTPClient: @unchecked Sendable {
         headers: [String: String]? = nil
     ) async throws -> PaginatedResponse<T> {
         guard let url = URL(string: path, relativeTo: host) else {
-            throw HTTPClientError.unexpectedError("Invalid URL")
+            throw HTTPClientError.unexpectedError(
+                "Invalid URL for path '\(path)' relative to host '\(host)'"
+            )
         }
         return try await fetchPaginated(method, url: url, params: params, headers: headers)
     }
@@ -132,7 +134,7 @@ final class HTTPClient: @unchecked Sendable {
         do {
             let items = try jsonDecoder.decode([T].self, from: data)
             let nextURL = parseNextPageURL(from: httpResponse)
-            return PaginatedResponse(items: items, nextURL: nextURL)
+            return PaginatedResponse(items: items, nextURL: nextURL, requestURL: request.url)
         } catch {
             throw HTTPClientError.decodingError(
                 response: httpResponse,

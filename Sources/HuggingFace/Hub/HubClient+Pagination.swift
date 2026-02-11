@@ -10,7 +10,8 @@ extension HubClient {
         after page: PaginatedResponse<T>
     ) async throws -> PaginatedResponse<T>? {
         guard let next = page.nextURL else { return nil }
-        return try await httpClient.fetchPaginated(.get, url: next)
+        let resolvedNextURL = resolveNextPageURL(next, requestURL: page.requestURL)
+        return try await httpClient.fetchPaginated(.get, url: resolvedNextURL)
     }
 }
 

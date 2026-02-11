@@ -278,6 +278,159 @@ struct PaginationTests {
             #expect(next?.nextURL?.absoluteString == thirdPageURL)
         }
 
+        @Test("nextPage preserves missing query params from request URL", .mockURLSession)
+        func testNextPagePreservesMissingQueryParams() async throws {
+            let page = PaginatedResponse<Item>(
+                items: [],
+                nextURL: URL(string: "/api/items?skip=2"),
+                requestURL: URL(string: "https://huggingface.co/api/items?search=bert&limit=2")
+            )
+
+            await MockURLProtocol.setHandler { request in
+                let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+                let query = Dictionary(
+                    uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+                )
+
+                #expect(request.url?.host == "huggingface.co")
+                #expect(query["skip"] == "2")
+                #expect(query["search"] == "bert")
+                #expect(query["limit"] == "2")
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (response, Data("[{\"name\":\"next\"}]".utf8))
+            }
+
+            let client = createMockClient()
+            let next = try await client.nextPage(after: page)
+
+            #expect(next?.items.first?.name == "next")
+        }
+
+        private final class RequestCounter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var requests: [URLRequest] = []
+
+            @discardableResult
+            func append(_ request: URLRequest) -> Int {
+                lock.lock()
+                defer { lock.unlock() }
+                requests.append(request)
+                return requests.count
+            }
+
+            var count: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return requests.count
+            }
+        }
+
+        @Test("listAllModels fetches first page eagerly and subsequent pages lazily", .mockURLSession)
+        func testListAllModelsEagerThenLazyFetch() async throws {
+            let requestCounter = RequestCounter()
+            let firstPageURL = URL(string: "https://huggingface.co/api/models?limit=2&search=bert")!
+            let secondPageURL = URL(string: "https://huggingface.co/api/models?skip=2")!
+
+            await MockURLProtocol.setHandler { request in
+                let callIndex = requestCounter.append(request)
+                let responseURL = request.url ?? firstPageURL
+
+                let responseHeaders: [String: String]
+                let responseBody: String
+                if callIndex == 1 {
+                    let components = URLComponents(url: responseURL, resolvingAgainstBaseURL: false)
+                    let query = Dictionary(
+                        uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+                    )
+                    #expect(query["search"] == "bert")
+                    #expect(query["limit"] == "2")
+
+                    responseHeaders = [
+                        "Content-Type": "application/json",
+                        "Link": "<\(secondPageURL.absoluteString)>; rel=\"next\"",
+                    ]
+                    responseBody = "[{\"id\":\"org/model-a\"}]"
+                } else {
+                    let components = URLComponents(url: responseURL, resolvingAgainstBaseURL: false)
+                    let query = Dictionary(
+                        uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") }
+                    )
+                    #expect(query["skip"] == "2")
+                    #expect(query["search"] == "bert")
+                    #expect(query["limit"] == "2")
+
+                    responseHeaders = [
+                        "Content-Type": "application/json"
+                    ]
+                    responseBody = "[{\"id\":\"org/model-b\"}]"
+                }
+
+                let response = HTTPURLResponse(
+                    url: responseURL,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: responseHeaders
+                )!
+                return (response, Data(responseBody.utf8))
+            }
+
+            let client = createMockClient()
+            let pages = try await client.listAllModels(search: "bert", perPage: 2)
+            #expect(requestCounter.count == 1)
+
+            var iterator = pages.makeAsyncIterator()
+            let firstPage = try await iterator.next()
+            #expect(firstPage?.items.map(\.id.description) == ["org/model-a"])
+            #expect(requestCounter.count == 1)
+
+            let secondPage = try await iterator.next()
+            #expect(secondPage?.items.map(\.id.description) == ["org/model-b"])
+            #expect(requestCounter.count == 2)
+
+            let donePage = try await iterator.next()
+            #expect(donePage == nil)
+            #expect(requestCounter.count == 2)
+        }
+
+        @Test("listAllModels does not fetch additional pages after early break", .mockURLSession)
+        func testListAllModelsEarlyBreakStopsFetching() async throws {
+            let requestCounter = RequestCounter()
+            let secondPageURL = URL(string: "https://huggingface.co/api/models?skip=1")!
+
+            await MockURLProtocol.setHandler { request in
+                _ = requestCounter.append(request)
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [
+                        "Content-Type": "application/json",
+                        "Link": "<\(secondPageURL.absoluteString)>; rel=\"next\"",
+                    ]
+                )!
+                return (response, Data("[{\"id\":\"org/model-a\"}]".utf8))
+            }
+
+            let client = createMockClient()
+            let pages = try await client.listAllModels(perPage: 1)
+            #expect(requestCounter.count == 1)
+
+            var pageCount = 0
+            for try await _ in pages {
+                pageCount += 1
+                break
+            }
+
+            #expect(pageCount == 1)
+            #expect(requestCounter.count == 1)
+        }
+
         private actor PageFetcher {
             private var pendingPages: [PaginatedResponse<Item>]
             private var totalFetches = 0

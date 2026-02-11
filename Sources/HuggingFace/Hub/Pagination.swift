@@ -20,14 +20,22 @@ public struct PaginatedResponse<T: Decodable & Sendable>: Sendable {
     /// The URL for the next page, if available.
     public let nextURL: URL?
 
+    /// The request URL that produced this page, if available.
+    ///
+    /// This is used internally to resolve relative pagination links and to preserve
+    /// query parameters when the server's `next` URL omits them.
+    public let requestURL: URL?
+
     /// Creates a paginated response.
     ///
     /// - Parameters:
     ///   - items: The items in the current page.
     ///   - nextURL: The URL for the next page, if available.
-    public init(items: [T], nextURL: URL?) {
+    ///   - requestURL: The request URL that produced this page, if available.
+    public init(items: [T], nextURL: URL?, requestURL: URL? = nil) {
         self.items = items
         self.nextURL = nextURL
+        self.requestURL = requestURL
     }
 }
 
@@ -136,4 +144,43 @@ func parseNextPageURL(from linkHeader: String) -> URL? {
     }
 
     return nil
+}
+
+/// Resolves a server-provided pagination URL against the current request context.
+///
+/// Some endpoints can return `next` URLs that omit original query filters.
+/// This helper resolves relative URLs and preserves missing query parameters from
+/// the current request URL.
+///
+/// - Parameters:
+///   - nextURL: The `next` URL parsed from the Link header.
+///   - requestURL: The request URL for the current page.
+/// - Returns: A resolved next-page URL with missing query parameters preserved.
+func resolveNextPageURL(_ nextURL: URL, requestURL: URL?) -> URL {
+    var resolvedNextURL = nextURL
+
+    if let requestURL,
+        let nextComponents = URLComponents(url: nextURL, resolvingAgainstBaseURL: true),
+        nextComponents.host == nil
+    {
+        resolvedNextURL = URL(string: nextURL.relativeString, relativeTo: requestURL)?.absoluteURL ?? nextURL
+    }
+
+    guard
+        let requestURL,
+        var nextComponents = URLComponents(url: resolvedNextURL, resolvingAgainstBaseURL: true),
+        let requestComponents = URLComponents(url: requestURL, resolvingAgainstBaseURL: true)
+    else {
+        return resolvedNextURL
+    }
+
+    var nextQueryItems = nextComponents.queryItems ?? []
+    let existingNames = Set(nextQueryItems.map(\.name))
+
+    for requestItem in requestComponents.queryItems ?? [] where !existingNames.contains(requestItem.name) {
+        nextQueryItems.append(requestItem)
+    }
+
+    nextComponents.queryItems = nextQueryItems.isEmpty ? nil : nextQueryItems
+    return nextComponents.url ?? resolvedNextURL
 }
