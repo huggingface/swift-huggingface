@@ -815,9 +815,10 @@ public extension HubClient {
 
 /// Holds per-file progress observation state.
 private struct FileProgressReporter {
-    let observer: NSKeyValueObservation
+    let observer: ProgressObservation
     let continuation: AsyncStream<Double>.Continuation
     let task: Task<Void, Never>
+    let samplingTask: Task<Void, Never>?
 
     /// Creates a per-file progress reporter that coalesces frequent updates and
     /// delivers callbacks on the main actor.
@@ -872,23 +873,48 @@ private struct FileProgressReporter {
         }
 
         // KVO drives the stream; the task does the throttled delivery
-        let observer = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
-            guard change.newValue != nil else { return }
-            continuation.yield(fileProgress.fractionCompleted)
-        }
+        let observer: ProgressObservation
+        var samplingTask: Task<Void, Never>?
+        #if canImport(FoundationNetworking)
+            observer = ProgressObservation()
+            samplingTask = Task {
+                while !Task.isCancelled {
+                    continuation.yield(fileProgress.fractionCompleted)
+                    try? await Task.sleep(for: minimumInterval)
+                }
+            }
+        #else
+            observer = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
+                guard change.newValue != nil else { return }
+                continuation.yield(fileProgress.fractionCompleted)
+            }
+        #endif
 
         self.observer = observer
         self.continuation = continuation
         self.task = task
+        self.samplingTask = samplingTask
     }
 
     func finish() async {
         // Ensure observation and coalescing task are torn down cleanly
         observer.invalidate()
         continuation.finish()
+        samplingTask?.cancel()
         _ = await task.result
+        if let samplingTask {
+            _ = await samplingTask.result
+        }
     }
 }
+
+#if canImport(FoundationNetworking)
+    private struct ProgressObservation {
+        func invalidate() {}
+    }
+#else
+    private typealias ProgressObservation = NSKeyValueObservation
+#endif
 
 // MARK: - Xet Operations
 
