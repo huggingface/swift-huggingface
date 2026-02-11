@@ -762,8 +762,8 @@ public extension HubClient {
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
             let fileDestination = destination.appendingPathComponent(filename)
 
-            let fileProgressObserver = fileProgress.observe(\.fractionCompleted, options: [.new]) { prog, change in
-                guard let newValue = change.newValue else { return }
+            let fileProgressObserver = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
+                guard change.newValue != nil else { return }
                 progressHandler?(progress)
             }
 
