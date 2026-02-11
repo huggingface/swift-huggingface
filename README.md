@@ -1,9 +1,9 @@
 # Swift Hugging Face
 
-A Swift client for [Hugging Face](https://huggingface.co), providing access to both 
-the [Hub API](https://huggingface.co/docs/hub/api) 
-for managing models, datasets, and repositories, and 
-the [Inference Providers API](https://huggingface.co/docs/inference-providers/index) 
+A Swift client for [Hugging Face](https://huggingface.co), providing access to both
+the [Hub API](https://huggingface.co/docs/hub/api)
+for managing models, datasets, and repositories, and
+the [Inference Providers API](https://huggingface.co/docs/inference-providers/index)
 for running AI tasks like chat completion, text-to-image generation, and more.
 
 ## Requirements
@@ -33,7 +33,7 @@ For development and CI/CD environments, tokens are automatically detected from
 the environment and local files:
 
 1. `HF_TOKEN` environment variable
-2. `HUGGING_FACE_HUB_TOKEN` environment variable  
+2. `HUGGING_FACE_HUB_TOKEN` environment variable
 3. `HF_TOKEN_PATH` environment variable (path to token file)
 4. `$HF_HOME/token` file
 5. `~/.cache/huggingface/token` (standard HF CLI location)
@@ -611,12 +611,12 @@ for try await page in try await client.listAllModels(perPage: 100) {
 
 > [!NOTE]
 > Control flow works as expected inside `for try await` pagination loops:
-> use `break` to stop fetching more pages, 
+> use `break` to stop fetching more pages,
 > `continue` to skip the rest of the current iteration,
-> `return` to exit the surrounding function, 
+> `return` to exit the surrounding function,
 > and `throw` to fail early.
 >
-> In all of these cases, 
+> In all of these cases,
 > no additional page requests are made after the loop stops advancing.
 
 You can still fetch pages manually when needed:
@@ -867,7 +867,7 @@ do {
 
 ### Inference Providers API
 
-The Inference Providers API allows you to run AI tasks using various models and providers. 
+The Inference Providers API allows you to run AI tasks using various models and providers.
 It automatically handles authentication and routing to the best provider for your needs.
 
 #### Creating an Inference Client
