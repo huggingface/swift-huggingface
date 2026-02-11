@@ -92,17 +92,25 @@ final class MockURLProtocol: URLProtocol {
                 didReceive: response,
                 cacheStoragePolicy: .notAllowed
             )
-            if let chunkSize = Self.requestHandlerStorage.currentChunkSize(), chunkSize > 0, data.count > chunkSize {
-                var offset = 0
-                while offset < data.count {
-                    let end = min(offset + chunkSize, data.count)
-                    let chunk = data.subdata(in: offset ..< end)
-                    offset = end
-                    self.client?.urlProtocol(self, didLoad: chunk)
-                }
-            } else {
+            #if canImport(FoundationNetworking)
+                // FoundationNetworking's URLProtocol client is not stable with chunked delivery.
                 self.client?.urlProtocol(self, didLoad: data)
-            }
+            #else
+                if let chunkSize = Self.requestHandlerStorage.currentChunkSize(),
+                    chunkSize > 0,
+                    data.count > chunkSize
+                {
+                    var offset = 0
+                    while offset < data.count {
+                        let end = min(offset + chunkSize, data.count)
+                        let chunk = data.subdata(in: offset ..< end)
+                        offset = end
+                        self.client?.urlProtocol(self, didLoad: chunk)
+                    }
+                } else {
+                    self.client?.urlProtocol(self, didLoad: data)
+                }
+            #endif
             self.client?.urlProtocolDidFinishLoading(self)
         } catch {
             self.client?.urlProtocol(self, didFailWithError: error)

@@ -369,9 +369,14 @@ import Testing
             )
 
             #expect(result == destination)
+            #if canImport(FoundationNetworking)
+                let minimumExpectedCalls = 2
+            #else
+                let minimumExpectedCalls = 3
+            #endif
             #expect(
-                callCount.count >= 3,
-                "progressHandler should be called at start, during file download, and at end; got \(callCount.count)"
+                callCount.count >= minimumExpectedCalls,
+                "progressHandler should be called at least \(minimumExpectedCalls) times; got \(callCount.count)"
             )
 
             try? FileManager.default.removeItem(at: destination)
