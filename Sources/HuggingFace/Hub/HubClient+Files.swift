@@ -814,16 +814,25 @@ private struct FileProgressReporter {
 
     /// Creates a per-file progress reporter that coalesces frequent updates and
     /// delivers callbacks on the main actor.
+    ///
+    /// - Parameters:
+    ///   - parentProgress: Parent progress aggregating file-level progress.
+    ///   - fileProgress: Progress instance for the current file.
+    ///   - progressHandler: Callback invoked on the main actor.
+    ///   - minimumDelta: Minimum progress fraction delta required to report. Defaults to 0.01.
+    ///   - minimumInterval: Minimum time interval between reports. Defaults to 100 milliseconds.
     init?(
         parentProgress: Progress,
         fileProgress: Progress,
-        progressHandler: (@Sendable (Progress) -> Void)?
+        progressHandler: (@Sendable (Progress) -> Void)?,
+        minimumDelta: Double = 0.01,
+        minimumInterval: Duration = .milliseconds(100)
     ) {
         guard let progressHandler else { return nil }
-        // Thresholds chosen to cap callback frequency while still feeling responsive
-        let minimumDelta = 0.01
-        let minimumInterval: Duration = .milliseconds(100)
+
+        // Use a continuous clock to track time intervals
         let clock = ContinuousClock()
+
         // Stream progress updates from KVO into a single async consumer
         let (progressStream, continuation) = AsyncStream<Double>.makeStream()
 
