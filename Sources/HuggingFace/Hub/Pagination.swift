@@ -20,14 +20,83 @@ public struct PaginatedResponse<T: Decodable & Sendable>: Sendable {
     /// The URL for the next page, if available.
     public let nextURL: URL?
 
+    /// The request URL that produced this page, if available.
+    ///
+    /// This is used internally to resolve relative pagination links and to preserve
+    /// query parameters when the server's `next` URL omits them.
+    public let requestURL: URL?
+
     /// Creates a paginated response.
     ///
     /// - Parameters:
     ///   - items: The items in the current page.
     ///   - nextURL: The URL for the next page, if available.
-    public init(items: [T], nextURL: URL?) {
+    ///   - requestURL: The request URL that produced this page, if available.
+    public init(items: [T], nextURL: URL?, requestURL: URL? = nil) {
         self.items = items
         self.nextURL = nextURL
+        self.requestURL = requestURL
+    }
+}
+
+/// An async sequence of paginated responses.
+///
+/// `Pages` yields one ``PaginatedResponse`` at a time and fetches subsequent pages lazily.
+/// The next page is requested only when iteration advances past the current page.
+/// If iteration stops early, no additional page requests are performed.
+///
+/// Use this type with `for try await` to process page-by-page results while retaining
+/// explicit control over when to stop pagination.
+public struct Pages<T: Decodable & Sendable>: AsyncSequence, Sendable {
+    public typealias Element = PaginatedResponse<T>
+
+    private let firstPage: PaginatedResponse<T>
+    private let fetchNext: @Sendable (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+
+    /// Creates a lazy page sequence from an initial page and next-page fetcher.
+    ///
+    /// - Parameters:
+    ///   - firstPage: The first page yielded by the sequence.
+    ///   - fetchNext: A closure that fetches the page after the provided page.
+    ///                Return `nil` when no additional pages are available.
+    public init(
+        firstPage: PaginatedResponse<T>,
+        fetchNext: @Sendable @escaping (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+    ) {
+        self.firstPage = firstPage
+        self.fetchNext = fetchNext
+    }
+
+    public func makeAsyncIterator() -> Iterator {
+        Iterator(current: firstPage, fetchNext: fetchNext)
+    }
+
+    public struct Iterator: AsyncIteratorProtocol {
+        private var current: PaginatedResponse<T>?
+        private let fetchNext: @Sendable (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+        private var hasYieldedFirstPage = false
+
+        fileprivate init(
+            current: PaginatedResponse<T>?,
+            fetchNext: @Sendable @escaping (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+        ) {
+            self.current = current
+            self.fetchNext = fetchNext
+        }
+
+        public mutating func next() async throws -> PaginatedResponse<T>? {
+            if !hasYieldedFirstPage {
+                hasYieldedFirstPage = true
+                return current
+            }
+
+            guard let current else {
+                return nil
+            }
+
+            self.current = try await fetchNext(current)
+            return self.current
+        }
     }
 }
 
@@ -75,4 +144,43 @@ func parseNextPageURL(from linkHeader: String) -> URL? {
     }
 
     return nil
+}
+
+/// Resolves a server-provided pagination URL against the current request context.
+///
+/// Some endpoints can return `next` URLs that omit original query filters.
+/// This helper resolves relative URLs and preserves missing query parameters from
+/// the current request URL.
+///
+/// - Parameters:
+///   - nextURL: The `next` URL parsed from the Link header.
+///   - requestURL: The request URL for the current page.
+/// - Returns: A resolved next-page URL with missing query parameters preserved.
+func resolveNextPageURL(_ nextURL: URL, requestURL: URL?) -> URL {
+    var resolvedNextURL = nextURL
+
+    if let requestURL,
+        let nextComponents = URLComponents(url: nextURL, resolvingAgainstBaseURL: true),
+        nextComponents.host == nil
+    {
+        resolvedNextURL = URL(string: nextURL.relativeString, relativeTo: requestURL)?.absoluteURL ?? nextURL
+    }
+
+    guard
+        let requestURL,
+        var nextComponents = URLComponents(url: resolvedNextURL, resolvingAgainstBaseURL: true),
+        let requestComponents = URLComponents(url: requestURL, resolvingAgainstBaseURL: true)
+    else {
+        return resolvedNextURL
+    }
+
+    var nextQueryItems = nextComponents.queryItems ?? []
+    let existingNames = Set(nextQueryItems.map(\.name))
+
+    for requestItem in requestComponents.queryItems ?? [] where !existingNames.contains(requestItem.name) {
+        nextQueryItems.append(requestItem)
+    }
+
+    nextComponents.queryItems = nextQueryItems.isEmpty ? nil : nextQueryItems
+    return nextComponents.url ?? resolvedNextURL
 }

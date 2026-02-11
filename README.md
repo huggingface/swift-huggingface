@@ -1,9 +1,9 @@
 # Swift Hugging Face
 
-A Swift client for [Hugging Face](https://huggingface.co), providing access to both 
-the [Hub API](https://huggingface.co/docs/hub/api) 
-for managing models, datasets, and repositories, and 
-the [Inference Providers API](https://huggingface.co/docs/inference-providers/index) 
+A Swift client for [Hugging Face](https://huggingface.co), providing access to both
+the [Hub API](https://huggingface.co/docs/hub/api)
+for managing models, datasets, and repositories, and
+the [Inference Providers API](https://huggingface.co/docs/inference-providers/index)
 for running AI tasks like chat completion, text-to-image generation, and more.
 
 ## Requirements
@@ -33,7 +33,7 @@ For development and CI/CD environments, tokens are automatically detected from
 the environment and local files:
 
 1. `HF_TOKEN` environment variable
-2. `HUGGING_FACE_HUB_TOKEN` environment variable  
+2. `HUGGING_FACE_HUB_TOKEN` environment variable
 3. `HF_TOKEN_PATH` environment variable (path to token file)
 4. `$HF_HOME/token` file
 5. `~/.cache/huggingface/token` (standard HF CLI location)
@@ -597,15 +597,38 @@ _ = try await client.upsertSpaceVariable(
 
 #### Pagination
 
-The API automatically handles pagination using `Link` headers:
+The client supports pagination via `Link` headers exposed by the API.
+Use page iteration for ergonomic, lazy traversal with explicit stop control:
 
 ```swift
-let page1 = try await client.listModels(limit: 100)
-print("Page 1: \(page1.items.count) models")
+for try await page in try await client.listAllModels(perPage: 100) {
+    print("Page: \(page.items.count) models")
+    if page.items.contains(where: { $0.id.namespace == "black-forest-labs" }) {
+        break // Stop once you've found a page matching your criteria.
+    }
+}
+```
 
-// Get next page if available
-if let nextURL = page1.nextURL {
-    // Make a request to nextURL to get the next page
+> [!NOTE]
+> Control flow works as expected inside `for try await` pagination loops:
+> use `break` to stop fetching more pages,
+> `continue` to skip the rest of the current iteration,
+> `return` to exit the surrounding function,
+> and `throw` to fail early.
+>
+> In all of these cases,
+> no additional page requests are made after the loop stops advancing.
+
+You can still fetch pages manually when needed:
+
+```swift
+var page = try await client.listModels(limit: 100)
+print("Page 1: \(page.items.count) models")
+while page.nextURL != nil {
+    guard let next = try await client.nextPage(after: page) else { break }
+    page = next
+
+    print("Page: \(page.items.count) models")
 }
 ```
 
@@ -844,7 +867,7 @@ do {
 
 ### Inference Providers API
 
-The Inference Providers API allows you to run AI tasks using various models and providers. 
+The Inference Providers API allows you to run AI tasks using various models and providers.
 It automatically handles authentication and routing to the best provider for your needs.
 
 #### Creating an Inference Client
