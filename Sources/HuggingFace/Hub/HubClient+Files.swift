@@ -803,75 +803,77 @@ public extension HubClient {
     }
 }
 
-private extension HubClient {
-    /// Holds per-file progress observation state.
-    struct FileProgressReporter {
-        let observer: NSKeyValueObservation
-        let continuation: AsyncStream<Double>.Continuation
-        let task: Task<Void, Never>
+/// Holds per-file progress observation state.
+private struct FileProgressReporter {
+    let observer: NSKeyValueObservation
+    let continuation: AsyncStream<Double>.Continuation
+    let task: Task<Void, Never>
 
-        /// Creates a per-file progress reporter that coalesces frequent updates and
-        /// delivers callbacks on the main actor.
-        init?(
-            parentProgress: Progress,
-            fileProgress: Progress,
-            progressHandler: (@Sendable (Progress) -> Void)?
-        ) {
-            guard let progressHandler else { return nil }
-            // Thresholds chosen to cap callback frequency while still feeling responsive.
-            let minimumDelta = 0.01
-            let minimumInterval: Duration = .milliseconds(100)
-            let clock = ContinuousClock()
-            // Stream progress updates from KVO into a single async consumer.
-            let (progressStream, continuation) = AsyncStream<Double>.makeStream()
+    /// Creates a per-file progress reporter that coalesces frequent updates and
+    /// delivers callbacks on the main actor.
+    init?(
+        parentProgress: Progress,
+        fileProgress: Progress,
+        progressHandler: (@Sendable (Progress) -> Void)?
+    ) {
+        guard let progressHandler else { return nil }
+        // Thresholds chosen to cap callback frequency while still feeling responsive
+        let minimumDelta = 0.01
+        let minimumInterval: Duration = .milliseconds(100)
+        let clock = ContinuousClock()
+        // Stream progress updates from KVO into a single async consumer
+        let (progressStream, continuation) = AsyncStream<Double>.makeStream()
 
-            // Coalesce updates on a task that delivers on the main actor.
-            let task = Task {
-                var lastReportedFraction = -1.0
-                var lastReportedTime = clock.now
+        // Coalesce updates on a task that delivers on the main actor
+        let task = Task {
+            var lastReportedFraction = -1.0
+            var lastReportedTime = clock.now
 
-                for await current in progressStream {
-                    let now = clock.now
-                    if current >= 1.0 || lastReportedFraction < 0 {
-                        lastReportedFraction = current
-                        lastReportedTime = now
-                        await MainActor.run {
-                            progressHandler(parentProgress)
-                        }
-                        continue
-                    }
-
-                    // Enforce both delta and time-based throttling.
-                    guard current - lastReportedFraction >= minimumDelta else { continue }
-                    guard now - lastReportedTime >= minimumInterval else { continue }
-
+            for await current in progressStream {
+                let now = clock.now
+                if current >= 1.0 || lastReportedFraction < 0 {
                     lastReportedFraction = current
                     lastReportedTime = now
                     await MainActor.run {
                         progressHandler(parentProgress)
                     }
+                    continue
+                }
+
+                // Enforce both delta and time-based throttling
+                guard current - lastReportedFraction >= minimumDelta else { continue }
+                guard now - lastReportedTime >= minimumInterval else { continue }
+
+                lastReportedFraction = current
+                lastReportedTime = now
+                await MainActor.run {
+                    progressHandler(parentProgress)
                 }
             }
-
-            // KVO drives the stream; the task does the throttled delivery.
-            let observer = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
-                guard change.newValue != nil else { return }
-                continuation.yield(fileProgress.fractionCompleted)
-            }
-
-            self.observer = observer
-            self.continuation = continuation
-            self.task = task
         }
 
-        func finish() async {
-            // Ensure observation and coalescing task are torn down cleanly.
-            observer.invalidate()
-            continuation.finish()
-            _ = await task.result
+        // KVO drives the stream; the task does the throttled delivery
+        let observer = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
+            guard change.newValue != nil else { return }
+            continuation.yield(fileProgress.fractionCompleted)
         }
+
+        self.observer = observer
+        self.continuation = continuation
+        self.task = task
     }
 
+    func finish() async {
+        // Ensure observation and coalescing task are torn down cleanly
+        observer.invalidate()
+        continuation.finish()
+        _ = await task.result
+    }
+}
+
+// MARK: - Xet Operations
+
+private extension HubClient {
     /// Downloads file data using Xet's content-addressable storage system.
     func downloadDataWithXet(
         repoPath: String,
@@ -980,7 +982,6 @@ private extension HubClient {
         )
         return url
     }
-
 }
 
 private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
