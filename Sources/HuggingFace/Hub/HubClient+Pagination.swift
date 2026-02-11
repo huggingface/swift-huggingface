@@ -28,7 +28,7 @@ extension HubClient {
     ///   - filter: Filter based on tags (e.g., "text-classification").
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
-    ///   - limit: Limit the number of models fetched per page.
+    ///   - perPage: Limit the number of models fetched per page.
     ///   - full: Whether to fetch most model data, such as all tags, the files, etc.
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: A lazy sequence of model pages.
@@ -39,7 +39,7 @@ extension HubClient {
         filter: String? = nil,
         sort: String? = nil,
         direction: SortDirection? = nil,
-        limit: Int? = nil,
+        perPage: Int? = nil,
         full: Bool? = nil,
         config: Bool? = nil
     ) async throws -> Pages<Model> {
@@ -49,7 +49,7 @@ extension HubClient {
             filter: filter,
             sort: sort,
             direction: direction,
-            limit: limit,
+            limit: perPage,
             full: full,
             config: config
         )
@@ -69,7 +69,7 @@ extension HubClient {
     ///   - filter: Filter based on tags (e.g., "task_categories:text-classification").
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
-    ///   - limit: Limit the number of datasets fetched per page.
+    ///   - perPage: Limit the number of datasets fetched per page.
     ///   - full: Whether to fetch most dataset data, such as all tags, the files, etc.
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: A lazy sequence of dataset pages.
@@ -80,7 +80,7 @@ extension HubClient {
         filter: String? = nil,
         sort: String? = nil,
         direction: SortDirection? = nil,
-        limit: Int? = nil,
+        perPage: Int? = nil,
         full: Bool? = nil,
         config: Bool? = nil
     ) async throws -> Pages<Dataset> {
@@ -90,7 +90,7 @@ extension HubClient {
             filter: filter,
             sort: sort,
             direction: direction,
-            limit: limit,
+            limit: perPage,
             full: full,
             config: config
         )
@@ -110,7 +110,7 @@ extension HubClient {
     ///   - filter: Filter based on tags.
     ///   - sort: Property to use when sorting (e.g., "likes", "author").
     ///   - direction: Direction in which to sort.
-    ///   - limit: Limit the number of spaces fetched per page.
+    ///   - perPage: Limit the number of spaces fetched per page.
     ///   - full: Whether to fetch most space data, such as all tags, the files, etc.
     /// - Returns: A lazy sequence of space pages.
     /// - Throws: An error if fetching the first page fails.
@@ -120,7 +120,7 @@ extension HubClient {
         filter: String? = nil,
         sort: String? = nil,
         direction: SortDirection? = nil,
-        limit: Int? = nil,
+        perPage: Int? = nil,
         full: Bool? = nil
     ) async throws -> Pages<Space> {
         let firstPage = try await listSpaces(
@@ -129,7 +129,7 @@ extension HubClient {
             filter: filter,
             sort: sort,
             direction: direction,
-            limit: limit,
+            limit: perPage,
             full: full
         )
         return Pages(firstPage: firstPage) { [self] page in
@@ -145,18 +145,18 @@ extension HubClient {
     /// - Parameters:
     ///   - search: Search term to filter organizations.
     ///   - sort: Property to use when sorting (e.g., "createdAt").
-    ///   - limit: Limit the number of organizations fetched per page.
+    ///   - perPage: Limit the number of organizations fetched per page.
     /// - Returns: A lazy sequence of organization pages.
     /// - Throws: An error if fetching the first page fails.
     public func listAllOrganizations(
         search: String? = nil,
         sort: String? = nil,
-        limit: Int? = nil
+        perPage: Int? = nil
     ) async throws -> Pages<Organization> {
         let firstPage = try await listOrganizations(
             search: search,
             sort: sort,
-            limit: limit
+            limit: perPage
         )
         return Pages(firstPage: firstPage) { [self] page in
             try await nextPage(after: page)
@@ -171,18 +171,18 @@ extension HubClient {
     /// - Parameters:
     ///   - search: Search term to filter papers.
     ///   - sort: Property to use when sorting (e.g., "trending", "updated").
-    ///   - limit: Limit the number of papers fetched per page.
+    ///   - perPage: Limit the number of papers fetched per page.
     /// - Returns: A lazy sequence of paper pages.
     /// - Throws: An error if fetching the first page fails.
     public func listAllPapers(
         search: String? = nil,
         sort: String? = nil,
-        limit: Int? = nil
+        perPage: Int? = nil
     ) async throws -> Pages<Paper> {
         let firstPage = try await listPapers(
             search: search,
             sort: sort,
-            limit: limit
+            limit: perPage
         )
         return Pages(firstPage: firstPage) { [self] page in
             try await nextPage(after: page)
@@ -198,20 +198,20 @@ extension HubClient {
     ///   - owner: Filter collections by owner (username or organization).
     ///   - search: Search term to filter collections.
     ///   - sort: Property to use when sorting (e.g., "trending", "updated").
-    ///   - limit: Limit the number of collections fetched per page.
+    ///   - perPage: Limit the number of collections fetched per page.
     /// - Returns: A lazy sequence of collection pages.
     /// - Throws: An error if fetching the first page fails.
     public func listAllCollections(
         owner: String? = nil,
         search: String? = nil,
         sort: String? = nil,
-        limit: Int? = nil
+        perPage: Int? = nil
     ) async throws -> Pages<Collection> {
         let firstPage = try await listCollections(
             owner: owner,
             search: search,
             sort: sort,
-            limit: limit
+            limit: perPage
         )
         return Pages(firstPage: firstPage) { [self] page in
             try await nextPage(after: page)

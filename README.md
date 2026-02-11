@@ -601,7 +601,7 @@ The API automatically handles pagination using `Link` headers.
 Use page iteration for ergonomic, lazy traversal with explicit stop control:
 
 ```swift
-for try await page in try await client.listAllModels(limit: 100) {
+for try await page in try await client.listAllModels(perPage: 100) {
     print("Page: \(page.items.count) models")
     if page.items.contains(where: { $0.id.namespace == "black-forest-labs" }) {
         break // Stop once you've found a page matching your criteria.
