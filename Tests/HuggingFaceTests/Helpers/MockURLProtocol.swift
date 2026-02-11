@@ -13,6 +13,7 @@ import Testing
 private final class RequestHandlerStorage: @unchecked Sendable {
     private let lock = NSLock()
     private var requestHandler: (@Sendable (URLRequest) throws -> (HTTPURLResponse, Data))?
+    private var chunkSize: Int?
 
     func setHandler(
         _ handler: @Sendable @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
@@ -25,6 +26,12 @@ private final class RequestHandlerStorage: @unchecked Sendable {
     func clearHandler() {
         lock.lock()
         requestHandler = nil
+        lock.unlock()
+    }
+
+    func setChunkSize(_ size: Int?) {
+        lock.lock()
+        chunkSize = size
         lock.unlock()
     }
 
@@ -42,6 +49,12 @@ private final class RequestHandlerStorage: @unchecked Sendable {
         }
         return try handler(request)
     }
+
+    func currentChunkSize() -> Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return chunkSize
+    }
 }
 
 // MARK: - Mock URL Protocol
@@ -56,6 +69,11 @@ final class MockURLProtocol: URLProtocol {
         _ handler: @Sendable @escaping (URLRequest) throws -> (HTTPURLResponse, Data)
     ) async {
         requestHandlerStorage.setHandler(handler)
+    }
+
+    /// When set, the next handler's response body is sent in chunks of this size (for progress tests).
+    static func setChunkSize(_ size: Int?) {
+        requestHandlerStorage.setChunkSize(size)
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -74,7 +92,17 @@ final class MockURLProtocol: URLProtocol {
                 didReceive: response,
                 cacheStoragePolicy: .notAllowed
             )
-            self.client?.urlProtocol(self, didLoad: data)
+            if let chunkSize = Self.requestHandlerStorage.currentChunkSize(), chunkSize > 0, data.count > chunkSize {
+                var offset = 0
+                while offset < data.count {
+                    let end = min(offset + chunkSize, data.count)
+                    let chunk = data.subdata(in: offset ..< end)
+                    offset = end
+                    self.client?.urlProtocol(self, didLoad: chunk)
+                }
+            } else {
+                self.client?.urlProtocol(self, didLoad: data)
+            }
             self.client?.urlProtocolDidFinishLoading(self)
         } catch {
             self.client?.urlProtocol(self, didFailWithError: error)
@@ -142,14 +170,16 @@ final class MockURLProtocol: URLProtocol {
         ) async throws {
             // Serialize all MockURLProtocol tests to prevent interference
             try await MockURLProtocolLock.shared.withLock {
-                // Clear handler before test
+                // Clear handler and chunk size before test
                 MockURLProtocol.requestHandlerStorage.clearHandler()
+                MockURLProtocol.requestHandlerStorage.setChunkSize(nil)
 
                 // Execute the test
                 try await function()
 
-                // Clear handler after test
+                // Clear handler and chunk size after test
                 MockURLProtocol.requestHandlerStorage.clearHandler()
+                MockURLProtocol.requestHandlerStorage.setChunkSize(nil)
             }
         }
     }
