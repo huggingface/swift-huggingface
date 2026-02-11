@@ -174,12 +174,14 @@ final class MockURLProtocol: URLProtocol {
                 MockURLProtocol.requestHandlerStorage.clearHandler()
                 MockURLProtocol.requestHandlerStorage.setChunkSize(nil)
 
+                defer {
+                    // Always reset state even if the test throws
+                    MockURLProtocol.requestHandlerStorage.clearHandler()
+                    MockURLProtocol.requestHandlerStorage.setChunkSize(nil)
+                }
+
                 // Execute the test
                 try await function()
-
-                // Clear handler and chunk size after test
-                MockURLProtocol.requestHandlerStorage.clearHandler()
-                MockURLProtocol.requestHandlerStorage.setChunkSize(nil)
             }
         }
     }

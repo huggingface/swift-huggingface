@@ -775,14 +775,21 @@ public extension HubClient {
             )
 
             // downloadFile handles cache lookup and storage automatically
-            _ = try await downloadFile(
-                at: filename,
-                from: repo,
-                to: fileDestination,
-                kind: kind,
-                revision: revision,
-                progress: fileProgress
-            )
+            do {
+                _ = try await downloadFile(
+                    at: filename,
+                    from: repo,
+                    to: fileDestination,
+                    kind: kind,
+                    revision: revision,
+                    progress: fileProgress
+                )
+            } catch {
+                if let reporter {
+                    await reporter.finish()
+                }
+                throw error
+            }
 
             if Task.isCancelled {
                 if let reporter {
