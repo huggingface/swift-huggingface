@@ -791,7 +791,7 @@ public extension HubClient {
                 return destination
             }
 
-            fileProgress.completedUnitCount = 100
+            fileProgress.completedUnitCount = fileProgress.totalUnitCount
             if let reporter {
                 await reporter.finish()
             }
