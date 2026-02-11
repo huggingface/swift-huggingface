@@ -277,6 +277,129 @@ struct PaginationTests {
             #expect(next != nil)
             #expect(next?.nextURL?.absoluteString == thirdPageURL)
         }
+
+        private actor PageFetcher {
+            private var pendingPages: [PaginatedResponse<Item>]
+            private var totalFetches = 0
+
+            init(pendingPages: [PaginatedResponse<Item>]) {
+                self.pendingPages = pendingPages
+            }
+
+            func next(after page: PaginatedResponse<Item>) -> PaginatedResponse<Item>? {
+                guard page.nextURL != nil else {
+                    return nil
+                }
+                totalFetches += 1
+                guard !pendingPages.isEmpty else {
+                    return nil
+                }
+                return pendingPages.removeFirst()
+            }
+
+            func fetchCount() -> Int {
+                totalFetches
+            }
+        }
+
+        @Test("Pages iterates across multiple pages lazily")
+        func testPagesIteratesAcrossMultiplePages() async throws {
+            let first = PaginatedResponse(
+                items: [Item(name: "a"), Item(name: "b")],
+                nextURL: URL(string: "https://huggingface.co/api/items?page=2")
+            )
+            let second = PaginatedResponse(
+                items: [Item(name: "c")],
+                nextURL: URL(string: "https://huggingface.co/api/items?page=3")
+            )
+            let third = PaginatedResponse(
+                items: [Item(name: "d"), Item(name: "e")],
+                nextURL: nil
+            )
+
+            let fetcher = PageFetcher(pendingPages: [second, third])
+            let pages = Pages(firstPage: first) { page in
+                await fetcher.next(after: page)
+            }
+
+            var namesByPage: [[String]] = []
+            for try await page in pages {
+                namesByPage.append(page.items.map(\.name))
+            }
+
+            #expect(namesByPage == [["a", "b"], ["c"], ["d", "e"]])
+            #expect(await fetcher.fetchCount() == 2)
+        }
+
+        @Test("Pages stops fetching when iteration ends early")
+        func testPagesEarlyBreakAvoidsAdditionalFetches() async throws {
+            let first = PaginatedResponse(
+                items: [Item(name: "a")],
+                nextURL: URL(string: "https://huggingface.co/api/items?page=2")
+            )
+            let second = PaginatedResponse(
+                items: [Item(name: "b")],
+                nextURL: nil
+            )
+            let fetcher = PageFetcher(pendingPages: [second])
+            let pages = Pages(firstPage: first) { page in
+                await fetcher.next(after: page)
+            }
+
+            var yieldedPages = 0
+            for try await _ in pages {
+                yieldedPages += 1
+                break
+            }
+
+            #expect(yieldedPages == 1)
+            #expect(await fetcher.fetchCount() == 0)
+        }
+
+        @Test("Pages yields one page when there is no next URL")
+        func testPagesSinglePage() async throws {
+            let first = PaginatedResponse(
+                items: [Item(name: "only")],
+                nextURL: nil
+            )
+            let fetcher = PageFetcher(pendingPages: [])
+            let pages = Pages(firstPage: first) { page in
+                await fetcher.next(after: page)
+            }
+
+            var namesByPage: [[String]] = []
+            for try await page in pages {
+                namesByPage.append(page.items.map(\.name))
+            }
+
+            #expect(namesByPage == [["only"]])
+            #expect(await fetcher.fetchCount() == 0)
+        }
+
+        @Test("Pages yields an empty first page without fetching more")
+        func testPagesEmptyFirstPage() async throws {
+            let first = PaginatedResponse<Item>(
+                items: [],
+                nextURL: nil
+            )
+            let fetcher = PageFetcher(pendingPages: [])
+            let pages = Pages(firstPage: first) { page in
+                await fetcher.next(after: page)
+            }
+
+            var pageCount = 0
+            var firstPageItemCount: Int?
+            for try await page in pages {
+                pageCount += 1
+                if firstPageItemCount == nil {
+                    firstPageItemCount = page.items.count
+                }
+            }
+
+            #expect(pageCount == 1)
+            #expect(firstPageItemCount == 0)
+            #expect(await fetcher.fetchCount() == 0)
+        }
     #endif  // swift(>=6.1)
 
     // MARK: - Helper Methods

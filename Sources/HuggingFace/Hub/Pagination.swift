@@ -31,6 +31,67 @@ public struct PaginatedResponse<T: Decodable & Sendable>: Sendable {
     }
 }
 
+/// An async sequence of paginated responses.
+///
+/// `Pages` yields one ``PaginatedResponse`` at a time and fetches subsequent pages lazily.
+/// The next page is requested only when iteration advances past the current page.
+/// If iteration stops early, no additional page requests are performed.
+///
+/// Use this type with `for try await` to process page-by-page results while retaining
+/// explicit control over when to stop pagination.
+public struct Pages<T: Decodable & Sendable>: AsyncSequence, Sendable {
+    public typealias Element = PaginatedResponse<T>
+
+    private let firstPage: PaginatedResponse<T>
+    private let fetchNext: @Sendable (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+
+    /// Creates a lazy page sequence from an initial page and next-page fetcher.
+    ///
+    /// - Parameters:
+    ///   - firstPage: The first page yielded by the sequence.
+    ///   - fetchNext: A closure that fetches the page after the provided page.
+    ///                Return `nil` when no additional pages are available.
+    public init(
+        firstPage: PaginatedResponse<T>,
+        fetchNext: @Sendable @escaping (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+    ) {
+        self.firstPage = firstPage
+        self.fetchNext = fetchNext
+    }
+
+    public func makeAsyncIterator() -> Iterator {
+        Iterator(current: firstPage, fetchNext: fetchNext)
+    }
+
+    public struct Iterator: AsyncIteratorProtocol {
+        private var current: PaginatedResponse<T>?
+        private let fetchNext: @Sendable (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+        private var hasYieldedFirstPage = false
+
+        fileprivate init(
+            current: PaginatedResponse<T>?,
+            fetchNext: @Sendable @escaping (PaginatedResponse<T>) async throws -> PaginatedResponse<T>?
+        ) {
+            self.current = current
+            self.fetchNext = fetchNext
+        }
+
+        public mutating func next() async throws -> PaginatedResponse<T>? {
+            if !hasYieldedFirstPage {
+                hasYieldedFirstPage = true
+                return current
+            }
+
+            guard let current else {
+                return nil
+            }
+
+            self.current = try await fetchNext(current)
+            return self.current
+        }
+    }
+}
+
 // MARK: - Link Header Parsing
 
 /// Parses the Link header from an HTTP response to extract the next page URL.

@@ -597,12 +597,33 @@ _ = try await client.upsertSpaceVariable(
 
 #### Pagination
 
-The API automatically handles pagination using `Link` headers:
+The API automatically handles pagination using `Link` headers.
+Use page iteration for ergonomic, lazy traversal with explicit stop control:
+
+```swift
+for try await page in try await client.listAllModels(limit: 100) {
+    print("Page: \(page.items.count) models")
+    if page.items.contains(where: { $0.id.namespace == "black-forest-labs" }) {
+        break // Stop once you've found a page matching your criteria.
+    }
+}
+```
+
+> [!NOTE]
+> Control flow works as expected inside `for try await` pagination loops:
+> use `break` to stop fetching more pages, 
+> `continue` to skip the rest of the current iteration,
+> `return` to exit the surrounding function, 
+> and `throw` to fail early.
+>
+> In all of these cases, 
+> no additional page requests are made after the loop stops advancing.
+
+You can still fetch pages manually when needed:
 
 ```swift
 var page = try await client.listModels(limit: 100)
 print("Page 1: \(page.items.count) models")
-
 while page.nextURL != nil {
     guard let next = try await client.nextPage(after: page) else { break }
     page = next
