@@ -600,12 +600,14 @@ _ = try await client.upsertSpaceVariable(
 The API automatically handles pagination using `Link` headers:
 
 ```swift
-let page1 = try await client.listModels(limit: 100)
-print("Page 1: \(page1.items.count) models")
+var page = try await client.listModels(limit: 100)
+print("Page 1: \(page.items.count) models")
 
-// Get next page if available
-if let nextURL = page1.nextURL {
-    // Make a request to nextURL to get the next page
+while page.nextURL != nil {
+    guard let next = try await client.nextPage(after: page) else { break }
+    page = next
+
+    print("Page: \(page.items.count) models")
 }
 ```
 

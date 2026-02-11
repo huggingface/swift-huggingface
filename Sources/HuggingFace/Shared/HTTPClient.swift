@@ -113,7 +113,19 @@ final class HTTPClient: @unchecked Sendable {
         params: [String: Value]? = nil,
         headers: [String: String]? = nil
     ) async throws -> PaginatedResponse<T> {
-        let request = try await createRequest(method, path, params: params, headers: headers)
+        guard let url = URL(string: path, relativeTo: host) else {
+            throw HTTPClientError.unexpectedError("Invalid URL")
+        }
+        return try await fetchPaginated(method, url: url, params: params, headers: headers)
+    }
+
+    func fetchPaginated<T: Decodable>(
+        _ method: HTTPMethod,
+        url: URL,
+        params: [String: Value]? = nil,
+        headers: [String: String]? = nil
+    ) async throws -> PaginatedResponse<T> {
+        let request = try await createRequest(method, url: url, params: params, headers: headers)
         let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
