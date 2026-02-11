@@ -744,7 +744,7 @@ public extension HubClient {
         to destination: URL,
         revision: String = "main",
         matching globs: [String] = [],
-        progressHandler: ((Progress) -> Void)? = nil
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         let filenames = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
             .map(\.path)
