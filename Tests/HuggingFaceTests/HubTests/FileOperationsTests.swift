@@ -315,72 +315,75 @@ import Testing
             _ = try await client.downloadContentsOfFile(at: "test.txt", from: repoID, endpoint: .raw)
         }
 
-        @Test("downloadSnapshot invokes progressHandler during file download", .mockURLSession)
-        func testDownloadSnapshotProgressHandlerCalledDuringDownload() async throws {
-            let listResponse = """
-                [
-                    {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
-                ]
-                """
-            let fileBody = Data(repeating: 0xAB, count: 500)
+        #if !canImport(FoundationNetworking)
+            // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
+            @Test("downloadSnapshot invokes progressHandler during file download", .mockURLSession)
+            func testDownloadSnapshotProgressHandlerCalledDuringDownload() async throws {
+                let listResponse = """
+                    [
+                        {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
+                    ]
+                    """
+                let fileBody = Data(repeating: 0xAB, count: 500)
 
-            MockURLProtocol.setChunkSize(100)
-            await MockURLProtocol.setHandler { request in
-                let path = request.url?.path ?? ""
-                if path.contains("/api/models/user/model/tree/") {
+                MockURLProtocol.setChunkSize(100)
+                await MockURLProtocol.setHandler { request in
+                    let path = request.url?.path ?? ""
+                    if path.contains("/api/models/user/model/tree/") {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: ["Content-Type": "application/json"]
+                        )!
+                        return (response, Data(listResponse.utf8))
+                    }
+                    if path == "/user/model/resolve/main/large.bin" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: ["Content-Type": "application/octet-stream"]
+                        )!
+                        return (response, fileBody)
+                    }
                     let response = HTTPURLResponse(
                         url: request.url!,
-                        statusCode: 200,
+                        statusCode: 404,
                         httpVersion: "HTTP/1.1",
-                        headerFields: ["Content-Type": "application/json"]
+                        headerFields: [:]
                     )!
-                    return (response, Data(listResponse.utf8))
+                    return (response, Data())
                 }
-                if path == "/user/model/resolve/main/large.bin" {
-                    let response = HTTPURLResponse(
-                        url: request.url!,
-                        statusCode: 200,
-                        httpVersion: "HTTP/1.1",
-                        headerFields: ["Content-Type": "application/octet-stream"]
-                    )!
-                    return (response, fileBody)
-                }
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 404,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-                return (response, Data())
+
+                let callCount = ProgressCallCounter()
+                let client = createMockClient()
+                let destination = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+                let result = try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    to: destination,
+                    revision: "main",
+                    matching: [],
+                    progressHandler: { _ in callCount.increment() }
+                )
+
+                #expect(result == destination)
+                #if canImport(FoundationNetworking)
+                    let minimumExpectedCalls = 2
+                #else
+                    let minimumExpectedCalls = 3
+                #endif
+                #expect(
+                    callCount.count >= minimumExpectedCalls,
+                    "progressHandler should be called at least \(minimumExpectedCalls) times; got \(callCount.count)"
+                )
+
+                try? FileManager.default.removeItem(at: destination)
             }
-
-            let callCount = ProgressCallCounter()
-            let client = createMockClient()
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
-
-            let result = try await client.downloadSnapshot(
-                of: "user/model",
-                kind: .model,
-                to: destination,
-                revision: "main",
-                matching: [],
-                progressHandler: { _ in callCount.increment() }
-            )
-
-            #expect(result == destination)
-            #if canImport(FoundationNetworking)
-                let minimumExpectedCalls = 2
-            #else
-                let minimumExpectedCalls = 3
-            #endif
-            #expect(
-                callCount.count >= minimumExpectedCalls,
-                "progressHandler should be called at least \(minimumExpectedCalls) times; got \(callCount.count)"
-            )
-
-            try? FileManager.default.removeItem(at: destination)
-        }
+        #endif
 
         @Test("downloadSnapshot progress does not regress", .mockURLSession)
         func testDownloadSnapshotProgressDoesNotRegress() async throws {

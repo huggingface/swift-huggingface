@@ -59,10 +59,6 @@ private final class RequestHandlerStorage: @unchecked Sendable {
 
 // MARK: - Mock URL Protocol
 
-private struct UncheckedSendableBox<Value>: @unchecked Sendable {
-    let value: Value
-}
-
 /// Custom URLProtocol for testing network requests
 final class MockURLProtocol: URLProtocol {
     /// Storage for request handlers
@@ -91,26 +87,15 @@ final class MockURLProtocol: URLProtocol {
     override func startLoading() {
         do {
             let (response, data) = try Self.requestHandlerStorage.executeHandler(for: self.request)
+            self.client?.urlProtocol(
+                self,
+                didReceive: response,
+                cacheStoragePolicy: .notAllowed
+            )
             #if canImport(FoundationNetworking)
-                let clientBox = UncheckedSendableBox(value: self.client)
-                let protocolBox = UncheckedSendableBox(value: self)
-                Task {
-                    guard let client = clientBox.value else { return }
-                    let protocolInstance = protocolBox.value
-                    client.urlProtocol(
-                        protocolInstance,
-                        didReceive: response,
-                        cacheStoragePolicy: .notAllowed
-                    )
-                    client.urlProtocol(protocolInstance, didLoad: data)
-                    client.urlProtocolDidFinishLoading(protocolInstance)
-                }
+                // FoundationNetworking's URLProtocol client is not stable with chunked delivery.
+                self.client?.urlProtocol(self, didLoad: data)
             #else
-                self.client?.urlProtocol(
-                    self,
-                    didReceive: response,
-                    cacheStoragePolicy: .notAllowed
-                )
                 if let chunkSize = Self.requestHandlerStorage.currentChunkSize(),
                     chunkSize > 0,
                     data.count > chunkSize
@@ -125,18 +110,10 @@ final class MockURLProtocol: URLProtocol {
                 } else {
                     self.client?.urlProtocol(self, didLoad: data)
                 }
-                self.client?.urlProtocolDidFinishLoading(self)
             #endif
+            self.client?.urlProtocolDidFinishLoading(self)
         } catch {
-            #if canImport(FoundationNetworking)
-                let clientBox = UncheckedSendableBox(value: self.client)
-                let protocolBox = UncheckedSendableBox(value: self)
-                Task {
-                    clientBox.value?.urlProtocol(protocolBox.value, didFailWithError: error)
-                }
-            #else
-                self.client?.urlProtocol(self, didFailWithError: error)
-            #endif
+            self.client?.urlProtocol(self, didFailWithError: error)
         }
     }
 
