@@ -597,7 +597,7 @@ _ = try await client.upsertSpaceVariable(
 
 #### Pagination
 
-The API automatically handles pagination using `Link` headers.
+The client supports pagination via `Link` headers exposed by the API.
 Use page iteration for ergonomic, lazy traversal with explicit stop control:
 
 ```swift
