@@ -822,6 +822,8 @@ private struct FileProgressReporter {
 
     /// Creates a per-file progress reporter that coalesces frequent updates and
     /// delivers callbacks on the main actor.
+    /// On platforms that lack KVO for `Progress` (e.g. Linux),
+    /// progress is polled at `minimumInterval`.
     ///
     /// - Parameters:
     ///   - parentProgress: Parent progress aggregating file-level progress.
