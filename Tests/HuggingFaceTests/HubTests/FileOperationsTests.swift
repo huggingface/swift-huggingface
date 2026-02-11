@@ -385,74 +385,77 @@ import Testing
             }
         #endif
 
-        @Test("downloadSnapshot progress does not regress", .mockURLSession)
-        func testDownloadSnapshotProgressDoesNotRegress() async throws {
-            let listResponse = """
-                [
-                    {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
-                ]
-                """
-            let fileBody = Data(repeating: 0xAB, count: 500)
+        #if !canImport(FoundationNetworking)
+            // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
+            @Test("downloadSnapshot progress does not regress", .mockURLSession)
+            func testDownloadSnapshotProgressDoesNotRegress() async throws {
+                let listResponse = """
+                    [
+                        {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
+                    ]
+                    """
+                let fileBody = Data(repeating: 0xAB, count: 500)
 
-            MockURLProtocol.setChunkSize(100)
-            await MockURLProtocol.setHandler { request in
-                let path = request.url?.path ?? ""
-                if path.contains("/api/models/user/model/tree/") {
+                MockURLProtocol.setChunkSize(100)
+                await MockURLProtocol.setHandler { request in
+                    let path = request.url?.path ?? ""
+                    if path.contains("/api/models/user/model/tree/") {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: ["Content-Type": "application/json"]
+                        )!
+                        return (response, Data(listResponse.utf8))
+                    }
+                    if path == "/user/model/resolve/main/large.bin" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: ["Content-Type": "application/octet-stream"]
+                        )!
+                        return (response, fileBody)
+                    }
                     let response = HTTPURLResponse(
                         url: request.url!,
-                        statusCode: 200,
+                        statusCode: 404,
                         httpVersion: "HTTP/1.1",
-                        headerFields: ["Content-Type": "application/json"]
+                        headerFields: [:]
                     )!
-                    return (response, Data(listResponse.utf8))
+                    return (response, Data())
                 }
-                if path == "/user/model/resolve/main/large.bin" {
-                    let response = HTTPURLResponse(
-                        url: request.url!,
-                        statusCode: 200,
-                        httpVersion: "HTTP/1.1",
-                        headerFields: ["Content-Type": "application/octet-stream"]
-                    )!
-                    return (response, fileBody)
-                }
-                let response = HTTPURLResponse(
-                    url: request.url!,
-                    statusCode: 404,
-                    httpVersion: "HTTP/1.1",
-                    headerFields: [:]
-                )!
-                return (response, Data())
-            }
 
-            let recorder = ProgressValueRecorder()
-            let client = createMockClient()
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let recorder = ProgressValueRecorder()
+                let client = createMockClient()
+                let destination = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
 
-            let result = try await client.downloadSnapshot(
-                of: "user/model",
-                kind: .model,
-                to: destination,
-                revision: "main",
-                matching: [],
-                progressHandler: { progress in
-                    recorder.append(progress.fractionCompleted)
-                }
-            )
-
-            #expect(result == destination)
-            let values = recorder.values
-            #expect(values.isEmpty == false)
-            for index in 1 ..< values.count {
-                #expect(
-                    values[index] >= values[index - 1],
-                    "progress fraction should be non-decreasing"
+                let result = try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    to: destination,
+                    revision: "main",
+                    matching: [],
+                    progressHandler: { progress in
+                        recorder.append(progress.fractionCompleted)
+                    }
                 )
-            }
-            #expect(values.last ?? 0.0 >= 1.0 - 0.0001)
 
-            try? FileManager.default.removeItem(at: destination)
-        }
+                #expect(result == destination)
+                let values = recorder.values
+                #expect(values.isEmpty == false)
+                for index in 1 ..< values.count {
+                    #expect(
+                        values[index] >= values[index - 1],
+                        "progress fraction should be non-decreasing"
+                    )
+                }
+                #expect(values.last ?? 0.0 >= 1.0 - 0.0001)
+
+                try? FileManager.default.removeItem(at: destination)
+            }
+        #endif
 
         // MARK: - Delete Tests
 
