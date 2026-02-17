@@ -319,26 +319,31 @@ import Testing
             // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
             @Test("downloadSnapshot invokes progressHandler during file download", .mockURLSession)
             func testDownloadSnapshotProgressHandlerCalledDuringDownload() async throws {
-                let listResponse = """
-                    [
-                        {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
-                    ]
+                let commitHash = "abc123def456abc123def456abc123def456abc1"
+                let modelInfoResponse = """
+                    {
+                        "id": "user/model",
+                        "sha": "\(commitHash)",
+                        "siblings": [
+                            {"rfilename": "large.bin", "size": 500}
+                        ]
+                    }
                     """
                 let fileBody = Data(repeating: 0xAB, count: 500)
 
                 MockURLProtocol.setChunkSize(100)
                 await MockURLProtocol.setHandler { request in
                     let path = request.url?.path ?? ""
-                    if path.contains("/api/models/user/model/tree/") {
+                    if path.contains("/api/models/user/model") {
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
                             httpVersion: "HTTP/1.1",
                             headerFields: ["Content-Type": "application/json"]
                         )!
-                        return (response, Data(listResponse.utf8))
+                        return (response, Data(modelInfoResponse.utf8))
                     }
-                    if path == "/user/model/resolve/main/large.bin" {
+                    if path.hasSuffix("/large.bin") {
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
@@ -389,26 +394,31 @@ import Testing
             // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
             @Test("downloadSnapshot progress does not regress", .mockURLSession)
             func testDownloadSnapshotProgressDoesNotRegress() async throws {
-                let listResponse = """
-                    [
-                        {"path": "large.bin", "type": "file", "oid": "abc", "size": 500}
-                    ]
+                let commitHash = "abc123def456abc123def456abc123def456abc1"
+                let modelInfoResponse = """
+                    {
+                        "id": "user/model",
+                        "sha": "\(commitHash)",
+                        "siblings": [
+                            {"rfilename": "large.bin", "size": 500}
+                        ]
+                    }
                     """
                 let fileBody = Data(repeating: 0xAB, count: 500)
 
                 MockURLProtocol.setChunkSize(100)
                 await MockURLProtocol.setHandler { request in
                     let path = request.url?.path ?? ""
-                    if path.contains("/api/models/user/model/tree/") {
+                    if path.contains("/api/models/user/model") {
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
                             httpVersion: "HTTP/1.1",
                             headerFields: ["Content-Type": "application/json"]
                         )!
-                        return (response, Data(listResponse.utf8))
+                        return (response, Data(modelInfoResponse.utf8))
                     }
-                    if path == "/user/model/resolve/main/large.bin" {
+                    if path.hasSuffix("/large.bin") {
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
