@@ -21,49 +21,6 @@ struct FileLockTests {
         )
     }
 
-    // MARK: - Comparison Tests
-
-    // TODO: Delete this test before merging PR - kept only to demonstrate unreliable concurrent file access
-    @Test("FileLockOriginal fails to serialize concurrent access from separate instances")
-    func fileLockOriginalRaceCondition() async throws {
-        // This test demonstrates the bug in FileLockOriginal:
-        // When multiple instances are created for the same path, each opens its own
-        // file descriptor. Since flock() locks are per-descriptor (not per-file),
-        // each instance can acquire the "lock" simultaneously.
-
-        let lockPath = tempDirectory.appendingPathComponent("race-test")
-        let dataPath = tempDirectory.appendingPathComponent("counter.txt")
-
-        // Initialize counter file
-        try "0".write(to: dataPath, atomically: true, encoding: .utf8)
-
-        let iterations = 50
-        await withTaskGroup(of: Void.self) { group in
-            for _ in 0 ..< iterations {
-                group.addTask {
-                    // Each task creates its own FileLockOriginal instance
-                    let lock = FileLockOriginal(path: lockPath)
-                    try? await lock.withLock {
-                        // Read-modify-write should be atomic if lock works correctly
-                        let current = Int(try! String(contentsOf: dataPath, encoding: .utf8))!
-                        // Small delay to increase chance of race condition
-                        try? await Task.sleep(for: .milliseconds(1))
-                        try! String(current + 1).write(to: dataPath, atomically: true, encoding: .utf8)
-                    }
-                }
-            }
-        }
-
-        let finalValue = Int(try String(contentsOf: dataPath, encoding: .utf8))!
-
-        // With proper locking, finalValue should equal iterations (50)
-        // With the buggy implementation, concurrent access causes lost updates
-        #expect(
-            finalValue < iterations,
-            "FileLockOriginal should fail to serialize (got \(finalValue), expected < \(iterations))"
-        )
-    }
-
     @Test("FileLock properly serializes concurrent access from separate instances")
     func fileLockProperSerialization() async throws {
         // This test demonstrates that the new FileLock from swift-filelock
