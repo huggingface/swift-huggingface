@@ -1222,7 +1222,7 @@ public extension HubClient {
 
                 group.addTask {
                     _ = try await self.downloadFile(
-                        at: entry.path,
+                        entry,
                         from: repo,
                         to: fileDestination,
                         kind: kind,
@@ -1773,18 +1773,10 @@ private func isCommitHash(_ string: String) -> Bool {
     return string.allSatisfy { $0.isHexDigit }
 }
 
-// MARK: - File Entry
-
-/// A file entry with path and optional size, used for snapshot downloads.
-struct FileEntry {
-    let path: String
-    let size: Int?
-}
-
 /// Repository info with commit hash and file list.
 struct RepoInfoForDownload {
     let commitHash: String
-    let siblings: [FileEntry]?
+    let siblings: [Git.TreeEntry]?
 }
 
 extension HubClient {
@@ -1797,21 +1789,27 @@ extension HubClient {
             guard let sha = model.sha else {
                 throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
             }
-            let siblings = model.siblings?.map { FileEntry(path: $0.relativeFilename, size: $0.size) }
+            let siblings = model.siblings?.map {
+                Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
+            }
             return RepoInfoForDownload(commitHash: sha, siblings: siblings)
         case .dataset:
             let dataset = try await getDataset(repo, revision: revision, filesMetadata: true)
             guard let sha = dataset.sha else {
                 throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
             }
-            let siblings = dataset.siblings?.map { FileEntry(path: $0.relativeFilename, size: $0.size) }
+            let siblings = dataset.siblings?.map {
+                Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
+            }
             return RepoInfoForDownload(commitHash: sha, siblings: siblings)
         case .space:
             let space = try await getSpace(repo, revision: revision, filesMetadata: true)
             guard let sha = space.sha else {
                 throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
             }
-            let siblings = space.siblings?.map { FileEntry(path: $0.relativeFilename, size: $0.size) }
+            let siblings = space.siblings?.map {
+                Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
+            }
             return RepoInfoForDownload(commitHash: sha, siblings: siblings)
         }
     }
