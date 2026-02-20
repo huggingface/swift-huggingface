@@ -226,6 +226,41 @@ private func makeProgressStream() -> (
             }
         }
 
+        @Test("Falls back to cache when API call fails")
+        func fallsBackToCacheOnNetworkError() async throws {
+            let repoID: Repo.ID = "google-t5/t5-base"
+            let cacheDir = Self.cacheDirectory.appending(path: "fallback-cache")
+            try? FileManager.default.removeItem(at: cacheDir)
+
+            let cache = HubCache(cacheDirectory: cacheDir)
+
+            // Populate cache with a real download
+            let onlineClient = HubClient(
+                host: URL(string: "https://huggingface.co")!,
+                cache: cache
+            )
+            let snapshotPath = try await onlineClient.downloadSnapshot(
+                of: repoID,
+                matching: ["config.json"]
+            )
+            let configPath = snapshotPath.appendingPathComponent("config.json")
+            #expect(FileManager.default.fileExists(atPath: configPath.path))
+
+            // Create a client pointing to a bad host (simulates network failure).
+            // The API call will fail, but downloadSnapshot should fall back to the cache.
+            let brokenClient = HubClient(
+                host: URL(string: "https://does-not-exist.invalid")!,
+                cache: cache
+            )
+            let fallbackPath = try await brokenClient.downloadSnapshot(
+                of: repoID,
+                matching: ["config.json"]
+            )
+
+            let fallbackConfig = fallbackPath.appendingPathComponent("config.json")
+            #expect(FileManager.default.fileExists(atPath: fallbackConfig.path))
+        }
+
         // MARK: - Download with Revision Tests
 
         @Test("Download with specific commit hash")

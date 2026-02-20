@@ -1051,8 +1051,19 @@ public extension HubClient {
             return snapshotPath
         }
 
-        // Need API call to get file list and current commit hash
-        let repoInfo = try await getRepoInfo(for: repo, kind: kind, revision: revision)
+        // Fetch repo info from the server. If the network call fails, fall back to the
+        // local cache (matching huggingface_hub's try/except → local_files_only pattern).
+        let repoInfo: RepoInfoForDownload
+        do {
+            repoInfo = try await getRepoInfo(for: repo, kind: kind, revision: revision)
+        } catch {
+            if let cached = try? downloadSnapshotOffline(
+                cache: cache, repo: repo, kind: kind, revision: revision
+            ) {
+                return cached
+            }
+            throw error
+        }
         let commitHash = repoInfo.commitHash
 
         guard let siblings = repoInfo.siblings else {
