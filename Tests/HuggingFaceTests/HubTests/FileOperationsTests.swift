@@ -54,6 +54,28 @@ import Testing
             )
         }
 
+        /// Creates a mock client with a cache, suitable for testing downloadSnapshot and downloadFile.
+        /// The mock session configuration is shared with the internal metadata session so both
+        /// route through MockURLProtocol.
+        func createMockClientWithCache() -> (client: HubClient, cacheDir: URL) {
+            let cacheDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-test-cache-\(UUID().uuidString)", isDirectory: true)
+            let cache = HubCache(cacheDirectory: cacheDir)
+
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MockURLProtocol.self]
+            let session = URLSession(configuration: configuration)
+
+            let client = HubClient(
+                session: session,
+                host: URL(string: "https://huggingface.co")!,
+                userAgent: "TestClient/1.0",
+                bearerToken: "test_token",
+                cache: cache
+            )
+            return (client, cacheDir)
+        }
+
         // MARK: - List Files Tests
 
         @Test("List files in repository", .mockURLSession)
@@ -320,6 +342,7 @@ import Testing
             @Test("downloadSnapshot invokes progressHandler during file download", .mockURLSession)
             func testDownloadSnapshotProgressHandlerCalledDuringDownload() async throws {
                 let commitHash = "abc123def456abc123def456abc123def456abc1"
+                let fileEtag = "mock-etag-abc123"
                 let modelInfoResponse = """
                     {
                         "id": "user/model",
@@ -344,13 +367,21 @@ import Testing
                         return (response, Data(modelInfoResponse.utf8))
                     }
                     if path.hasSuffix("/large.bin") {
+                        let headers: [String: String] = if request.httpMethod == "HEAD" {
+                            [
+                                "ETag": "\"\(fileEtag)\"",
+                                "X-Repo-Commit": commitHash,
+                            ]
+                        } else {
+                            ["Content-Type": "application/octet-stream"]
+                        }
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
                             httpVersion: "HTTP/1.1",
-                            headerFields: ["Content-Type": "application/octet-stream"]
+                            headerFields: headers
                         )!
-                        return (response, fileBody)
+                        return (response, request.httpMethod == "HEAD" ? Data() : fileBody)
                     }
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -362,20 +393,18 @@ import Testing
                 }
 
                 let callCount = ProgressCallCounter()
-                let client = createMockClient()
-                let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let (client, cacheDir) = createMockClientWithCache()
+                defer { try? FileManager.default.removeItem(at: cacheDir) }
 
                 let result = try await client.downloadSnapshot(
                     of: "user/model",
                     kind: .model,
-                    to: destination,
                     revision: "main",
                     matching: [],
                     progressHandler: { _ in callCount.increment() }
                 )
 
-                #expect(result == destination)
+                #expect(FileManager.default.fileExists(atPath: result.path))
                 #if canImport(FoundationNetworking)
                     let minimumExpectedCalls = 2
                 #else
@@ -385,8 +414,6 @@ import Testing
                     callCount.count >= minimumExpectedCalls,
                     "progressHandler should be called at least \(minimumExpectedCalls) times; got \(callCount.count)"
                 )
-
-                try? FileManager.default.removeItem(at: destination)
             }
         #endif
 
@@ -395,6 +422,7 @@ import Testing
             @Test("downloadSnapshot progress does not regress", .mockURLSession)
             func testDownloadSnapshotProgressDoesNotRegress() async throws {
                 let commitHash = "abc123def456abc123def456abc123def456abc1"
+                let fileEtag = "mock-etag-abc123"
                 let modelInfoResponse = """
                     {
                         "id": "user/model",
@@ -419,13 +447,21 @@ import Testing
                         return (response, Data(modelInfoResponse.utf8))
                     }
                     if path.hasSuffix("/large.bin") {
+                        let headers: [String: String] = if request.httpMethod == "HEAD" {
+                            [
+                                "ETag": "\"\(fileEtag)\"",
+                                "X-Repo-Commit": commitHash,
+                            ]
+                        } else {
+                            ["Content-Type": "application/octet-stream"]
+                        }
                         let response = HTTPURLResponse(
                             url: request.url!,
                             statusCode: 200,
                             httpVersion: "HTTP/1.1",
-                            headerFields: ["Content-Type": "application/octet-stream"]
+                            headerFields: headers
                         )!
-                        return (response, fileBody)
+                        return (response, request.httpMethod == "HEAD" ? Data() : fileBody)
                     }
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -437,14 +473,12 @@ import Testing
                 }
 
                 let recorder = ProgressValueRecorder()
-                let client = createMockClient()
-                let destination = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(UUID().uuidString, isDirectory: true)
+                let (client, cacheDir) = createMockClientWithCache()
+                defer { try? FileManager.default.removeItem(at: cacheDir) }
 
                 let result = try await client.downloadSnapshot(
                     of: "user/model",
                     kind: .model,
-                    to: destination,
                     revision: "main",
                     matching: [],
                     progressHandler: { progress in
@@ -452,7 +486,7 @@ import Testing
                     }
                 )
 
-                #expect(result == destination)
+                #expect(FileManager.default.fileExists(atPath: result.path))
                 let values = recorder.values
                 #expect(values.isEmpty == false)
                 for index in 1 ..< values.count {
@@ -462,8 +496,6 @@ import Testing
                     )
                 }
                 #expect(values.last ?? 0.0 >= 1.0 - 0.0001)
-
-                try? FileManager.default.removeItem(at: destination)
             }
         #endif
 

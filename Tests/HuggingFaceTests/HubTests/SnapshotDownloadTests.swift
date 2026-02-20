@@ -36,18 +36,18 @@ private func makeProgressStream() -> (
 #if swift(>=6.1)
     @Suite("Snapshot Download Tests", .serialized)
     struct SnapshotDownloadTests {
-        static let downloadDestination: URL = {
+        static let cacheDirectory: URL = {
             let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
             return base.appending(component: "huggingface-snapshot-tests")
         }()
 
         init() {
             // Clean before each test to ensure consistent starting state
-            try? FileManager.default.removeItem(at: Self.downloadDestination)
+            try? FileManager.default.removeItem(at: Self.cacheDirectory)
         }
 
         func createClient(useOfflineMode: Bool? = nil) -> HubClient {
-            let cache = HubCache(cacheDirectory: Self.downloadDestination)
+            let cache = HubCache(cacheDirectory: Self.cacheDirectory)
             return HubClient(
                 host: URL(string: "https://huggingface.co")!,
                 cache: cache,
@@ -61,18 +61,16 @@ private func makeProgressStream() -> (
         func downloadSnapshotWithGlob() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
-            let result = try await client.downloadSnapshot(
+            let snapshotPath = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["*.json"]
             )
 
-            #expect(FileManager.default.fileExists(atPath: result.path))
+            #expect(FileManager.default.fileExists(atPath: snapshotPath.path))
 
-            // Verify JSON files exist
-            let configPath = destination.appendingPathComponent("config.json")
+            // Verify JSON files exist in the snapshot path (symlinks to blobs)
+            let configPath = snapshotPath.appendingPathComponent("config.json")
             #expect(FileManager.default.fileExists(atPath: configPath.path))
         }
 
@@ -80,10 +78,8 @@ private func makeProgressStream() -> (
         func downloadSnapshotTracksProgress() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             // Use a separate directory to ensure fresh download (not cached)
-            let cacheDir = Self.downloadDestination.appending(path: "progress-cache")
-            let destination = Self.downloadDestination.appending(path: "progress-snapshot")
+            let cacheDir = Self.cacheDirectory.appending(path: "progress-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -94,7 +90,6 @@ private func makeProgressStream() -> (
 
             _ = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["*.json"]
             ) { progress in
                 yielder.yield(progress.fractionCompleted)
@@ -114,10 +109,8 @@ private func makeProgressStream() -> (
             // Use qwen repo with larger files to ensure measurable download time
             let repoID: Repo.ID = "mlx-community/Qwen3-0.6B-Base-DQ5"
             // Use a separate directory to ensure fresh download (not cached)
-            let cacheDir = Self.downloadDestination.appending(path: "speed-cache")
-            let destination = Self.downloadDestination.appending(path: "speed-snapshot")
+            let cacheDir = Self.cacheDirectory.appending(path: "speed-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -129,10 +122,9 @@ private func makeProgressStream() -> (
             // Download safetensors file (larger, takes longer)
             _ = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["*.safetensors"]
             ) { progress, speed in
-                if let speed = speed {
+                if let speed {
                     lastSpeed = speed
                 }
             }
@@ -150,17 +142,15 @@ private func makeProgressStream() -> (
         func secondDownloadUsesCache() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             // First download (populates cache)
-            _ = try await client.downloadSnapshot(
+            let snapshotPath = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["config.json"]
             )
 
-            // Record file timestamp
-            let configPath = destination.appendingPathComponent("config.json")
+            // Record symlink timestamp
+            let configPath = snapshotPath.appendingPathComponent("config.json")
             let attrs1 = try FileManager.default.attributesOfItem(atPath: configPath.path)
             let timestamp1 = try #require(attrs1[.modificationDate] as? Date)
 
@@ -168,13 +158,13 @@ private func makeProgressStream() -> (
             try await Task.sleep(nanoseconds: 100_000_000)
 
             // Second download (should use cache, not re-download)
-            _ = try await client.downloadSnapshot(
+            let snapshotPath2 = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["config.json"]
             )
 
-            let attrs2 = try FileManager.default.attributesOfItem(atPath: configPath.path)
+            let configPath2 = snapshotPath2.appendingPathComponent("config.json")
+            let attrs2 = try FileManager.default.attributesOfItem(atPath: configPath2.path)
             let timestamp2 = try #require(attrs2[.modificationDate] as? Date)
 
             // File should not have been modified (cache hit)
@@ -187,12 +177,8 @@ private func makeProgressStream() -> (
         func offlineModeReturnsCachedFiles() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             // Use a separate cache directory for this test to avoid conflicts with init() cleanup
-            let cacheDir = Self.downloadDestination.appending(path: "offline-cache")
-            let destination = Self.downloadDestination.appending(path: "offline-snapshot")
-
-            // Clean up any previous state
+            let cacheDir = Self.cacheDirectory.appending(path: "offline-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
 
             // Use shared cache for both clients
             let cache = HubCache(cacheDirectory: cacheDir)
@@ -203,18 +189,14 @@ private func makeProgressStream() -> (
                 cache: cache,
                 useOfflineMode: false
             )
-            _ = try await onlineClient.downloadSnapshot(
+            let snapshotPath = try await onlineClient.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["config.json"]
             )
 
-            // Remove the destination file but keep the cache
-            try FileManager.default.removeItem(at: destination)
-
-            // Verify cache has files
-            let snapshotPath = cache.snapshotPath(repo: repoID, kind: .model, revision: "main")
-            #expect(snapshotPath != nil, "Cache should have snapshot path for main")
+            // Verify snapshot has files
+            let configPath = snapshotPath.appendingPathComponent("config.json")
+            #expect(FileManager.default.fileExists(atPath: configPath.path))
 
             // Now download with offline client using same cache
             // Note: Offline mode returns all cached files, ignoring globs (matches huggingface_hub)
@@ -223,25 +205,23 @@ private func makeProgressStream() -> (
                 cache: cache,
                 useOfflineMode: true
             )
-            let result = try await offlineClient.downloadSnapshot(
-                of: repoID,
-                to: destination
+            let offlineResult = try await offlineClient.downloadSnapshot(
+                of: repoID
             )
 
-            #expect(FileManager.default.fileExists(atPath: result.path))
-            #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("config.json").path))
+            #expect(FileManager.default.fileExists(atPath: offlineResult.path))
+            let offlineConfig = offlineResult.appendingPathComponent("config.json")
+            #expect(FileManager.default.fileExists(atPath: offlineConfig.path))
         }
 
         @Test("Offline mode fails without cache")
         func offlineModeFailsWithoutCache() async throws {
             let repoID: Repo.ID = "unknown-user/unknown-repo-that-is-not-cached"
             let client = createClient(useOfflineMode: true)
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             await #expect(throws: HubCacheError.self) {
                 _ = try await client.downloadSnapshot(
-                    of: repoID,
-                    to: destination
+                    of: repoID
                 )
             }
         }
@@ -252,7 +232,6 @@ private func makeProgressStream() -> (
         func downloadWithCommitHash() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             // Get the current commit hash
             let model = try await client.getModel(repoID)
@@ -260,7 +239,6 @@ private func makeProgressStream() -> (
 
             let result = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 revision: commitHash,
                 matching: ["config.json"]
             )
@@ -272,7 +250,6 @@ private func makeProgressStream() -> (
         func commitHashSkipsAPIWhenCached() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             // Get the current commit hash
             let model = try await client.getModel(repoID)
@@ -281,40 +258,33 @@ private func makeProgressStream() -> (
             // First download to populate cache
             _ = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 revision: commitHash,
                 matching: ["config.json"]
             )
 
-            // Remove destination but keep cache
-            try FileManager.default.removeItem(at: destination)
-
             // Download again with commit hash - should be very fast (no API calls)
             let start = CFAbsoluteTimeGetCurrent()
-            _ = try await client.downloadSnapshot(
+            let snapshotPath = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 revision: commitHash,
                 matching: ["config.json"]
             )
             let elapsed = CFAbsoluteTimeGetCurrent() - start
 
-            // Should complete in under 100ms (just file copy, no network)
-            // Network calls would take at least a few hundred ms
+            // Should complete in under 100ms (just cache lookup, no network)
             #expect(elapsed < 0.1, "Expected cache hit to be fast (< 100ms), got \(elapsed * 1000)ms")
-            #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("config.json").path))
+            let configPath = snapshotPath.appendingPathComponent("config.json")
+            #expect(FileManager.default.fileExists(atPath: configPath.path))
         }
 
         @Test("Download with invalid revision throws error")
         func downloadWithInvalidRevision() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             await #expect(throws: Error.self) {
                 _ = try await client.downloadSnapshot(
                     of: repoID,
-                    to: destination,
                     revision: "nonexistent-revision",
                     matching: ["config.json"]
                 )
@@ -327,10 +297,8 @@ private func makeProgressStream() -> (
         func downloadCleansUpIncompleteFile() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             // Use separate directory to ensure fresh download
-            let cacheDir = Self.downloadDestination.appending(path: "resume-cache")
-            let destination = Self.downloadDestination.appending(path: "resume-snapshot")
+            let cacheDir = Self.cacheDirectory.appending(path: "resume-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -338,19 +306,19 @@ private func makeProgressStream() -> (
                 cache: cache
             )
 
-            _ = try await client.downloadSnapshot(
+            let snapshotPath = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["config.json"]
             )
 
-            // Verify the file exists
-            let filePath = destination.appendingPathComponent("config.json")
+            // Verify the file exists in the snapshot
+            let filePath = snapshotPath.appendingPathComponent("config.json")
             #expect(FileManager.default.fileExists(atPath: filePath.path))
 
-            // Verify no .incomplete files remain (incomplete files include etag in name)
-            let contents = try FileManager.default.contentsOfDirectory(atPath: destination.path)
-            let incompleteFiles = contents.filter { $0.contains(".incomplete") }
+            // Verify no .incomplete files remain in the blobs directory
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            let blobContents = try FileManager.default.contentsOfDirectory(atPath: blobsDir.path)
+            let incompleteFiles = blobContents.filter { $0.contains(".incomplete") }
             #expect(incompleteFiles.isEmpty, "Expected no incomplete files, found: \(incompleteFiles)")
         }
 
@@ -358,11 +326,8 @@ private func makeProgressStream() -> (
         func downloadFileDirectlyCleansUp() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"
             // Use separate directory
-            let cacheDir = Self.downloadDestination.appending(path: "file-resume-cache")
-            let destination = Self.downloadDestination.appending(path: "file-resume-dest")
+            let cacheDir = Self.cacheDirectory.appending(path: "file-resume-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -370,23 +335,21 @@ private func makeProgressStream() -> (
                 cache: cache
             )
 
-            let fileDest = destination.appendingPathComponent("config.json")
-
-            // Download file directly (not via snapshot)
-            _ = try await client.downloadFile(
+            // Download file directly (returns cache path)
+            let cachedPath = try await client.downloadFile(
                 at: "config.json",
-                from: repoID,
-                to: fileDest
+                from: repoID
             )
 
             // Verify file exists and is valid
-            #expect(FileManager.default.fileExists(atPath: fileDest.path))
-            let data = try Data(contentsOf: fileDest)
+            #expect(FileManager.default.fileExists(atPath: cachedPath.path))
+            let data = try Data(contentsOf: cachedPath)
             #expect(data.count > 0)
 
-            // Verify no incomplete files remain
-            let contents = try FileManager.default.contentsOfDirectory(atPath: destination.path)
-            let incompleteFiles = contents.filter { $0.contains(".incomplete") }
+            // Verify no incomplete files remain in the blobs directory
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            let blobContents = try FileManager.default.contentsOfDirectory(atPath: blobsDir.path)
+            let incompleteFiles = blobContents.filter { $0.contains(".incomplete") }
             #expect(incompleteFiles.isEmpty, "Expected no incomplete files, found: \(incompleteFiles)")
         }
 
@@ -404,11 +367,8 @@ private func makeProgressStream() -> (
             let repoID: Repo.ID = "google-t5/t5-base"
             let filename = "config.json"
 
-            let cacheDir = Self.downloadDestination.appending(path: "resume-incomplete-cache")
-            let destination = Self.downloadDestination.appending(path: "resume-incomplete-dest")
+            let cacheDir = Self.cacheDirectory.appending(path: "resume-incomplete-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -417,14 +377,12 @@ private func makeProgressStream() -> (
             )
 
             // Download the file to get its etag and content
-            let fileDest = destination.appendingPathComponent(filename)
-            _ = try await client.downloadFile(
+            let cachedPath = try await client.downloadFile(
                 at: filename,
-                from: repoID,
-                to: fileDest
+                from: repoID
             )
 
-            let completeContent = try Data(contentsOf: fileDest)
+            let completeContent = try Data(contentsOf: cachedPath)
             #expect(completeContent.count > 100, "Test file should be larger than 100 bytes")
 
             // Find the blob and its etag
@@ -454,18 +412,14 @@ private func makeProgressStream() -> (
             let incompletePath = blobsDir.appendingPathComponent("\(etag).incomplete")
             try Data(partialContent).write(to: incompletePath)
 
-            // Delete destination
-            try FileManager.default.removeItem(at: fileDest)
-
             // Download again with incomplete file present
-            _ = try await client.downloadFile(
+            let redownloadedPath = try await client.downloadFile(
                 at: filename,
-                from: repoID,
-                to: fileDest
+                from: repoID
             )
 
             // Verify the final file is correct
-            let finalContent = try Data(contentsOf: fileDest)
+            let finalContent = try Data(contentsOf: redownloadedPath)
             #expect(finalContent == completeContent, "Final file should match expected content")
 
             // Verify incomplete file was cleaned up
@@ -495,11 +449,8 @@ private func makeProgressStream() -> (
             let repoID: Repo.ID = "google-t5/t5-base"
             let filename = "config.json"
 
-            let cacheDir = Self.downloadDestination.appending(path: "oversized-incomplete-cache")
-            let destination = Self.downloadDestination.appending(path: "oversized-incomplete-dest")
+            let cacheDir = Self.cacheDirectory.appending(path: "oversized-incomplete-cache")
             try? FileManager.default.removeItem(at: cacheDir)
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
 
             let cache = HubCache(cacheDirectory: cacheDir)
             let client = HubClient(
@@ -508,14 +459,12 @@ private func makeProgressStream() -> (
             )
 
             // First download to get the etag and correct content
-            let fileDest = destination.appendingPathComponent(filename)
-            _ = try await client.downloadFile(
+            let cachedPath = try await client.downloadFile(
                 at: filename,
-                from: repoID,
-                to: fileDest
+                from: repoID
             )
 
-            let completeContent = try Data(contentsOf: fileDest)
+            let completeContent = try Data(contentsOf: cachedPath)
             let actualSize = completeContent.count
 
             // Find the etag
@@ -550,18 +499,14 @@ private func makeProgressStream() -> (
                 "Incomplete file (\(oversizedContent.count) bytes) must be larger than actual file (\(actualSize) bytes)"
             )
 
-            // Delete destination
-            try FileManager.default.removeItem(at: fileDest)
-
             // Download again - should handle 416 by deleting incomplete and retrying
-            _ = try await client.downloadFile(
+            let redownloadedPath = try await client.downloadFile(
                 at: filename,
-                from: repoID,
-                to: fileDest
+                from: repoID
             )
 
             // Verify the file is correct, not the garbage data
-            let downloadedContent = try Data(contentsOf: fileDest)
+            let downloadedContent = try Data(contentsOf: redownloadedPath)
             #expect(downloadedContent == completeContent, "Downloaded content should match original")
             #expect(
                 downloadedContent.count == actualSize,
@@ -584,7 +529,7 @@ private func makeProgressStream() -> (
             let repoID: Repo.ID = "google-t5/t5-base"
             let filename = "config.json"
 
-            let cacheDir = Self.downloadDestination.appending(path: "concurrent-cache")
+            let cacheDir = Self.cacheDirectory.appending(path: "concurrent-cache")
             try? FileManager.default.removeItem(at: cacheDir)
 
             let cache = HubCache(cacheDirectory: cacheDir)
@@ -596,16 +541,11 @@ private func makeProgressStream() -> (
             // Launch concurrent downloads of the same file
             let concurrentCount = 5
             try await withThrowingTaskGroup(of: URL.self) { group in
-                for i in 0 ..< concurrentCount {
-                    let dest = Self.downloadDestination.appending(path: "concurrent-dest-\(i)")
-                    try? FileManager.default.removeItem(at: dest)
-                    try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-
+                for _ in 0 ..< concurrentCount {
                     group.addTask {
                         try await client.downloadFile(
                             at: filename,
-                            from: repoID,
-                            to: dest.appendingPathComponent(filename)
+                            from: repoID
                         )
                     }
                 }
@@ -616,6 +556,10 @@ private func makeProgressStream() -> (
                 }
 
                 #expect(results.count == concurrentCount, "All downloads should complete")
+
+                // All results should point to the same cache path
+                let uniquePaths = Set(results.map(\.path))
+                #expect(uniquePaths.count == 1, "All downloads should return the same cache path")
             }
 
             // Verify only one blob exists (content-addressed, deduplicated)
@@ -623,21 +567,6 @@ private func makeProgressStream() -> (
             let blobs = try FileManager.default.contentsOfDirectory(atPath: blobsDir.path)
                 .filter { !$0.hasSuffix(".lock") && !$0.hasSuffix(".incomplete") }
             #expect(blobs.count == 1, "Should have exactly one blob (deduplicated)")
-
-            // Verify all destination files have identical content
-            var contents: [Data] = []
-            for i in 0 ..< concurrentCount {
-                let dest = Self.downloadDestination
-                    .appending(path: "concurrent-dest-\(i)")
-                    .appendingPathComponent(filename)
-                let data = try Data(contentsOf: dest)
-                contents.append(data)
-            }
-
-            let firstContent = contents[0]
-            for (i, content) in contents.enumerated() {
-                #expect(content == firstContent, "File \(i) should match first file")
-            }
 
             // Verify no incomplete files remain
             let incompleteFiles = try FileManager.default.contentsOfDirectory(atPath: blobsDir.path)

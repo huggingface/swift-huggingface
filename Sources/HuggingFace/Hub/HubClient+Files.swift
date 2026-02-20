@@ -320,7 +320,11 @@ public extension HubClient {
         return data
     }
 
-    /// Download file to a destination URL with automatic resume support.
+    /// Download a file to the cache with automatic resume support.
+    ///
+    /// Downloads the file to the blob cache and creates a snapshot symlink.
+    /// Returns the snapshot symlink path, which resolves through to the blob.
+    /// If the file is already cached, returns immediately with no network calls.
     ///
     /// If a previous download was interrupted, this method automatically resumes
     /// from where it left off using HTTP Range headers.
@@ -328,17 +332,16 @@ public extension HubClient {
     /// - Parameters:
     ///   - repoPath: Path to file in repository
     ///   - repo: Repository identifier
-    ///   - destination: Destination URL for downloaded file
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional Progress object to track download progress
-    /// - Returns: Final destination URL
+    ///   - transport: Download transport selection
+    /// - Returns: Path to the cached file (snapshot symlink)
     func downloadFile(
         at repoPath: String,
         from repo: Repo.ID,
-        to destination: URL,
         kind: Repo.Kind = .model,
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
@@ -347,7 +350,7 @@ public extension HubClient {
         transport: FileDownloadTransport = .automatic
     ) async throws -> URL {
         // Check cache first
-        if let cache = cache,
+        if let cache,
             let cachedPath = cache.cachedFilePath(
                 repo: repo,
                 kind: kind,
@@ -355,19 +358,10 @@ public extension HubClient {
                 filename: repoPath
             )
         {
-            // Create parent directory if needed
-            try FileManager.default.createDirectory(
-                at: destination.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            // Copy from cache to destination (resolve symlinks first)
-            let resolvedPath = cachedPath.resolvingSymlinksInPath()
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.copyItem(at: resolvedPath, to: destination)
             if let progress {
                 progress.completedUnitCount = progress.totalUnitCount
             }
-            return destination
+            return cachedPath
         }
         if endpoint == .resolve, transport.shouldAttemptXet {
             do {
@@ -376,7 +370,6 @@ public extension HubClient {
                     repo: repo,
                     kind: kind,
                     revision: revision,
-                    destination: destination,
                     progress: progress,
                     transport: transport
                 ) {
@@ -412,7 +405,6 @@ public extension HubClient {
             kind: kind,
             revision: revision,
             repoPath: repoPath,
-            destination: destination,
             progress: progress
         )
     }
@@ -423,7 +415,10 @@ public extension HubClient {
     /// 1. Check if blob already exists → skip download
     /// 2. Acquire file lock to prevent parallel downloads
     /// 3. Platform-specific download (with resume on Apple, without on Linux)
-    /// 4. Store in cache and copy to destination
+    /// 4. Create snapshot symlink
+    ///
+    /// Returns the snapshot symlink path, which resolves through to the blob.
+    /// Requires a cache to be configured.
     private func downloadWithCacheCoordination(
         request: URLRequest,
         metadata: FileMetadata?,
@@ -431,19 +426,14 @@ public extension HubClient {
         kind: Repo.Kind,
         revision: String,
         repoPath: String,
-        destination: URL,
         progress: Progress?
     ) async throws -> URL {
         let fileManager = FileManager.default
 
-        // If no cache or etag, download directly to destination
+        // Cache and etag are required for cache coordination
         // Note: metadata.etag is already normalized by fetchFileMetadata
-        guard let normalizedEtag = metadata?.etag, let cache = cache else {
-            return try await downloadToDestinationWithoutCache(
-                request: request,
-                destination: destination,
-                progress: progress
-            )
+        guard let normalizedEtag = metadata?.etag, let cache else {
+            throw HubCacheError.cacheNotConfigured
         }
         let blobsDir = cache.blobsDirectory(repo: repo, kind: kind)
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
@@ -451,16 +441,14 @@ public extension HubClient {
 
         // Check if blob already exists (skip download)
         if fileManager.fileExists(atPath: blobPath.path) {
-            return try copyBlobToDestination(
+            return try createCacheEntries(
                 cache: cache,
-                blobPath: blobPath,
                 repo: repo,
                 kind: kind,
                 revision: revision,
                 commitHash: commitHash,
                 repoPath: repoPath,
-                etag: normalizedEtag,
-                destination: destination
+                etag: normalizedEtag
             )
         }
 
@@ -471,16 +459,14 @@ public extension HubClient {
         return try await lock.withLock {
             // Double-check blob doesn't exist after acquiring lock
             if fileManager.fileExists(atPath: blobPath.path) {
-                return try copyBlobToDestination(
+                return try createCacheEntries(
                     cache: cache,
-                    blobPath: blobPath,
                     repo: repo,
                     kind: kind,
                     revision: revision,
                     commitHash: commitHash,
                     repoPath: repoPath,
-                    etag: normalizedEtag,
-                    destination: destination
+                    etag: normalizedEtag
                 )
             }
 
@@ -504,35 +490,31 @@ public extension HubClient {
                 )
             #endif
 
-            // Create symlink and copy to destination
-            return try copyBlobToDestination(
+            // Create snapshot symlink and return path
+            return try createCacheEntries(
                 cache: cache,
-                blobPath: blobPath,
                 repo: repo,
                 kind: kind,
                 revision: revision,
                 commitHash: commitHash,
                 repoPath: repoPath,
-                etag: normalizedEtag,
-                destination: destination
+                etag: normalizedEtag
             )
         }
     }
 
-    /// Copies a cached blob to the destination, creating symlinks as needed.
-    private func copyBlobToDestination(
+    /// Creates cache entries (snapshot symlink and ref) for a downloaded blob.
+    ///
+    /// Returns the snapshot symlink path, which resolves through to the blob.
+    private func createCacheEntries(
         cache: HubCache,
-        blobPath: URL,
         repo: Repo.ID,
         kind: Repo.Kind,
         revision: String,
         commitHash: String,
         repoPath: String,
-        etag: String,
-        destination: URL
+        etag: String
     ) throws -> URL {
-        let fileManager = FileManager.default
-
         // Create symlink in snapshots
         try cache.createSnapshotSymlink(
             repo: repo,
@@ -547,62 +529,18 @@ public extension HubClient {
             try? cache.updateRef(repo: repo, kind: kind, ref: revision, commit: commitHash)
         }
 
-        // Copy from cache to destination
-        try fileManager.createDirectory(
-            at: destination.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? fileManager.removeItem(at: destination)
-        try fileManager.copyItem(at: blobPath, to: destination)
-
-        return destination
+        return cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commitHash)
+            .appendingPathComponent(repoPath)
     }
 
-    /// Downloads directly to destination when cache is unavailable.
-    private func downloadToDestinationWithoutCache(
-        request: URLRequest,
-        destination: URL,
-        progress: Progress?
-    ) async throws -> URL {
-        let fileManager = FileManager.default
 
-        #if canImport(FoundationNetworking)
-            let (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
-        #else
-            let (tempURL, response) = try await session.download(
-                for: request,
-                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
-            )
-        #endif
-
-        _ = try httpClient.validateResponse(response, data: nil)
-
-        try fileManager.createDirectory(
-            at: destination.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? fileManager.removeItem(at: destination)
-        try fileManager.moveItem(at: tempURL, to: destination)
-
-        return destination
-    }
-
-    /// Download file to a destination URL using a tree entry (uses file size for transport selection).
-    /// - Parameters:
-    ///   - entry: File entry from the repository tree
-    ///   - repo: Repository identifier
-    ///   - destination: Destination URL for downloaded file
-    ///   - kind: Kind of repository
-    ///   - revision: Git revision
-    ///   - endpoint: Select resolve or raw endpoint
-    ///   - cachePolicy: Cache policy for the request
-    ///   - progress: Optional Progress object to track download progress
-    ///   - transport: Download transport selection
-    /// - Returns: Final destination URL
+    /// Download a file to the cache using a tree entry (uses file size for transport selection).
+    ///
+    /// Returns the snapshot symlink path, which resolves through to the blob.
     func downloadFile(
         _ entry: Git.TreeEntry,
         from repo: Repo.ID,
-        to destination: URL,
         kind: Repo.Kind = .model,
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
@@ -617,7 +555,6 @@ public extension HubClient {
             return try await downloadFile(
                 at: entry.path,
                 from: repo,
-                to: destination,
                 kind: kind,
                 revision: revision,
                 endpoint: endpoint,
@@ -630,7 +567,6 @@ public extension HubClient {
         return try await downloadFile(
             at: entry.path,
             from: repo,
-            to: destination,
             kind: kind,
             revision: revision,
             endpoint: endpoint,
@@ -847,38 +783,6 @@ public extension HubClient {
         }
     #endif
 
-    /// Download file to a destination URL (convenience method without progress tracking)
-    /// - Parameters:
-    ///   - repoPath: Path to file in repository
-    ///   - repo: Repository identifier
-    ///   - destination: Destination URL for downloaded file
-    ///   - kind: Kind of repository
-    ///   - revision: Git revision
-    ///   - endpoint: Select resolve or raw endpoint
-    ///   - cachePolicy: Cache policy for the request
-    /// - Returns: Final destination URL
-    func downloadContentsOfFile(
-        at repoPath: String,
-        from repo: Repo.ID,
-        to destination: URL,
-        kind: Repo.Kind = .model,
-        revision: String = "main",
-        endpoint: FileDownloadEndpoint = .resolve,
-        cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
-        transport: FileDownloadTransport = .automatic
-    ) async throws -> URL {
-        return try await downloadFile(
-            at: repoPath,
-            from: repo,
-            to: destination,
-            kind: kind,
-            revision: revision,
-            endpoint: endpoint,
-            cachePolicy: cachePolicy,
-            progress: nil,
-            transport: transport
-        )
-    }
 }
 
 // MARK: - Progress Delegate
@@ -1102,7 +1006,7 @@ public extension HubClient {
     /// Downloads can be cancelled by cancelling the enclosing task:
     /// ```swift
     /// let task = Task {
-    ///     try await client.downloadSnapshot(of: "repo/id", to: destination)
+    ///     try await client.downloadSnapshot(of: "repo/id")
     /// }
     /// // Later:
     /// task.cancel()
@@ -1120,46 +1024,34 @@ public extension HubClient {
     func downloadSnapshot(
         of repo: Repo.ID,
         kind: Repo.Kind = .model,
-        to destination: URL,
         revision: String = "main",
         matching globs: [String] = [],
         maxConcurrent: Int = 8,
-        progressHandler: ((Progress) -> Void)? = nil
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
-        // Handle offline mode (returns all cached files, ignoring globs - matches huggingface_hub)
+        guard let cache else {
+            throw HubCacheError.cacheNotConfigured
+        }
+
+        // Handle offline mode
         if await shouldUseOfflineMode() {
-            return try await downloadSnapshotOffline(
-                of: repo,
-                kind: kind,
-                to: destination,
-                revision: revision
+            return try downloadSnapshotOffline(
+                cache: cache, repo: repo, kind: kind, revision: revision
             )
         }
 
-        // Optimization: Skip API calls only when revision is already a commit hash
-        // (immutable). For branch names like "main", we must check the remote to
-        // get the current commit - the branch may have been updated.
-        // This matches huggingface_hub's behavior for safety.
+        // Fast path: when revision is already a commit hash (immutable),
+        // return the snapshot path directly if it exists.
         if isCommitHash(revision),
-            let cache = cache,
             let snapshotPath = cache.snapshotPath(repo: repo, kind: kind, revision: revision)
         {
-            let cachedFiles = try? enumerateCachedFiles(at: snapshotPath, matching: globs)
-            if let cachedFiles = cachedFiles, !cachedFiles.isEmpty {
-                // All files are cached - just copy to destination without API calls
-                try copyCachedFiles(cachedFiles, from: snapshotPath, to: destination)
-
-                // Report complete progress
-                let totalProgress = Progress(totalUnitCount: 1)
-                totalProgress.completedUnitCount = 1
-                progressHandler?(totalProgress)
-
-                return destination
-            }
+            let totalProgress = Progress(totalUnitCount: 1)
+            totalProgress.completedUnitCount = 1
+            progressHandler?(totalProgress)
+            return snapshotPath
         }
 
-        // Not fully cached - need API call to get file list with sizes
-        // Uses blobs=true for size-weighted progress (single API call)
+        // Need API call to get file list and current commit hash
         let repoInfo = try await getRepoInfo(for: repo, kind: kind, revision: revision)
         let commitHash = repoInfo.commitHash
 
@@ -1173,6 +1065,9 @@ public extension HubClient {
                 fnmatch(glob, entry.path, 0) == 0
             }
         }
+
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commitHash)
 
         // Size-weighted progress: total is sum of file sizes (bytes)
         let totalBytes = entries.reduce(Int64(0)) { $0 + Int64($1.size ?? 1) }
@@ -1188,7 +1083,6 @@ public extension HubClient {
                 try? await Task.sleep(nanoseconds: DownloadConstants.speedUpdateIntervalNanoseconds)
                 let elapsed = CFAbsoluteTimeGetCurrent() - startTime
                 let bytesCompleted = totalProgress.completedUnitCount
-                // Only report speed after we've actually downloaded something
                 if elapsed > 0 && bytesCompleted > 0 {
                     let speed = Double(bytesCompleted) / elapsed
                     totalProgress.setUserInfoObject(speed, forKey: .throughputKey)
@@ -1202,47 +1096,39 @@ public extension HubClient {
             var activeCount = 0
 
             for entry in entries {
-                // Wait for a slot to open up
                 while activeCount >= maxConcurrent {
                     try await group.next()
                     activeCount -= 1
-                    // Notify handler after each file completes (includes speed from background task)
                     progressHandler?(totalProgress)
                 }
 
-                // Check for cancellation
                 if Task.isCancelled {
                     break
                 }
 
-                // Size-weighted progress for this file (using bytes as units throughout)
                 let fileSize = Int64(entry.size ?? 1)
                 let fileProgress = Progress(totalUnitCount: fileSize, parent: totalProgress, pendingUnitCount: fileSize)
-                let fileDestination = destination.appendingPathComponent(entry.path)
 
                 group.addTask {
                     _ = try await self.downloadFile(
                         entry,
                         from: repo,
-                        to: fileDestination,
                         kind: kind,
-                        revision: commitHash,  // Use SHA to enable cache shortcut
+                        revision: commitHash,
                         progress: fileProgress
                     )
-                    // Ensure completion (download may have updated totalUnitCount)
                     fileProgress.completedUnitCount = fileProgress.totalUnitCount
                 }
                 activeCount += 1
             }
 
-            // Drain remaining tasks and notify handler for each
             for try await _ in group {
                 progressHandler?(totalProgress)
             }
         }
 
         // Update ref mapping if we resolved a branch/tag to commit hash
-        if revision != commitHash, let cache = cache {
+        if revision != commitHash {
             try? cache.updateRef(repo: repo, kind: kind, ref: revision, commit: commitHash)
         }
 
@@ -1254,37 +1140,22 @@ public extension HubClient {
         }
 
         progressHandler?(totalProgress)
-        return destination
+        return snapshotPath
     }
 
     /// Download a repository snapshot with aggregate speed reporting.
-    ///
-    /// The speed (in bytes/sec) is the aggregate throughput across all concurrent downloads,
-    /// calculated as total bytes downloaded divided by elapsed time.
-    ///
-    /// - Parameters:
-    ///   - repo: Repository identifier
-    ///   - kind: Kind of repository
-    ///   - destination: Local destination directory
-    ///   - revision: Git revision (branch, tag, or commit)
-    ///   - matching: Glob patterns to filter files (empty array downloads all files)
-    ///   - maxConcurrent: Maximum number of concurrent downloads (default: 8)
-    ///   - progressHandler: Closure called with progress and speed (bytes/sec)
-    /// - Returns: URL to the local snapshot directory
     @discardableResult
     func downloadSnapshot(
         of repo: Repo.ID,
         kind: Repo.Kind = .model,
-        to destination: URL,
         revision: String = "main",
         matching globs: [String] = [],
         maxConcurrent: Int = 8,
-        progressHandler: @escaping (Progress, Double?) -> Void
+        progressHandler: @Sendable @escaping (Progress, Double?) -> Void
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
             kind: kind,
-            to: destination,
             revision: revision,
             matching: globs,
             maxConcurrent: maxConcurrent
@@ -1294,108 +1165,38 @@ public extension HubClient {
         }
     }
 
-    /// Handles snapshot download in offline mode using only cached files.
+    /// Returns the snapshot cache path in offline mode.
     ///
-    /// Matches huggingface_hub behavior: returns all cached files, ignoring glob patterns.
+    /// Matches huggingface_hub behavior: returns cached snapshot path.
     /// As huggingface_hub notes: "we can't check if all the files are actually there" —
-    /// this is a best-effort approach that returns whatever is cached.
+    /// this is a best-effort approach.
     private func downloadSnapshotOffline(
-        of repo: Repo.ID,
+        cache: HubCache,
+        repo: Repo.ID,
         kind: Repo.Kind,
-        to destination: URL,
         revision: String
-    ) async throws -> URL {
-        guard let cache = cache else {
-            throw HubCacheError.offlineModeError("Cache is disabled but offline mode requires cached files")
-        }
-
-        // Get cached snapshot path for this repo/revision
+    ) throws -> URL {
         guard let snapshotPath = cache.snapshotPath(repo: repo, kind: kind, revision: revision) else {
             throw HubCacheError.offlineModeError("Repository '\(repo)' not available in cache")
         }
 
-        // Verify snapshot directory exists
         guard FileManager.default.fileExists(atPath: snapshotPath.path) else {
             throw HubCacheError.offlineModeError("Repository '\(repo)' not available in cache")
         }
 
-        // Get all cached files (ignore glob patterns in offline mode, matching huggingface_hub)
-        let cachedFiles = try enumerateCachedFiles(at: snapshotPath, matching: [])
-
-        if cachedFiles.isEmpty {
-            throw HubCacheError.offlineModeError("No cached files available for '\(repo)'")
-        }
-
-        // Copy cached files to destination
-        try copyCachedFiles(cachedFiles, from: snapshotPath, to: destination)
-
-        return destination
-    }
-
-    /// Copies cached files from snapshot path to destination.
-    private func copyCachedFiles(_ files: [String], from snapshotPath: URL, to destination: URL) throws {
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-
-        for relativePath in files {
-            let sourceURL = snapshotPath.appendingPathComponent(relativePath)
-            let destURL = destination.appendingPathComponent(relativePath)
-
-            try fileManager.createDirectory(
-                at: destURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-
-            // Copy file (resolve symlinks first since cache uses symlinks)
-            let resolvedSource = sourceURL.resolvingSymlinksInPath()
-            try? fileManager.removeItem(at: destURL)
-            try fileManager.copyItem(at: resolvedSource, to: destURL)
-        }
-    }
-
-    /// Enumerates files in a cached snapshot directory that match the given globs.
-    ///
-    /// This is used to check if all requested files are cached before making API calls.
-    private func enumerateCachedFiles(at snapshotPath: URL, matching globs: [String]) throws -> [String] {
-        let fileManager = FileManager.default
-
-        guard
-            let enumerator = fileManager.enumerator(
-                at: snapshotPath,
-                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            )
-        else {
-            return []
-        }
-
-        var files: [String] = []
-        while let fileURL = enumerator.nextObject() as? URL {
-            let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            // Include both regular files and symlinks (cache uses symlinks to blobs)
-            if resourceValues.isRegularFile == true || resourceValues.isSymbolicLink == true {
-                // Get relative path from snapshot root
-                let relativePath = fileURL.path.replacingOccurrences(
-                    of: snapshotPath.path + "/",
-                    with: ""
-                )
-                files.append(relativePath)
-            }
-        }
-
-        // Filter by globs if specified
-        if globs.isEmpty {
-            return files
-        }
-        return files.filter { path in
-            globs.contains { glob in
-                fnmatch(glob, path, 0) == 0
-            }
-        }
+        return snapshotPath
     }
 }
 
 // MARK: - Xet Operations
+
+/// Metadata returned from a Xet HEAD request, combining the Xet file ID
+/// with standard cache metadata (etag, commit hash) from the same response.
+private struct XetFileInfo {
+    let fileID: String
+    let etag: String?
+    let commitHash: String?
+}
 
 private extension HubClient {
     /// Downloads file data using Xet's content-addressable storage system.
@@ -1407,7 +1208,7 @@ private extension HubClient {
         transport: FileDownloadTransport
     ) async throws -> Data? {
         guard
-            let fileID = try await fetchXetFileID(
+            let xetInfo = try await fetchXetFileInfo(
                 repoPath: repoPath,
                 repo: repo,
                 revision: revision,
@@ -1421,23 +1222,26 @@ private extension HubClient {
             refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
             hubToken: try? await httpClient.tokenProvider.getToken()
         ) { downloader in
-            try await downloader.data(for: fileID)
+            try await downloader.data(for: xetInfo.fileID)
         }
     }
 
     /// Downloads a file using Xet's content-addressable storage system.
+    ///
+    /// Downloads to the blob cache and creates a snapshot symlink.
+    /// Returns the snapshot symlink path, or nil if the file doesn't support Xet.
+    /// Requires a cache to be configured.
     @discardableResult
     func downloadFileWithXet(
         repoPath: String,
         repo: Repo.ID,
         kind: Repo.Kind,
         revision: String,
-        destination: URL,
         progress: Progress?,
         transport: FileDownloadTransport
     ) async throws -> URL? {
         guard
-            let fileID = try await fetchXetFileID(
+            let xetInfo = try await fetchXetFileInfo(
                 repoPath: repoPath,
                 repo: repo,
                 revision: revision,
@@ -1447,25 +1251,55 @@ private extension HubClient {
             return nil
         }
 
-        _ = try await Xet.withDownloader(
-            refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
-            hubToken: try? await httpClient.tokenProvider.getToken()
-        ) { downloader in
-            try await downloader.download(fileID, to: destination)
+        guard let cache, let normalizedEtag = xetInfo.etag else {
+            throw HubCacheError.cacheNotConfigured
         }
+
+        let fileManager = FileManager.default
+        let blobsDir = cache.blobsDirectory(repo: repo, kind: kind)
+        let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
+        let commitHash = xetInfo.commitHash ?? revision
+
+        if !fileManager.fileExists(atPath: blobPath.path) {
+            let locksDir = cache.locksDirectory(repo: repo, kind: kind)
+            let lockPath = locksDir.appendingPathComponent(normalizedEtag)
+            let lock = await FileLock(lockPath: lockPath.appendingPathExtension("lock"))
+            try await lock.withLock {
+                // Double-check after acquiring lock
+                if !fileManager.fileExists(atPath: blobPath.path) {
+                    try fileManager.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+                    _ = try await Xet.withDownloader(
+                        refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
+                        hubToken: try? await httpClient.tokenProvider.getToken()
+                    ) { downloader in
+                        try await downloader.download(xetInfo.fileID, to: blobPath)
+                    }
+                }
+            }
+        }
+
+        let result = try createCacheEntries(
+            cache: cache,
+            repo: repo,
+            kind: kind,
+            revision: revision,
+            commitHash: commitHash,
+            repoPath: repoPath,
+            etag: normalizedEtag
+        )
 
         progress?.totalUnitCount = 100
         progress?.completedUnitCount = 100
 
-        return destination
+        return result
     }
 
-    func fetchXetFileID(
+    func fetchXetFileInfo(
         repoPath: String,
         repo: Repo.ID,
         revision: String,
         transport: FileDownloadTransport
-    ) async throws -> String? {
+    ) async throws -> XetFileInfo? {
         let urlPath = "/\(repo)/resolve/\(revision)/\(repoPath)"
         var request = try await httpClient.createRequest(.head, urlPath)
         request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -1497,7 +1331,21 @@ private extension HubClient {
             return nil
         }
 
-        return isValidHash(fileID, pattern: sha256Pattern) ? fileID : nil
+        guard isValidHash(fileID, pattern: sha256Pattern) else {
+            return nil
+        }
+
+        // Extract cache metadata from the same HEAD response to avoid a second request.
+        // Uses X-Linked-Etag (for LFS/Xet files) with ETag fallback, matching fetchFileMetadata.
+        let linkedEtag = httpResponse.value(forHTTPHeaderField: "X-Linked-Etag")
+        let etag = linkedEtag ?? httpResponse.value(forHTTPHeaderField: "ETag")
+        let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
+
+        return XetFileInfo(
+            fileID: fileID,
+            etag: etag.map { HubCache.normalizeEtag($0) },
+            commitHash: commitHash
+        )
     }
 
     func xetRefreshURL(for repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL {
@@ -1772,6 +1620,7 @@ private func isCommitHash(_ string: String) -> Bool {
     guard string.count == 40 else { return false }
     return string.allSatisfy { $0.isHexDigit }
 }
+
 
 /// Repository info with commit hash and file list.
 struct RepoInfoForDownload {

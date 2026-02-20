@@ -663,6 +663,9 @@ public enum HubCacheError: Error, LocalizedError {
     /// Offline mode is enabled but the requested resource is not available in cache.
     case offlineModeError(String)
 
+    /// A cache is required for this operation but none is configured.
+    case cacheNotConfigured
+
     public var errorDescription: String? {
         switch self {
         case .invalidPathComponent(let component):
@@ -672,6 +675,8 @@ public enum HubCacheError: Error, LocalizedError {
             return "File integrity check failed for '\(file)': expected \(expected), got \(actual)"
         case .offlineModeError(let message):
             return "Offline mode: \(message)"
+        case .cacheNotConfigured:
+            return "A cache is required for this operation but none is configured"
         }
     }
 }

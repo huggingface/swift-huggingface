@@ -19,18 +19,18 @@ let benchmarksEnabled = ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] ==
 /// These tests require network access and use real Hugging Face repositories.
 @Suite("Download Benchmarks", .serialized, .enabled(if: benchmarksEnabled))
 struct DownloadBenchmarks {
-    static let downloadDestination: URL = {
+    static let cacheDirectory: URL = {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         return base.appending(component: "huggingface-benchmarks")
     }()
 
     init() {
         // Clean before each test to ensure consistent starting state
-        try? FileManager.default.removeItem(at: Self.downloadDestination)
+        try? FileManager.default.removeItem(at: Self.cacheDirectory)
     }
 
     func createClient() -> HubClient {
-        let cache = HubCache(cacheDirectory: Self.downloadDestination)
+        let cache = HubCache(cacheDirectory: Self.cacheDirectory)
         return HubClient(
             host: URL(string: "https://huggingface.co")!,
             cache: cache
@@ -43,13 +43,11 @@ struct DownloadBenchmarks {
     func cachedFileRetrieval() async throws {
         let repoID: Repo.ID = "mlx-community/Qwen3-0.6B-Base-DQ5"
         let client = createClient()
-        let destination = Self.downloadDestination.appending(path: "snapshot")
         let commitHash = "9a160ab0c112dda560cbaee3c9c24fbac2f98549"
 
         // First download to populate the cache
         _ = try await client.downloadSnapshot(
             of: repoID,
-            to: destination,
             revision: commitHash,
             matching: ["*.json"]
         )
@@ -66,7 +64,6 @@ struct DownloadBenchmarks {
             let start = CFAbsoluteTimeGetCurrent()
             _ = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 revision: commitHash,
                 matching: ["*.json"]
             )
@@ -92,14 +89,12 @@ struct DownloadBenchmarks {
 
         for i in 1 ... iterations {
             // Clear cache before each iteration
-            try? FileManager.default.removeItem(at: Self.downloadDestination)
+            try? FileManager.default.removeItem(at: Self.cacheDirectory)
             let client = createClient()
-            let destination = Self.downloadDestination.appending(path: "snapshot")
 
             let start = CFAbsoluteTimeGetCurrent()
             _ = try await client.downloadSnapshot(
                 of: repoID,
-                to: destination,
                 matching: ["*.json"]
             )
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
