@@ -604,6 +604,10 @@ public extension HubClient {
         }
     #else
         /// Apple: Downloads file to cache with resume support.
+        ///
+        /// Uses `URLSession.download(for:delegate:)` for efficient OS-level streaming to disk.
+        /// For resume, downloads the remainder to a temp file and appends it to the
+        /// `.incomplete` file, then moves to the final blob path.
         private func downloadToCacheApple(
             request: URLRequest,
             blobPath: URL,
@@ -631,7 +635,6 @@ public extension HubClient {
                     resumeSize = size
                 } else {
                     try? fileManager.removeItem(at: incompletePath)
-                    fileManager.createFile(atPath: incompletePath.path, contents: nil)
                 }
 
                 // Add Range header if resuming
@@ -640,8 +643,13 @@ public extension HubClient {
                     resumeRequest.setValue("bytes=\(resumeSize)-", forHTTPHeaderField: "Range")
                 }
 
-                // Start streaming download
-                let (asyncBytes, response) = try await session.bytes(for: resumeRequest)
+                let delegate = progress.map {
+                    DownloadProgressDelegate(progress: $0, resumeOffset: resumeSize)
+                }
+                let (tempURL, response) = try await session.download(
+                    for: resumeRequest,
+                    delegate: delegate
+                )
 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw HTTPClientError.unexpectedError("Invalid HTTP response")
@@ -657,8 +665,6 @@ public extension HubClient {
                 // Solution: delete the incomplete file and retry once without a Range header.
                 if statusCode == 416 {
                     guard !shouldStartFresh else {
-                        // We already retried without Range header and still got 416.
-                        // This shouldn't happen; fail to avoid infinite loop.
                         throw HTTPClientError.responseError(
                             response: httpResponse,
                             detail: "Download failed: server returned 416 after fresh retry"
@@ -675,123 +681,35 @@ public extension HubClient {
                     )
                 }
 
-                // Determine expected total size
-                let contentLength = Int64(httpResponse.value(forHTTPHeaderField: "Content-Length") ?? "") ?? 0
-                let expectedTotalSize: Int64
-                if statusCode == 206 {
-                    expectedTotalSize = resumeSize + contentLength
+                if statusCode == 206, resumeSize > 0 {
+                    // Partial content: append the downloaded remainder to the incomplete file
+                    try appendFile(from: tempURL, to: incompletePath)
+                    try? fileManager.removeItem(at: blobPath)
+                    try fileManager.moveItem(at: incompletePath, to: blobPath)
                 } else {
-                    if resumeSize > 0 {
-                        try? fileManager.removeItem(at: incompletePath)
-                        fileManager.createFile(atPath: incompletePath.path, contents: nil)
-                        resumeSize = 0
-                    }
-                    expectedTotalSize = contentLength
+                    // Full download (200): server ignored Range or fresh download.
+                    try? fileManager.removeItem(at: incompletePath)
+                    try? fileManager.removeItem(at: blobPath)
+                    try fileManager.moveItem(at: tempURL, to: blobPath)
                 }
 
-                // Set up progress tracking
-                if let progress, progress.totalUnitCount == 0 {
-                    progress.totalUnitCount = expectedTotalSize
-                }
-                progress?.completedUnitCount = resumeSize
-                let startTime = CFAbsoluteTimeGetCurrent()
-
-                // Open file for appending
-                let fileHandle = try FileHandle(forWritingTo: incompletePath)
-                defer { try? fileHandle.close() }
-
-                if resumeSize > 0 {
-                    try fileHandle.seekToEnd()
-                }
-
-                // Stream bytes to file
-                var totalBytesWritten = resumeSize
-                var buffer = Data()
-                let bufferSize = DownloadConstants.bufferSize
-
-                for try await byte in asyncBytes {
-                    try Task.checkCancellation()
-                    buffer.append(byte)
-
-                    if buffer.count >= bufferSize {
-                        try fileHandle.write(contentsOf: buffer)
-                        totalBytesWritten += Int64(buffer.count)
-                        buffer.removeAll(keepingCapacity: true)
-
-                        progress?.completedUnitCount = totalBytesWritten
-                        if expectedTotalSize > 0 {
-                            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
-                            if elapsed > 0 {
-                                progress?.setUserInfoObject(
-                                    Double(totalBytesWritten - resumeSize) / elapsed,
-                                    forKey: .throughputKey
-                                )
-                            }
-                        }
-                    }
-                }
-
-                if !buffer.isEmpty {
-                    try fileHandle.write(contentsOf: buffer)
-                    totalBytesWritten += Int64(buffer.count)
-                }
-
-                try fileHandle.close()
-
-                // Verify file size
-                if expectedTotalSize > 0 && totalBytesWritten != expectedTotalSize {
-                    throw HubCacheError.integrityError(
-                        expected: "\(expectedTotalSize) bytes",
-                        actual: "\(totalBytesWritten) bytes",
-                        file: etag
-                    )
-                }
-
-                // Move incomplete to final blob path
-                try? fileManager.removeItem(at: blobPath)
-                try fileManager.moveItem(at: incompletePath, to: blobPath)
-
-                // Download complete
                 return
             }
         }
-    #endif
 
-    #if !canImport(FoundationNetworking)
-        /// Download file with resume capability using URLSession resume data.
-        ///
-        /// - Note: This method is only available on Apple platforms.
-        ///   On Linux, resume functionality is not supported.
-        ///
-        /// - Warning: This method does not store the result in the cache.
-        ///
-        /// - Parameters:
-        ///   - resumeData: Resume data from a previous download attempt
-        ///   - destination: Destination URL for downloaded file
-        ///   - progress: Optional Progress object to track download progress
-        /// - Returns: Final destination URL
-        @available(
-            *,
-            deprecated,
-            message:
-                "Use downloadFile() instead, which provides automatic resume support via HTTP Range headers and stores results in the cache."
-        )
-        func resumeDownloadFile(
-            resumeData: Data,
-            to destination: URL,
-            progress: Progress? = nil
-        ) async throws -> URL {
-            let (tempURL, response) = try await session.download(
-                resumeFrom: resumeData,
-                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
-            )
-            _ = try httpClient.validateResponse(response, data: nil)
+        /// Appends the contents of one file to another using chunked reads.
+        private func appendFile(from source: URL, to destination: URL) throws {
+            let sourceHandle = try FileHandle(forReadingFrom: source)
+            defer { try? sourceHandle.close() }
+            let destHandle = try FileHandle(forWritingTo: destination)
+            defer { try? destHandle.close() }
 
-            // Move from temporary location to final destination
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.moveItem(at: tempURL, to: destination)
+            try destHandle.seekToEnd()
 
-            return destination
+            let chunkSize = 1_048_576 // 1 MB
+            while let chunk = try sourceHandle.read(upToCount: chunkSize), !chunk.isEmpty {
+                try destHandle.write(contentsOf: chunk)
+            }
         }
     #endif
 
@@ -801,41 +719,40 @@ public extension HubClient {
 
 #if !canImport(FoundationNetworking)
     /// Delegate for tracking download progress with throughput calculation.
+    ///
+    /// When resuming a partial download, `resumeOffset` accounts for bytes already on disk
+    /// so that progress reports the true total (offset + newly downloaded bytes). Without this,
+    /// Foundation's Progress parent-child tree would scale the partial download to the full
+    /// file weight, causing the progress bar to advance at inflated speed.
+    ///
     /// Safe to mark @unchecked Sendable: mutable state is only accessed from URLSession's
     /// delegate queue, which serializes all callbacks.
     private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         private let progress: Progress
+        private let resumeOffset: Int64
         private let startTime: CFAbsoluteTime
-        private var lastUpdateTime: CFAbsoluteTime
-        private var lastBytesWritten: Int64 = 0
 
-        init(progress: Progress) {
+        init(progress: Progress, resumeOffset: Int64 = 0) {
             self.progress = progress
+            self.resumeOffset = resumeOffset
             self.startTime = CFAbsoluteTimeGetCurrent()
-            self.lastUpdateTime = startTime
         }
 
         func urlSession(
             _: URLSession,
             downloadTask _: URLSessionDownloadTask,
-            didWriteData bytesWritten: Int64,
+            didWriteData _: Int64,
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
-            progress.totalUnitCount = totalBytesExpectedToWrite
-            progress.completedUnitCount = totalBytesWritten
+            progress.totalUnitCount = resumeOffset + totalBytesExpectedToWrite
+            progress.completedUnitCount = resumeOffset + totalBytesWritten
 
-            // Calculate throughput (bytes per second)
-            let currentTime = CFAbsoluteTimeGetCurrent()
-            let elapsedSinceStart = currentTime - startTime
-
-            if elapsedSinceStart > 0 {
-                let bytesPerSecond = Double(totalBytesWritten) / elapsedSinceStart
+            let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+            if elapsed > 0 {
+                let bytesPerSecond = Double(totalBytesWritten) / elapsed
                 progress.setUserInfoObject(bytesPerSecond, forKey: .throughputKey)
             }
-
-            lastUpdateTime = currentTime
-            lastBytesWritten = totalBytesWritten
         }
 
         func urlSession(
@@ -843,7 +760,7 @@ public extension HubClient {
             downloadTask _: URLSessionDownloadTask,
             didFinishDownloadingTo _: URL
         ) {
-            // The actual file handling is done in the async/await layer
+            // File handling is done in the async/await layer
         }
     }
 #endif
