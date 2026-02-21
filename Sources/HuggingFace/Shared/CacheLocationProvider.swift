@@ -29,14 +29,6 @@ import Foundation
 /// let cache = HubCache(location: .fixed(directory: URL(fileURLWithPath: "/custom/cache")))
 /// ```
 ///
-/// ## Disable Caching
-///
-/// To disable file caching entirely:
-///
-/// ```swift
-/// let client = HubClient(cache: nil)
-/// ```
-///
 /// ## Custom Location Provider
 ///
 /// For custom cache directory logic:
