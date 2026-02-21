@@ -118,7 +118,7 @@ private func makeProgressStream() -> (
                 cache: cache
             )
 
-            var lastSpeed: Double?
+            nonisolated(unsafe) var lastSpeed: Double?
             // Download safetensors file (larger, takes longer)
             _ = try await client.downloadSnapshot(
                 of: repoID,
