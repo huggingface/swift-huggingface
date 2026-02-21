@@ -40,7 +40,6 @@ import Foundation
 /// 2. `HF_HOME` environment variable + `/hub`
 /// 3. `~/.cache/huggingface/hub` (standard location)
 ///
-/// To disable caching, pass `cache: nil` when initializing the client.
 ///
 /// - SeeAlso: ``HubCache`` for direct cache management.
 /// - SeeAlso: [Hub API Documentation](https://huggingface.co/docs/hub/api)
@@ -62,11 +61,11 @@ public final class HubClient: Sendable {
     /// Uses `SameHostRedirectDelegate` to capture X-Linked-Etag and X-Repo-Commit headers.
     internal let metadataSession: URLSession
 
-    /// The cache for downloaded files, or `nil` if caching is disabled.
+    /// The cache for downloaded files.
     ///
-    /// When set, downloaded files are stored in a Python-compatible cache structure,
+    /// Downloaded files are stored in a Python-compatible cache structure,
     /// allowing cache reuse between Swift and Python Hugging Face clients.
-    public let cache: HubCache?
+    public let cache: HubCache
 
     /// Override for offline mode detection.
     ///
@@ -105,12 +104,12 @@ public final class HubClient: Sendable {
     /// - Parameters:
     ///   - session: The URL session for network requests.
     ///   - userAgent: The value for the `User-Agent` header, if any.
-    ///   - cache: The cache for downloaded files. Pass `nil` to disable caching.
+    ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         userAgent: String? = nil,
-        cache: HubCache? = .default,
+        cache: HubCache = .default,
         useOfflineMode: Bool? = nil
     ) {
         self.init(
@@ -131,14 +130,13 @@ public final class HubClient: Sendable {
     ///   - userAgent: The value for the `User-Agent` header sent in requests, if any. Defaults to `nil`.
     ///   - bearerToken: The Bearer token for authentication, if any. Defaults to `nil`.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
-    ///            Pass `nil` to disable caching.
     ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public convenience init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         bearerToken: String? = nil,
-        cache: HubCache? = .default,
+        cache: HubCache = .default,
         useOfflineMode: Bool? = nil
     ) {
         self.init(
@@ -159,14 +157,13 @@ public final class HubClient: Sendable {
     ///   - userAgent: The value for the `User-Agent` header sent in requests, if any. Defaults to `nil`.
     ///   - tokenProvider: The token provider for authentication.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
-    ///            Pass `nil` to disable caching.
     ///   - useOfflineMode: Override for offline mode detection. When `nil`, auto-detects based on network.
     public init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         tokenProvider: TokenProvider,
-        cache: HubCache? = .default,
+        cache: HubCache = .default,
         useOfflineMode: Bool? = nil
     ) {
         self.httpClient = HTTPClient(
