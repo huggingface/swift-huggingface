@@ -312,6 +312,79 @@ private func makeProgressStream() -> (
             #expect(FileManager.default.fileExists(atPath: configPath.path))
         }
 
+        @Test("Commit hash fast path detects incomplete snapshots")
+        func commitHashDetectsIncompleteSnapshot() async throws {
+            let repoID: Repo.ID = "google-t5/t5-base"
+            let client = createClient()
+
+            // Get the current commit hash
+            let model = try await client.getModel(repoID)
+            let commitHash = try #require(model.sha)
+
+            // Download only config.json — this creates the snapshot directory
+            // and caches the repo info
+            let firstSnapshot = try await client.downloadSnapshot(
+                of: repoID,
+                revision: commitHash,
+                matching: ["config.json"]
+            )
+            #expect(FileManager.default.fileExists(
+                atPath: firstSnapshot.appendingPathComponent("config.json").path
+            ))
+
+            // Now download with a different glob — the snapshot directory exists
+            // but the requested file isn't there. The fast path should detect this
+            // and fall through to download the missing file.
+            let secondSnapshot = try await client.downloadSnapshot(
+                of: repoID,
+                revision: commitHash,
+                matching: ["tokenizer.json"]
+            )
+            #expect(FileManager.default.fileExists(
+                atPath: secondSnapshot.appendingPathComponent("tokenizer.json").path
+            ))
+        }
+
+        @Test("cachedSnapshotPath returns nil for incomplete snapshots")
+        func cachedSnapshotPathReturnsNilForIncomplete() async throws {
+            let repoID: Repo.ID = "google-t5/t5-base"
+            let client = createClient()
+
+            let model = try await client.getModel(repoID)
+            let commitHash = try #require(model.sha)
+
+            // Download only config.json
+            _ = try await client.downloadSnapshot(
+                of: repoID,
+                revision: commitHash,
+                matching: ["config.json"]
+            )
+
+            // cachedSnapshotPath with the same glob should return the path
+            let samePath = client.cachedSnapshotPath(
+                repo: repoID, revision: commitHash, matching: ["config.json"]
+            )
+            #expect(samePath != nil)
+
+            // cachedSnapshotPath with a different glob should return nil
+            let differentPath = client.cachedSnapshotPath(
+                repo: repoID, revision: commitHash, matching: ["tokenizer.json"]
+            )
+            #expect(differentPath == nil)
+
+            // After downloading with different globs, the originally cached files
+            // should still be found
+            _ = try await client.downloadSnapshot(
+                of: repoID,
+                revision: commitHash,
+                matching: ["tokenizer.json"]
+            )
+            let bothPath = client.cachedSnapshotPath(
+                repo: repoID, revision: commitHash, matching: ["config.json", "tokenizer.json"]
+            )
+            #expect(bothPath != nil)
+        }
+
         @Test("Download with invalid revision throws error")
         func downloadWithInvalidRevision() async throws {
             let repoID: Repo.ID = "google-t5/t5-base"

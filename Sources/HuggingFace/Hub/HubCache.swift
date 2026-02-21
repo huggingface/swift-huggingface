@@ -21,6 +21,9 @@ import Foundation
 /// ├── .locks/                              # Lock files for concurrent access
 /// │   └── models--<namespace>--<repo>/
 /// │       └── <etag>.lock                  # Prevents parallel downloads of same blob
+/// ├── .metadata/                           # Cached metadata for fast path lookups
+/// │   └── models--<namespace>--<repo>/
+/// │       └── <commit_hash>.json           # Cached API response for a commit
 /// ├── models--<namespace>--<repo>/
 /// │   ├── blobs/
 /// │   │   └── <etag>                       # Actual file content
@@ -145,6 +148,17 @@ public struct HubCache: Sendable {
         let repoName = repo.description.replacingOccurrences(of: "/", with: "--")
         let dirName = "\(kind.pluralized)--\(repoName)"
         return cacheDirectory.appendingPathComponent(".locks").appendingPathComponent(dirName)
+    }
+
+    /// Returns the metadata directory for a repository.
+    ///
+    /// Metadata files (such as cached API responses) are stored in a separate
+    /// `.metadata` directory at the cache root, keeping the snapshot directory
+    /// clean so it only contains files from the repository.
+    public func metadataDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
+        let repoName = repo.description.replacingOccurrences(of: "/", with: "--")
+        let dirName = "\(kind.pluralized)--\(repoName)"
+        return cacheDirectory.appendingPathComponent(".metadata").appendingPathComponent(dirName)
     }
 
     /// Returns the refs directory for a repository.

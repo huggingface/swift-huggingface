@@ -1004,6 +1004,44 @@ public extension HubClient {
     }
 }
 
+// MARK: - Snapshot Cache Lookup
+
+public extension HubClient {
+    /// Returns the cached snapshot path if all files matching the given globs are present.
+    ///
+    /// This method resolves the revision (commit hash or branch name) and checks
+    /// cached repo info to verify that all matching files have been downloaded.
+    /// Returns `nil` if the snapshot is missing, incomplete, or has no cached repo info.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
+    ///   - revision: Git revision (branch, tag, or commit hash)
+    ///   - globs: Glob patterns to filter files (empty array checks all files)
+    /// - Returns: Path to the verified snapshot directory, or `nil`.
+    func cachedSnapshotPath(
+        repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String,
+        matching globs: [String] = []
+    ) -> URL? {
+        guard let cache else { return nil }
+
+        let commit: String
+        if isCommitHash(revision) {
+            commit = revision
+        } else if let resolved = cache.resolveRevision(repo: repo, kind: kind, ref: revision) {
+            commit = resolved
+        } else {
+            return nil
+        }
+
+        return verifiedSnapshotPath(
+            cache: cache, repo: repo, kind: kind, commit: commit, matching: globs
+        )
+    }
+}
+
 // MARK: - Snapshot Download
 
 public extension HubClient {
@@ -1070,10 +1108,17 @@ public extension HubClient {
             )
         }
 
-        // Fast path: when revision is already a commit hash (immutable),
-        // return the snapshot path directly if it exists.
+        // Fast path: when revision is already a commit hash (immutable), use cached
+        // repo info to verify all matching files are present before returning.
+        //
+        // Python's snapshot_download acknowledges this limitation in its offline path:
+        //   "we can't check if all the files are actually there"
+        //   (huggingface_hub/_snapshot_download.py:293)
+        // We improve on this by caching the API response after the first download and
+        // verifying each file's presence in the snapshot on subsequent calls.
         if isCommitHash(revision),
-            let snapshotPath = cache.snapshotPath(repo: repo, kind: kind, revision: revision)
+            let snapshotPath = verifiedSnapshotPath(
+                cache: cache, repo: repo, kind: kind, commit: revision, matching: globs)
         {
             let totalProgress = Progress(totalUnitCount: 1)
             totalProgress.completedUnitCount = 1
@@ -1113,6 +1158,11 @@ public extension HubClient {
 
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(commitHash)
+
+        // Cache repo info for future fast path lookups
+        saveCachedRepoInfo(
+            repoInfo, cache: cache, repo: repo, kind: kind, commit: commitHash
+        )
 
         // Size-weighted progress: total is sum of file sizes (bytes)
         let totalBytes = entries.reduce(Int64(0)) { $0 + Int64($1.size ?? 1) }
@@ -1720,9 +1770,71 @@ private func isCommitHash(_ string: String) -> Bool {
     return string.allSatisfy { $0.isHexDigit }
 }
 
+// MARK: - Cached Repo Info
+
+/// Saves the API response for a commit to the metadata directory for future fast path lookups.
+private func saveCachedRepoInfo(
+    _ info: RepoInfoForDownload,
+    cache: HubCache,
+    repo: Repo.ID,
+    kind: Repo.Kind,
+    commit: String
+) {
+    let metadataDir = cache.metadataDirectory(repo: repo, kind: kind)
+    try? FileManager.default.createDirectory(at: metadataDir, withIntermediateDirectories: true)
+    let path = metadataDir.appendingPathComponent("\(commit).json")
+    try? JSONEncoder().encode(info).write(to: path)
+}
+
+/// Loads cached repo info from the metadata directory, if available.
+private func loadCachedRepoInfo(
+    cache: HubCache,
+    repo: Repo.ID,
+    kind: Repo.Kind,
+    commit: String
+) -> RepoInfoForDownload? {
+    let path = cache.metadataDirectory(repo: repo, kind: kind)
+        .appendingPathComponent("\(commit).json")
+    guard let data = try? Data(contentsOf: path) else { return nil }
+    return try? JSONDecoder().decode(RepoInfoForDownload.self, from: data)
+}
+
+/// Checks whether all files matching the given globs are present in the snapshot directory,
+/// using cached repo info to know the complete file list for the commit.
+///
+/// Returns the snapshot path if all matching files are present, `nil` otherwise.
+private func verifiedSnapshotPath(
+    cache: HubCache,
+    repo: Repo.ID,
+    kind: Repo.Kind,
+    commit: String,
+    matching globs: [String]
+) -> URL? {
+    let snapshotDir = cache.snapshotsDirectory(repo: repo, kind: kind)
+        .appendingPathComponent(commit)
+
+    guard let cachedInfo = loadCachedRepoInfo(
+        cache: cache, repo: repo, kind: kind, commit: commit
+    ), let siblings = cachedInfo.siblings else { return nil }
+
+    let entries = siblings.filter { entry in
+        guard !globs.isEmpty else { return true }
+        return globs.contains { glob in
+            fnmatch(glob, entry.path, 0) == 0
+        }
+    }
+
+    let allPresent = entries.allSatisfy { entry in
+        FileManager.default.fileExists(
+            atPath: snapshotDir.appendingPathComponent(entry.path).path
+        )
+    }
+
+    return allPresent ? snapshotDir : nil
+}
 
 /// Repository info with commit hash and file list.
-struct RepoInfoForDownload {
+struct RepoInfoForDownload: Codable {
     let commitHash: String
     let siblings: [Git.TreeEntry]?
 }
