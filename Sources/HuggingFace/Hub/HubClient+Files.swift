@@ -1754,7 +1754,7 @@ extension HubClient {
         case .model:
             let model = try await getModel(repo, revision: revision, filesMetadata: true)
             guard let sha = model.sha else {
-                throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
+                throw HubCacheError.unexpectedAPIResponse("Could not resolve revision '\(revision)' to commit hash")
             }
             let siblings = model.siblings?.map {
                 Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
@@ -1763,7 +1763,7 @@ extension HubClient {
         case .dataset:
             let dataset = try await getDataset(repo, revision: revision, filesMetadata: true)
             guard let sha = dataset.sha else {
-                throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
+                throw HubCacheError.unexpectedAPIResponse("Could not resolve revision '\(revision)' to commit hash")
             }
             let siblings = dataset.siblings?.map {
                 Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
@@ -1772,7 +1772,7 @@ extension HubClient {
         case .space:
             let space = try await getSpace(repo, revision: revision, filesMetadata: true)
             guard let sha = space.sha else {
-                throw HubCacheError.offlineModeError("Could not resolve revision '\(revision)' to commit hash")
+                throw HubCacheError.unexpectedAPIResponse("Could not resolve revision '\(revision)' to commit hash")
             }
             let siblings = space.siblings?.map {
                 Git.TreeEntry(path: $0.relativeFilename, type: .file, oid: nil, size: $0.size, lastCommit: nil)
