@@ -152,6 +152,25 @@ struct FileLockTests {
         #expect(level1 && level2 && level3)
     }
 
+    @Test("Reentrant locking survives nested different lock path")
+    func reentrantLockingAcrossDifferentNestedPath() async throws {
+        let outerPath = tempDirectory.appendingPathComponent("outer-reentrant")
+        let innerPath = tempDirectory.appendingPathComponent("inner-reentrant")
+        let outerLock = FileLock(path: outerPath)
+        let innerLock = FileLock(path: innerPath)
+        var reenteredOuter = false
+
+        try await outerLock.withLock {
+            try await innerLock.withLock {
+                try await outerLock.withLock(blocking: false) {
+                    reenteredOuter = true
+                }
+            }
+        }
+
+        #expect(reenteredOuter)
+    }
+
     @Test("Lock released on exception")
     func lockReleasedOnException() async throws {
         struct TestError: Error {}
