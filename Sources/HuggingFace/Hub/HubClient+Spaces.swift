@@ -3,14 +3,36 @@ import Foundation
 // MARK: - Spaces API
 
 extension HubClient {
+    /// Expandable space fields for Hub API responses.
+    public enum SpaceExpandField: String, Hashable, CaseIterable, Sendable {
+        case author
+        case cardData
+        case createdAt
+        case datasets
+        case disabled
+        case lastModified
+        case likes
+        case models
+        case `private`
+        case runtime
+        case sdk
+        case siblings
+        case sha
+        case subdomain
+        case tags
+        case trendingScore
+        case usedStorage
+        case resourceGroup
+    }
+
     /// Lists Spaces from the Hub.
     ///
     /// - Parameters:
     ///   - search: Filter based on substrings for repos and their usernames.
     ///   - author: Filter spaces by an author or organization.
     ///   - filter: Filter based on tags.
-    ///   - datasets: Filter by linked dataset identifier.
-    ///   - models: Filter by linked model identifier.
+    ///   - datasets: Filter by linked dataset identifiers.
+    ///   - models: Filter by linked model identifiers.
     ///   - linked: Filter to spaces linked to either models or datasets.
     ///   - sort: Property to use when sorting (e.g., "likes", "author").
     ///   - direction: Direction in which to sort.
@@ -27,24 +49,24 @@ extension HubClient {
         direction: SortDirection? = nil,
         limit: Int? = nil,
         full: Bool? = nil,
-        datasets: String? = nil,
-        models: String? = nil,
+        datasets: CommaSeparatedList<String>? = nil,
+        models: CommaSeparatedList<String>? = nil,
         linked: Bool? = nil,
-        expand: ExpandList? = nil
+        expand: CommaSeparatedList<SpaceExpandField>? = nil
     ) async throws -> PaginatedResponse<Space> {
         var params: [String: Value] = [:]
 
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
-        if let datasets { params["datasets"] = .string(datasets) }
-        if let models { params["models"] = .string(models) }
+        if let datasets { params["datasets"] = .string(datasets.csvValue) }
+        if let models { params["models"] = .string(models.csvValue) }
         if let linked { params["linked"] = .bool(linked) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.description) }
+        if let expand { params["expand"] = .string(expand.csvValue) }
 
         return try await httpClient.fetchPaginated(.get, "/api/spaces", params: params)
     }
@@ -63,7 +85,7 @@ extension HubClient {
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil,
-        expand: ExpandList? = nil,
+        expand: CommaSeparatedList<SpaceExpandField>? = nil,
         filesMetadata: Bool? = nil
     ) async throws -> Space {
         var url = httpClient.host
@@ -80,7 +102,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.description) }
+        if let expand { params["expand"] = .string(expand.csvValue) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)

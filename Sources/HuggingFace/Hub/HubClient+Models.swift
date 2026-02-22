@@ -3,18 +3,58 @@ import Foundation
 // MARK: - Models API
 
 extension HubClient {
+    /// Inference availability filter values for model listing.
+    public enum ModelInference: String, Hashable, CaseIterable, Sendable {
+        case warm
+    }
+
+    /// Expandable model fields for Hub API responses.
+    public enum ModelExpandField: String, Hashable, CaseIterable, Sendable {
+        case author
+        case cardData
+        case config
+        case createdAt
+        case disabled
+        case downloads
+        case downloadsAllTime
+        case evalResults
+        case gated
+        case gguf
+        case inference
+        case inferenceProviderMapping
+        case lastModified
+        case libraryName = "library_name"
+        case likes
+        case maskToken = "mask_token"
+        case modelIndex = "model-index"
+        case pipelineTag = "pipeline_tag"
+        case `private`
+        case safetensors
+        case sha
+        case siblings
+        case spaces
+        case tags
+        case transformersInfo
+        case trendingScore
+        case widgetData
+        case resourceGroup
+        case baseModels
+        case childrenModelCount
+        case usedStorage
+    }
+
     /// Lists models from the Hub.
     ///
     /// - Parameters:
     ///   - search: Filter based on substrings for repos and their usernames.
     ///   - author: Filter models by an author or organization.
     ///   - filter: Filter based on tags (e.g., "text-classification").
-    ///   - apps: Filter by app support (for example, "ollama" or "vllm").
+    ///   - apps: Filter by app support values.
     ///   - gated: Filter by gated status.
-    ///   - inference: Filter by inference availability mode (for example, "warm").
-    ///   - inferenceProvider: Filter by a specific inference provider.
+    ///   - inference: Filter by inference availability mode.
+    ///   - inferenceProvider: Filter by inference provider values.
     ///   - modelName: Filter by full or partial model name.
-    ///   - trainedDataset: Filter by trained dataset tag.
+    ///   - trainedDataset: Filter by trained dataset tags.
     ///   - pipelineTag: Filter by pipeline tag.
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
@@ -35,14 +75,14 @@ extension HubClient {
         limit: Int? = nil,
         full: Bool? = nil,
         config: Bool? = nil,
-        apps: String? = nil,
+        apps: CommaSeparatedList<String>? = nil,
         gated: Bool? = nil,
-        inference: String? = nil,
-        inferenceProvider: String? = nil,
+        inference: ModelInference? = nil,
+        inferenceProvider: CommaSeparatedList<String>? = nil,
         modelName: String? = nil,
-        trainedDataset: String? = nil,
+        trainedDataset: CommaSeparatedList<String>? = nil,
         pipelineTag: String? = nil,
-        expand: ExpandList? = nil,
+        expand: CommaSeparatedList<ModelExpandField>? = nil,
         cardData: Bool? = nil,
         fetchConfig: Bool? = nil
     ) async throws -> PaginatedResponse<Model> {
@@ -51,18 +91,18 @@ extension HubClient {
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
-        if let apps { params["apps"] = .string(apps) }
+        if let apps { params["apps"] = .string(apps.csvValue) }
         if let gated { params["gated"] = .bool(gated) }
-        if let inference { params["inference"] = .string(inference) }
-        if let inferenceProvider { params["inference_provider"] = .string(inferenceProvider) }
+        if let inference { params["inference"] = .string(inference.rawValue) }
+        if let inferenceProvider { params["inference_provider"] = .string(inferenceProvider.csvValue) }
         if let modelName { params["model_name"] = .string(modelName) }
-        if let trainedDataset { params["trained_dataset"] = .string(trainedDataset) }
+        if let trainedDataset { params["trained_dataset"] = .string(trainedDataset.csvValue) }
         if let pipelineTag { params["pipeline_tag"] = .string(pipelineTag) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.description) }
+        if let expand { params["expand"] = .string(expand.csvValue) }
         if let cardData { params["cardData"] = .bool(cardData) }
         if let config { params["config"] = .bool(config) }
         if let fetchConfig, fetchConfig { params["config"] = .bool(true) }
@@ -87,7 +127,7 @@ extension HubClient {
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil,
-        expand: ExpandList? = nil,
+        expand: CommaSeparatedList<ModelExpandField>? = nil,
         securityStatus: Bool? = nil,
         filesMetadata: Bool? = nil,
         cardData: Bool? = nil,
@@ -107,7 +147,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.description) }
+        if let expand { params["expand"] = .string(expand.csvValue) }
         if let securityStatus { params["securityStatus"] = .bool(securityStatus) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
         if let cardData { params["cardData"] = .bool(cardData) }
