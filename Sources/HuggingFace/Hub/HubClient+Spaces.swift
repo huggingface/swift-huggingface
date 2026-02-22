@@ -9,10 +9,14 @@ extension HubClient {
     ///   - search: Filter based on substrings for repos and their usernames.
     ///   - author: Filter spaces by an author or organization.
     ///   - filter: Filter based on tags.
+    ///   - datasets: Filter by linked dataset identifier.
+    ///   - models: Filter by linked model identifier.
+    ///   - linked: Filter to spaces linked to either models or datasets.
     ///   - sort: Property to use when sorting (e.g., "likes", "author").
     ///   - direction: Direction in which to sort.
     ///   - limit: Limit the number of spaces fetched.
     ///   - full: Whether to fetch most space data, such as all tags, the files, etc.
+    ///   - expand: Comma-separated list of fields to include in the response.
     /// - Returns: A paginated response containing space information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func listSpaces(
@@ -22,17 +26,25 @@ extension HubClient {
         sort: String? = nil,
         direction: SortDirection? = nil,
         limit: Int? = nil,
-        full: Bool? = nil
+        full: Bool? = nil,
+        datasets: String? = nil,
+        models: String? = nil,
+        linked: Bool? = nil,
+        expand: String? = nil
     ) async throws -> PaginatedResponse<Space> {
         var params: [String: Value] = [:]
 
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
+        if let datasets { params["datasets"] = .string(datasets) }
+        if let models { params["models"] = .string(models) }
+        if let linked { params["linked"] = .bool(linked) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
 
         return try await httpClient.fetchPaginated(.get, "/api/spaces", params: params)
     }
@@ -43,12 +55,16 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "user/space-name").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most space data.
+    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - filesMetadata: Whether to include file metadata such as blob information.
     /// - Returns: Information about the space.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func getSpace(
         _ id: Repo.ID,
         revision: String? = nil,
-        full: Bool? = nil
+        full: Bool? = nil,
+        expand: String? = nil,
+        filesMetadata: Bool? = nil
     ) async throws -> Space {
         var url = httpClient.host
             .appending(path: "api")
@@ -64,6 +80,8 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
+        if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)
     }

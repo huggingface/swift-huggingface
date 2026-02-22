@@ -9,10 +9,20 @@ extension HubClient {
     ///   - search: Filter based on substrings for repos and their usernames.
     ///   - author: Filter datasets by an author or organization.
     ///   - filter: Filter based on tags (e.g., "task_categories:text-classification").
+    ///   - benchmark: Filter by benchmark value.
+    ///   - datasetName: Filter by full or partial dataset name.
+    ///   - gated: Filter by gated status.
+    ///   - languageCreators: Filter by language creator category.
+    ///   - language: Filter by language.
+    ///   - multilinguality: Filter by multilinguality category.
+    ///   - sizeCategories: Filter by dataset size category.
+    ///   - taskCategories: Filter by task category.
+    ///   - taskIds: Filter by specific task identifier.
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
     ///   - limit: Limit the number of datasets fetched.
     ///   - full: Whether to fetch most dataset data, such as all tags, the files, etc.
+    ///   - expand: Comma-separated list of fields to include in the response.
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: A paginated response containing dataset information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
@@ -24,17 +34,37 @@ extension HubClient {
         direction: SortDirection? = nil,
         limit: Int? = nil,
         full: Bool? = nil,
-        config: Bool? = nil
+        config: Bool? = nil,
+        benchmark: String? = nil,
+        datasetName: String? = nil,
+        gated: Bool? = nil,
+        languageCreators: String? = nil,
+        language: String? = nil,
+        multilinguality: String? = nil,
+        sizeCategories: String? = nil,
+        taskCategories: String? = nil,
+        taskIds: String? = nil,
+        expand: String? = nil
     ) async throws -> PaginatedResponse<Dataset> {
         var params: [String: Value] = [:]
 
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
+        if let benchmark { params["benchmark"] = .string(benchmark) }
+        if let datasetName { params["dataset_name"] = .string(datasetName) }
+        if let gated { params["gated"] = .bool(gated) }
+        if let languageCreators { params["language_creators"] = .string(languageCreators) }
+        if let language { params["language"] = .string(language) }
+        if let multilinguality { params["multilinguality"] = .string(multilinguality) }
+        if let sizeCategories { params["size_categories"] = .string(sizeCategories) }
+        if let taskCategories { params["task_categories"] = .string(taskCategories) }
+        if let taskIds { params["task_ids"] = .string(taskIds) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
         if let config { params["config"] = .bool(config) }
 
         return try await httpClient.fetchPaginated(.get, "/api/datasets", params: params)
@@ -46,12 +76,16 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "datasets/squad").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most dataset data.
+    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - filesMetadata: Whether to include file metadata such as blob information.
     /// - Returns: Information about the dataset.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func getDataset(
         _ id: Repo.ID,
         revision: String? = nil,
-        full: Bool? = nil
+        full: Bool? = nil,
+        expand: String? = nil,
+        filesMetadata: Bool? = nil
     ) async throws -> Dataset {
         var url = httpClient.host
             .appending(path: "api")
@@ -67,6 +101,8 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
+        if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)
     }

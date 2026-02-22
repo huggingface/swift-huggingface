@@ -9,11 +9,21 @@ extension HubClient {
     ///   - search: Filter based on substrings for repos and their usernames.
     ///   - author: Filter models by an author or organization.
     ///   - filter: Filter based on tags (e.g., "text-classification").
+    ///   - apps: Filter by app support (for example, "ollama" or "vllm").
+    ///   - gated: Filter by gated status.
+    ///   - inference: Filter by inference availability mode (for example, "warm").
+    ///   - inferenceProvider: Filter by a specific inference provider.
+    ///   - modelName: Filter by full or partial model name.
+    ///   - trainedDataset: Filter by trained dataset tag.
+    ///   - pipelineTag: Filter by pipeline tag.
     ///   - sort: Property to use when sorting (e.g., "downloads", "author").
     ///   - direction: Direction in which to sort.
     ///   - limit: Limit the number of models fetched.
     ///   - full: Whether to fetch most model data, such as all tags, the files, etc.
+    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - cardData: Whether to include model card metadata.
     ///   - config: Whether to also fetch the repo config.
+    ///   - fetchConfig: Whether to force inclusion of the model config.
     /// - Returns: A paginated response containing model information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func listModels(
@@ -24,18 +34,38 @@ extension HubClient {
         direction: SortDirection? = nil,
         limit: Int? = nil,
         full: Bool? = nil,
-        config: Bool? = nil
+        config: Bool? = nil,
+        apps: String? = nil,
+        gated: Bool? = nil,
+        inference: String? = nil,
+        inferenceProvider: String? = nil,
+        modelName: String? = nil,
+        trainedDataset: String? = nil,
+        pipelineTag: String? = nil,
+        expand: String? = nil,
+        cardData: Bool? = nil,
+        fetchConfig: Bool? = nil
     ) async throws -> PaginatedResponse<Model> {
         var params: [String: Value] = [:]
 
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
+        if let apps { params["apps"] = .string(apps) }
+        if let gated { params["gated"] = .bool(gated) }
+        if let inference { params["inference"] = .string(inference) }
+        if let inferenceProvider { params["inference_provider"] = .string(inferenceProvider) }
+        if let modelName { params["model_name"] = .string(modelName) }
+        if let trainedDataset { params["trained_dataset"] = .string(trainedDataset) }
+        if let pipelineTag { params["pipeline_tag"] = .string(pipelineTag) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
+        if let cardData { params["cardData"] = .bool(cardData) }
         if let config { params["config"] = .bool(config) }
+        if let fetchConfig, fetchConfig { params["config"] = .bool(true) }
 
         return try await httpClient.fetchPaginated(.get, "/api/models", params: params)
     }
@@ -46,12 +76,22 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "facebook/bart-large-cnn").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most model data.
+    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - securityStatus: Whether to include repository security status.
+    ///   - filesMetadata: Whether to include file metadata such as blob information.
+    ///   - cardData: Whether to include model card metadata.
+    ///   - fetchConfig: Whether to include the model config in the response.
     /// - Returns: Information about the model.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func getModel(
         _ id: Repo.ID,
         revision: String? = nil,
-        full: Bool? = nil
+        full: Bool? = nil,
+        expand: String? = nil,
+        securityStatus: Bool? = nil,
+        filesMetadata: Bool? = nil,
+        cardData: Bool? = nil,
+        fetchConfig: Bool? = nil
     ) async throws -> Model {
         var url = httpClient.host
             .appending(path: "api")
@@ -67,6 +107,11 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
+        if let expand { params["expand"] = .string(expand) }
+        if let securityStatus { params["securityStatus"] = .bool(securityStatus) }
+        if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
+        if let cardData { params["cardData"] = .bool(cardData) }
+        if let fetchConfig { params["config"] = .bool(fetchConfig) }
 
         return try await httpClient.fetch(.get, url: url, params: params)
     }

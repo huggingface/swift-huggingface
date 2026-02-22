@@ -129,6 +129,63 @@ public enum Repo {
             case gatedNotificationsMode
         }
     }
+
+    /// Space-specific options used when creating a Space repository.
+    public struct SpaceConfiguration: Hashable, Sendable {
+        /// A Space secret or variable entry.
+        public struct Entry: Hashable, Sendable {
+            /// The key name.
+            public let key: String
+
+            /// The value.
+            public let value: String
+
+            /// An optional description.
+            public let description: String?
+
+            /// Creates a Space entry.
+            public init(key: String, value: String, description: String? = nil) {
+                self.key = key
+                self.value = value
+                self.description = description
+            }
+        }
+
+        /// The Space SDK (for example, "gradio", "streamlit", "docker", or "static").
+        public let sdk: String
+
+        /// The Space hardware tier.
+        public let hardware: String?
+
+        /// The Space storage tier.
+        public let storage: String?
+
+        /// The Space sleep timeout in seconds.
+        public let sleepTime: Int?
+
+        /// Initial Space secrets.
+        public let secrets: [Entry]?
+
+        /// Initial Space variables.
+        public let variables: [Entry]?
+
+        /// Creates Space configuration.
+        public init(
+            sdk: String,
+            hardware: String? = nil,
+            storage: String? = nil,
+            sleepTime: Int? = nil,
+            secrets: [Entry]? = nil,
+            variables: [Entry]? = nil
+        ) {
+            self.sdk = sdk
+            self.hardware = hardware
+            self.storage = storage
+            self.sleepTime = sleepTime
+            self.secrets = secrets
+            self.variables = variables
+        }
+    }
 }
 
 // MARK: - RawRepresentable
