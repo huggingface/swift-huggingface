@@ -82,8 +82,12 @@ public struct Model: Identifiable, Codable, Sendable {
         /// The relative path of the file.
         public let relativeFilename: String
 
+        /// The file size in bytes, when available.
+        public let size: Int?
+
         private enum CodingKeys: String, CodingKey {
             case relativeFilename = "rfilename"
+            case size
         }
     }
 
