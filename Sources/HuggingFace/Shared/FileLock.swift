@@ -38,10 +38,10 @@ public struct FileLock: Sendable {
     /// when `false`, a single failed attempt throws immediately.
     public let blocking: Bool
 
-    // Reentrant locking uses @TaskLocal ownership tracking:
-    // nested withLock calls increment a counter rather than
-    // re-acquiring the flock, and child tasks inherit the owner ID.
-    @TaskLocal private static var currentOwnerID: UInt64?
+    // Reentrant locking uses @TaskLocal ownership tracking keyed by lock path:
+    // nested withLock calls increment a counter rather than re-acquiring the
+    // flock, and child tasks inherit ownership information.
+    @TaskLocal private static var ownerIDsByPath: [String: UInt64] = [:]
 
     private static let ownerIDGenerator = OwnerIDGenerator()
 
@@ -95,7 +95,7 @@ public struct FileLock: Sendable {
         let context = await FileLockContext.shared(for: key)
 
         // Fast path: reentrant acquisition within the same task hierarchy.
-        if let ownerID = Self.currentOwnerID,
+        if let ownerID = Self.ownerIDsByPath[key],
             await context.tryReentrantAcquire(ownerID: ownerID)
         {
             do {
@@ -114,7 +114,9 @@ public struct FileLock: Sendable {
         try await acquireLock(context: context, ownerID: ownerID, blocking: shouldBlock)
 
         do {
-            let result = try await Self.$currentOwnerID.withValue(ownerID) {
+            var updatedOwners = Self.ownerIDsByPath
+            updatedOwners[key] = ownerID
+            let result = try await Self.$ownerIDsByPath.withValue(updatedOwners) {
                 try await body()
             }
             await releaseLock(context: context, force: false)
