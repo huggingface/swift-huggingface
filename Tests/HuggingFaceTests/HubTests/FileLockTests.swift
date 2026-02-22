@@ -171,6 +171,33 @@ struct FileLockTests {
         #expect(reenteredOuter)
     }
 
+    @Test("Child task cannot reenter parent-held lock")
+    func childTaskDoesNotInheritReentrantOwnership() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("child-task-reentrancy")
+        let lock = FileLock(path: targetPath)
+        let childFinished = Expectation()
+        let childFailedToAcquire = Expectation()
+
+        try await lock.withLock {
+            Task {
+                do {
+                    _ = try await lock.withLock(blocking: false) {
+                        Issue.record("child task should not be treated as reentrant owner")
+                    }
+                } catch is FileLockError {
+                    childFailedToAcquire.fulfill()
+                } catch {
+                    Issue.record("unexpected error: \(error)")
+                }
+                childFinished.fulfill()
+            }
+
+            await childFinished.wait(timeout: 5)
+        }
+
+        #expect(childFailedToAcquire.isFulfilled)
+    }
+
     @Test("Lock released on exception")
     func lockReleasedOnException() async throws {
         struct TestError: Error {}
