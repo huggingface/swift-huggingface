@@ -18,7 +18,7 @@ public typealias FilePermissions = mode_t
 ///
 /// `FileLock` creates a `.lock` companion file next to the protected path
 /// and uses `flock(2)` for mutual exclusion.
-/// Nested ``withLock(blocking:_:)`` calls within the same task hierarchy
+/// Nested ``withLock(blocking:_:)`` calls within the same task
 /// are reentrant and do not deadlock.
 public struct FileLock: Sendable {
     /// The path to the `.lock` file.
@@ -38,11 +38,8 @@ public struct FileLock: Sendable {
     /// when `false`, a single failed attempt throws immediately.
     public let blocking: Bool
 
-    // Reentrant locking uses @TaskLocal ownership tracking keyed by lock path:
-    // nested withLock calls increment a counter rather than re-acquiring the
-    // flock, and child tasks inherit ownership information.
-    @TaskLocal private static var ownerIDsByPath: [String: UInt64] = [:]
-
+    // Reentrant locking is scoped to the current task identity,
+    // not task-local values inherited by child tasks.
     private static let ownerIDGenerator = OwnerIDGenerator()
 
     /// Creates a file lock that protects the resource at `path`.
@@ -76,7 +73,7 @@ public struct FileLock: Sendable {
 
     /// Acquires an exclusive lock, executes `body`, then releases.
     ///
-    /// Nested calls within the same task hierarchy are reentrant
+    /// Nested calls within the same task are reentrant
     /// and do not block.
     ///
     /// - Parameters:
@@ -91,12 +88,17 @@ public struct FileLock: Sendable {
         blocking: Bool? = nil,
         _ body: () async throws -> T
     ) async throws -> T {
-        let key = lockPath.path(percentEncoded: false)
-        let context = await FileLockContext.shared(for: key)
+        let context = await FileLockContext.shared(for: lockPath.path(percentEncoded: false))
 
-        // Fast path: reentrant acquisition within the same task hierarchy.
-        if let ownerID = Self.ownerIDsByPath[key],
-            await context.tryReentrantAcquire(ownerID: ownerID)
+        let currentTaskID: UInt64
+        if let taskID = Self.currentTaskID() {
+            currentTaskID = taskID
+        } else {
+            currentTaskID = await Self.ownerIDGenerator.nextID()
+        }
+
+        // Fast path: reentrant acquisition only within the same task.
+        if await context.tryReentrantAcquire(taskID: currentTaskID)
         {
             do {
                 let result = try await body()
@@ -109,21 +111,26 @@ public struct FileLock: Sendable {
         }
 
         // Slow path: acquire the underlying flock.
-        let ownerID = await Self.ownerIDGenerator.nextID()
         let shouldBlock = blocking ?? self.blocking
-        try await acquireLock(context: context, ownerID: ownerID, blocking: shouldBlock)
+        try await acquireLock(context: context, ownerTaskID: currentTaskID, blocking: shouldBlock)
 
         do {
-            var updatedOwners = Self.ownerIDsByPath
-            updatedOwners[key] = ownerID
-            let result = try await Self.$ownerIDsByPath.withValue(updatedOwners) {
-                try await body()
-            }
+            let result = try await body()
             await releaseLock(context: context, force: false)
             return result
         } catch {
             await releaseLock(context: context, force: false)
             throw error
+        }
+    }
+
+    /// Returns a stable hash for the currently running task.
+    private static func currentTaskID() -> UInt64? {
+        withUnsafeCurrentTask { task in
+            guard let task else { return nil }
+            var hasher = Hasher()
+            task.hash(into: &hasher)
+            return UInt64(bitPattern: Int64(hasher.finalize()))
         }
     }
 
@@ -183,7 +190,7 @@ public struct FileLock: Sendable {
     /// (including `CancellationError` from `Task.sleep`).
     private func acquireLock(
         context: FileLockContext,
-        ownerID: UInt64,
+        ownerTaskID: UInt64,
         blocking: Bool
     ) async throws {
         let fd = try openLockFile()
@@ -194,7 +201,7 @@ public struct FileLock: Sendable {
             while true {
                 switch tryLock(fd) {
                 case .success:
-                    await context.recordAcquisition(fd: fd, owner: ownerID)
+                    await context.recordAcquisition(fd: fd, ownerTaskID: ownerTaskID)
                     return
                 case .notSupported:
                     throw FileLockError.notSupported(lockPath)
@@ -289,7 +296,7 @@ private let contextRegistry = WeakContextRegistry()
 /// so compound check-and-mutate operations are atomic.
 private actor FileLockContext {
     private var fileDescriptor: Int32?
-    private var ownerID: UInt64?
+    private var ownerTaskID: UInt64?
     private var lockCounter: Int = 0
 
     /// Releases the file descriptor on deallocation
@@ -306,24 +313,24 @@ private actor FileLockContext {
         await contextRegistry.getOrCreate(path)
     }
 
-    /// Increments the lock counter if `ownerID` matches the current owner,
+    /// Increments the lock counter if `taskID` matches the current owner,
     /// enabling reentrant acquisition without a second `flock(2)` call.
     ///
     /// - Returns: `true` if the caller is the current owner
     ///   and the counter was incremented.
-    func tryReentrantAcquire(ownerID: UInt64) -> Bool {
-        if self.ownerID == ownerID {
+    func tryReentrantAcquire(taskID: UInt64) -> Bool {
+        if self.ownerTaskID == taskID {
             lockCounter += 1
             return true
         }
         return false
     }
 
-    /// Stores the file descriptor and owner after a successful `flock(2)`,
+    /// Stores the file descriptor and task owner after a successful `flock(2)`,
     /// resetting the counter to `1`.
-    func recordAcquisition(fd: Int32, owner: UInt64) {
+    func recordAcquisition(fd: Int32, ownerTaskID: UInt64) {
         fileDescriptor = fd
-        ownerID = owner
+        self.ownerTaskID = ownerTaskID
         lockCounter = 1
     }
 
@@ -345,7 +352,7 @@ private actor FileLockContext {
         if lockCounter <= 0 || force {
             let fd = fileDescriptor
             fileDescriptor = nil
-            ownerID = nil
+            ownerTaskID = nil
             lockCounter = 0
             return fd
         }
