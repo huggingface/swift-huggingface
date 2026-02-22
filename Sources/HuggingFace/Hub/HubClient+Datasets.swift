@@ -22,7 +22,7 @@ extension HubClient {
     ///   - direction: Direction in which to sort.
     ///   - limit: Limit the number of datasets fetched.
     ///   - full: Whether to fetch most dataset data, such as all tags, the files, etc.
-    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - expand: Fields to include in the response.
     ///   - config: Whether to also fetch the repo config.
     /// - Returns: A paginated response containing dataset information.
     /// - Throws: An error if the request fails or the response cannot be decoded.
@@ -44,7 +44,7 @@ extension HubClient {
         sizeCategories: String? = nil,
         taskCategories: String? = nil,
         taskIds: String? = nil,
-        expand: String? = nil
+        expand: ExpandList? = nil
     ) async throws -> PaginatedResponse<Dataset> {
         var params: [String: Value] = [:]
 
@@ -64,7 +64,7 @@ extension HubClient {
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand) }
+        if let expand { params["expand"] = .string(expand.description) }
         if let config { params["config"] = .bool(config) }
 
         return try await httpClient.fetchPaginated(.get, "/api/datasets", params: params)
@@ -76,7 +76,7 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "datasets/squad").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most dataset data.
-    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - expand: Fields to include in the response.
     ///   - filesMetadata: Whether to include file metadata such as blob information.
     /// - Returns: Information about the dataset.
     /// - Throws: An error if the request fails or the response cannot be decoded.
@@ -84,7 +84,7 @@ extension HubClient {
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil,
-        expand: String? = nil,
+        expand: ExpandList? = nil,
         filesMetadata: Bool? = nil
     ) async throws -> Dataset {
         var url = httpClient.host
@@ -101,7 +101,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand) }
+        if let expand { params["expand"] = .string(expand.description) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)

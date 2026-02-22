@@ -20,7 +20,7 @@ extension HubClient {
     ///   - direction: Direction in which to sort.
     ///   - limit: Limit the number of models fetched.
     ///   - full: Whether to fetch most model data, such as all tags, the files, etc.
-    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - expand: Fields to include in the response.
     ///   - cardData: Whether to include model card metadata.
     ///   - config: Whether to also fetch the repo config.
     ///   - fetchConfig: Whether to force inclusion of the model config.
@@ -42,7 +42,7 @@ extension HubClient {
         modelName: String? = nil,
         trainedDataset: String? = nil,
         pipelineTag: String? = nil,
-        expand: String? = nil,
+        expand: ExpandList? = nil,
         cardData: Bool? = nil,
         fetchConfig: Bool? = nil
     ) async throws -> PaginatedResponse<Model> {
@@ -62,7 +62,7 @@ extension HubClient {
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand) }
+        if let expand { params["expand"] = .string(expand.description) }
         if let cardData { params["cardData"] = .bool(cardData) }
         if let config { params["config"] = .bool(config) }
         if let fetchConfig, fetchConfig { params["config"] = .bool(true) }
@@ -76,7 +76,7 @@ extension HubClient {
     ///   - id: The repository identifier (e.g., "facebook/bart-large-cnn").
     ///   - revision: The git revision (branch, tag, or commit hash). If nil, uses the repo's default branch (usually "main").
     ///   - full: Whether to fetch most model data.
-    ///   - expand: Comma-separated list of fields to include in the response.
+    ///   - expand: Fields to include in the response.
     ///   - securityStatus: Whether to include repository security status.
     ///   - filesMetadata: Whether to include file metadata such as blob information.
     ///   - cardData: Whether to include model card metadata.
@@ -87,7 +87,7 @@ extension HubClient {
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil,
-        expand: String? = nil,
+        expand: ExpandList? = nil,
         securityStatus: Bool? = nil,
         filesMetadata: Bool? = nil,
         cardData: Bool? = nil,
@@ -107,7 +107,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand) }
+        if let expand { params["expand"] = .string(expand.description) }
         if let securityStatus { params["securityStatus"] = .bool(securityStatus) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
         if let cardData { params["cardData"] = .bool(cardData) }
