@@ -737,9 +737,7 @@ public extension HubClient {
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
     ///   - progressHandler: Optional closure called with progress updates.
-    ///     Updates are delivered on the main actor
-    ///     and coalesced to at most every 100ms
-    ///     with a 1% minimum delta between updates.
+    ///     Updates are delivered on the main actor.
     /// - Returns: URL to the local snapshot directory
     func downloadSnapshot(
         of repo: Repo.ID,
@@ -768,11 +766,23 @@ public extension HubClient {
         for filename in filenames {
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
             let fileDestination = destination.appendingPathComponent(filename)
-            let reporter = FileProgressReporter(
-                parentProgress: progress,
-                fileProgress: fileProgress,
-                progressHandler: progressHandler
-            )
+            #if canImport(FoundationNetworking)
+                let samplingTask: Task<Void, Never>? =
+                    if let progressHandler {
+                        Task {
+                            while !Task.isCancelled {
+                                await MainActor.run {
+                                    progressHandler(progress)
+                                }
+                                try? await Task.sleep(for: .milliseconds(100))
+                            }
+                        }
+                    } else {
+                        nil
+                    }
+            #else
+                let samplingTask: Task<Void, Never>? = nil
+            #endif
 
             // downloadFile handles cache lookup and storage automatically
             do {
@@ -785,22 +795,30 @@ public extension HubClient {
                     progress: fileProgress
                 )
             } catch {
-                if let reporter {
-                    await reporter.finish()
+                if let samplingTask {
+                    samplingTask.cancel()
+                    _ = await samplingTask.result
                 }
                 throw error
             }
 
             if Task.isCancelled {
-                if let reporter {
-                    await reporter.finish()
+                if let samplingTask {
+                    samplingTask.cancel()
+                    _ = await samplingTask.result
                 }
                 return destination
             }
 
             fileProgress.completedUnitCount = fileProgress.totalUnitCount
-            if let reporter {
-                await reporter.finish()
+            if let samplingTask {
+                samplingTask.cancel()
+                _ = await samplingTask.result
+            }
+            if let progressHandler {
+                await MainActor.run {
+                    progressHandler(progress)
+                }
             }
         }
 
@@ -812,111 +830,6 @@ public extension HubClient {
         return destination
     }
 }
-
-/// Holds per-file progress observation state.
-private struct FileProgressReporter {
-    let observer: ProgressObservation
-    let continuation: AsyncStream<Double>.Continuation
-    let task: Task<Void, Never>
-    let samplingTask: Task<Void, Never>?
-
-    /// Creates a per-file progress reporter that coalesces frequent updates and
-    /// delivers callbacks on the main actor.
-    /// On platforms that lack KVO for `Progress` (e.g. Linux),
-    /// progress is polled at `minimumInterval`.
-    ///
-    /// - Parameters:
-    ///   - parentProgress: Parent progress aggregating file-level progress.
-    ///   - fileProgress: Progress instance for the current file.
-    ///   - progressHandler: Callback invoked on the main actor.
-    ///   - minimumDelta: Minimum progress fraction delta required to report. Defaults to 0.01.
-    ///   - minimumInterval: Minimum time interval between reports. Defaults to 100 milliseconds.
-    init?(
-        parentProgress: Progress,
-        fileProgress: Progress,
-        progressHandler: (@Sendable (Progress) -> Void)?,
-        minimumDelta: Double = 0.01,
-        minimumInterval: Duration = .milliseconds(100)
-    ) {
-        guard let progressHandler else { return nil }
-
-        // Use a continuous clock to track time intervals
-        let clock = ContinuousClock()
-
-        // Stream progress updates from KVO into a single async consumer
-        let (progressStream, continuation) = AsyncStream<Double>.makeStream()
-
-        // Coalesce updates on a task that delivers on the main actor
-        let task = Task {
-            var lastReportedFraction = -1.0
-            var lastReportedTime = clock.now
-
-            for await current in progressStream {
-                let now = clock.now
-                if current >= 1.0 || lastReportedFraction < 0 {
-                    lastReportedFraction = current
-                    lastReportedTime = now
-                    await MainActor.run {
-                        progressHandler(parentProgress)
-                    }
-                    continue
-                }
-
-                // Enforce both delta and time-based throttling
-                guard current - lastReportedFraction >= minimumDelta else { continue }
-                guard now - lastReportedTime >= minimumInterval else { continue }
-
-                lastReportedFraction = current
-                lastReportedTime = now
-                await MainActor.run {
-                    progressHandler(parentProgress)
-                }
-            }
-        }
-
-        // KVO drives the stream; the task does the throttled delivery
-        let observer: ProgressObservation
-        var samplingTask: Task<Void, Never>?
-        #if canImport(FoundationNetworking)
-            observer = ProgressObservation()
-            samplingTask = Task {
-                while !Task.isCancelled {
-                    continuation.yield(fileProgress.fractionCompleted)
-                    try? await Task.sleep(for: minimumInterval)
-                }
-            }
-        #else
-            observer = fileProgress.observe(\.fractionCompleted, options: [.new]) { _, change in
-                guard change.newValue != nil else { return }
-                continuation.yield(fileProgress.fractionCompleted)
-            }
-        #endif
-
-        self.observer = observer
-        self.continuation = continuation
-        self.task = task
-        self.samplingTask = samplingTask
-    }
-
-    func finish() async {
-        // Ensure observation and coalescing task are torn down cleanly
-        observer.invalidate()
-        continuation.finish()
-        samplingTask?.cancel()
-        _ = await task.result
-        if let samplingTask {
-            _ = await samplingTask.result
-        }
-    }
-}
-
-#if canImport(FoundationNetworking)
-    private struct ProgressObservation {
-        func invalidate() {}
-    }
-#else
-    private typealias ProgressObservation = NSKeyValueObservation
-#endif
 
 // MARK: - Xet Operations
 
