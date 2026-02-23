@@ -4,7 +4,7 @@ import Foundation
 
 extension HubClient {
     /// Expandable space fields for Hub API responses.
-    public enum SpaceExpandField: String, Hashable, CaseIterable, Sendable {
+    public enum SpaceExpandField: Hashable, CaseIterable, RawRepresentable, Sendable {
         case author
         case cardData
         case createdAt
@@ -23,6 +23,118 @@ extension HubClient {
         case trendingScore
         case usedStorage
         case resourceGroup
+
+        /// An unknown custom value.
+        case custom(String)
+
+        public init?(rawValue: String) {
+            switch rawValue {
+            case "author":
+                self = .author
+            case "cardData":
+                self = .cardData
+            case "createdAt":
+                self = .createdAt
+            case "datasets":
+                self = .datasets
+            case "disabled":
+                self = .disabled
+            case "lastModified":
+                self = .lastModified
+            case "likes":
+                self = .likes
+            case "models":
+                self = .models
+            case "private":
+                self = .private
+            case "runtime":
+                self = .runtime
+            case "sdk":
+                self = .sdk
+            case "siblings":
+                self = .siblings
+            case "sha":
+                self = .sha
+            case "subdomain":
+                self = .subdomain
+            case "tags":
+                self = .tags
+            case "trendingScore":
+                self = .trendingScore
+            case "usedStorage":
+                self = .usedStorage
+            case "resourceGroup":
+                self = .resourceGroup
+            default:
+                self = .custom(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .author:
+                "author"
+            case .cardData:
+                "cardData"
+            case .createdAt:
+                "createdAt"
+            case .datasets:
+                "datasets"
+            case .disabled:
+                "disabled"
+            case .lastModified:
+                "lastModified"
+            case .likes:
+                "likes"
+            case .models:
+                "models"
+            case .private:
+                "private"
+            case .runtime:
+                "runtime"
+            case .sdk:
+                "sdk"
+            case .siblings:
+                "siblings"
+            case .sha:
+                "sha"
+            case .subdomain:
+                "subdomain"
+            case .tags:
+                "tags"
+            case .trendingScore:
+                "trendingScore"
+            case .usedStorage:
+                "usedStorage"
+            case .resourceGroup:
+                "resourceGroup"
+            case let .custom(value):
+                value
+            }
+        }
+
+        public static var allCases: [Self] {
+            [
+                .author,
+                .cardData,
+                .createdAt,
+                .datasets,
+                .disabled,
+                .lastModified,
+                .likes,
+                .models,
+                .private,
+                .runtime,
+                .sdk,
+                .siblings,
+                .sha,
+                .subdomain,
+                .tags,
+                .trendingScore,
+                .usedStorage,
+                .resourceGroup,
+            ]
+        }
     }
 
     /// Lists Spaces from the Hub.

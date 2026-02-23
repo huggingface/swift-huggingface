@@ -59,17 +59,31 @@ struct CommaSeparatedListTests {
         #expect(!base.contains("likes"))
     }
 
-    @Test("Supports enum values and all constructor")
-    func testEnumValuesAndAll() {
+    @Test("Supports enum values, all constructor, and custom cases")
+    func testEnumValuesAllAndCustomCases() {
         let all = CommaSeparatedList<HubClient.ModelInference>.all
         #expect(all.contains(.warm))
         #expect(all.rawValue == "warm")
 
         let parsed = CommaSeparatedList<HubClient.ModelInference>(rawValue: "warm,unknown,warm")
-        #expect(parsed == all)
+        #expect(parsed.contains(.warm))
+        #expect(parsed.contains(.custom("unknown")))
+        #expect(parsed.rawValue == "unknown,warm")
 
         let modelFields = CommaSeparatedList<HubClient.ModelExpandField>.all
         #expect(modelFields.contains(.author))
         #expect(modelFields.contains(.safetensors))
+
+        let customModelFields = CommaSeparatedList<HubClient.ModelExpandField>(
+            rawValue: "author,previewScore,safetensors"
+        )
+        #expect(customModelFields.contains(.custom("previewScore")))
+        #expect(customModelFields.rawValue == "author,previewScore,safetensors")
+
+        let customDatasetFields = CommaSeparatedList<HubClient.DatasetExpandField>(rawValue: "author,futureField")
+        #expect(customDatasetFields.contains(.custom("futureField")))
+
+        let customSpaceFields = CommaSeparatedList<HubClient.SpaceExpandField>(rawValue: "runtime,nextRuntime")
+        #expect(customSpaceFields.contains(.custom("nextRuntime")))
     }
 }

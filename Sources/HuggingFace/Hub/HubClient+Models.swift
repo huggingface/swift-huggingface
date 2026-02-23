@@ -4,12 +4,37 @@ import Foundation
 
 extension HubClient {
     /// Inference availability filter values for model listing.
-    public enum ModelInference: String, Hashable, CaseIterable, Sendable {
+    public enum ModelInference: Hashable, CaseIterable, RawRepresentable, Sendable {
         case warm
+
+        /// An unknown custom value.
+        case custom(String)
+
+        public init?(rawValue: String) {
+            switch rawValue {
+            case "warm":
+                self = .warm
+            default:
+                self = .custom(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .warm:
+                "warm"
+            case let .custom(value):
+                value
+            }
+        }
+
+        public static var allCases: [Self] {
+            [.warm]
+        }
     }
 
     /// Expandable model fields for Hub API responses.
-    public enum ModelExpandField: String, Hashable, CaseIterable, Sendable {
+    public enum ModelExpandField: Hashable, CaseIterable, RawRepresentable, Sendable {
         case author
         case cardData
         case config
@@ -23,11 +48,11 @@ extension HubClient {
         case inference
         case inferenceProviderMapping
         case lastModified
-        case libraryName = "library_name"
+        case libraryName
         case likes
-        case maskToken = "mask_token"
-        case modelIndex = "model-index"
-        case pipelineTag = "pipeline_tag"
+        case maskToken
+        case modelIndex
+        case pipelineTag
         case `private`
         case safetensors
         case sha
@@ -41,6 +66,181 @@ extension HubClient {
         case baseModels
         case childrenModelCount
         case usedStorage
+        case custom(String)
+
+        public init?(rawValue: String) {
+            switch rawValue {
+            case "author":
+                self = .author
+            case "cardData":
+                self = .cardData
+            case "config":
+                self = .config
+            case "createdAt":
+                self = .createdAt
+            case "disabled":
+                self = .disabled
+            case "downloads":
+                self = .downloads
+            case "downloadsAllTime":
+                self = .downloadsAllTime
+            case "evalResults":
+                self = .evalResults
+            case "gated":
+                self = .gated
+            case "gguf":
+                self = .gguf
+            case "inference":
+                self = .inference
+            case "inferenceProviderMapping":
+                self = .inferenceProviderMapping
+            case "lastModified":
+                self = .lastModified
+            case "library_name":
+                self = .libraryName
+            case "likes":
+                self = .likes
+            case "mask_token":
+                self = .maskToken
+            case "model-index":
+                self = .modelIndex
+            case "pipeline_tag":
+                self = .pipelineTag
+            case "private":
+                self = .private
+            case "safetensors":
+                self = .safetensors
+            case "sha":
+                self = .sha
+            case "siblings":
+                self = .siblings
+            case "spaces":
+                self = .spaces
+            case "tags":
+                self = .tags
+            case "transformersInfo":
+                self = .transformersInfo
+            case "trendingScore":
+                self = .trendingScore
+            case "widgetData":
+                self = .widgetData
+            case "resourceGroup":
+                self = .resourceGroup
+            case "baseModels":
+                self = .baseModels
+            case "childrenModelCount":
+                self = .childrenModelCount
+            case "usedStorage":
+                self = .usedStorage
+            default:
+                self = .custom(rawValue)
+            }
+        }
+
+        public var rawValue: String {
+            switch self {
+            case .author:
+                "author"
+            case .cardData:
+                "cardData"
+            case .config:
+                "config"
+            case .createdAt:
+                "createdAt"
+            case .disabled:
+                "disabled"
+            case .downloads:
+                "downloads"
+            case .downloadsAllTime:
+                "downloadsAllTime"
+            case .evalResults:
+                "evalResults"
+            case .gated:
+                "gated"
+            case .gguf:
+                "gguf"
+            case .inference:
+                "inference"
+            case .inferenceProviderMapping:
+                "inferenceProviderMapping"
+            case .lastModified:
+                "lastModified"
+            case .libraryName:
+                "library_name"
+            case .likes:
+                "likes"
+            case .maskToken:
+                "mask_token"
+            case .modelIndex:
+                "model-index"
+            case .pipelineTag:
+                "pipeline_tag"
+            case .private:
+                "private"
+            case .safetensors:
+                "safetensors"
+            case .sha:
+                "sha"
+            case .siblings:
+                "siblings"
+            case .spaces:
+                "spaces"
+            case .tags:
+                "tags"
+            case .transformersInfo:
+                "transformersInfo"
+            case .trendingScore:
+                "trendingScore"
+            case .widgetData:
+                "widgetData"
+            case .resourceGroup:
+                "resourceGroup"
+            case .baseModels:
+                "baseModels"
+            case .childrenModelCount:
+                "childrenModelCount"
+            case .usedStorage:
+                "usedStorage"
+            case let .custom(value):
+                value
+            }
+        }
+
+        public static var allCases: [Self] {
+            [
+                .author,
+                .cardData,
+                .config,
+                .createdAt,
+                .disabled,
+                .downloads,
+                .downloadsAllTime,
+                .evalResults,
+                .gated,
+                .gguf,
+                .inference,
+                .inferenceProviderMapping,
+                .lastModified,
+                .libraryName,
+                .likes,
+                .maskToken,
+                .modelIndex,
+                .pipelineTag,
+                .private,
+                .safetensors,
+                .sha,
+                .siblings,
+                .spaces,
+                .tags,
+                .transformersInfo,
+                .trendingScore,
+                .widgetData,
+                .resourceGroup,
+                .baseModels,
+                .childrenModelCount,
+                .usedStorage,
+            ]
+        }
     }
 
     /// Lists models from the Hub.
