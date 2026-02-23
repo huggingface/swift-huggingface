@@ -479,9 +479,6 @@ public extension HubClient {
             resumeOffset = fileSizeIfExists(at: path)
             if resumeOffset > 0 {
                 request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
-                if let progress {
-                    progress.completedUnitCount = resumeOffset
-                }
             }
         } else {
             resumeOffset = 0
@@ -521,7 +518,11 @@ public extension HubClient {
             resumeOffset > 0,
             let incompleteBlobPath
         {
+            try? FileManager.default.removeItem(at: tempURL)
             try? FileManager.default.removeItem(at: incompleteBlobPath)
+            if let progress {
+                progress.completedUnitCount = 0
+            }
             return try await downloadFile(
                 at: repoPath,
                 from: repo,
@@ -535,7 +536,10 @@ public extension HubClient {
                 localFilesOnly: localFilesOnly
             )
         }
-        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+        if !(200 ..< 300).contains(httpResponse.statusCode) {
+            let errorData = try? Data(contentsOf: tempURL)
+            try? FileManager.default.removeItem(at: tempURL)
+            _ = try httpClient.validateResponse(response, data: errorData)
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
         }
         let shouldMergeResume =
@@ -570,8 +574,11 @@ public extension HubClient {
                             FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
                         }
                         try appendFileContents(from: tempURL, to: incompleteBlobPath)
-                        try? FileManager.default.removeItem(at: blobPath)
-                        try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
+                        if FileManager.default.fileExists(atPath: blobPath.path) {
+                            _ = try FileManager.default.replaceItemAt(blobPath, withItemAt: incompleteBlobPath)
+                        } else {
+                            try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
+                        }
                     }
                     try? FileManager.default.removeItem(at: tempURL)
                     try? await cache.storeFile(
@@ -765,15 +772,17 @@ public extension HubClient {
 
         func urlSession(
             _: URLSession,
-            downloadTask _: URLSessionDownloadTask,
+            downloadTask: URLSessionDownloadTask,
             didWriteData _: Int64,
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
+            let responseStatus = (downloadTask.response as? HTTPURLResponse)?.statusCode
+            let appliedOffset = responseStatus == 206 ? resumeOffset : 0
             if totalBytesExpectedToWrite > 0 {
-                progress.totalUnitCount = totalBytesExpectedToWrite + resumeOffset
+                progress.totalUnitCount = totalBytesExpectedToWrite + appliedOffset
             }
-            progress.completedUnitCount = totalBytesWritten + resumeOffset
+            progress.completedUnitCount = totalBytesWritten + appliedOffset
         }
 
         func urlSession(
@@ -1306,7 +1315,7 @@ private extension HubClient {
             guard values.isRegularFile == true || values.isSymbolicLink == true else {
                 continue
             }
-            let relativePath = fileURL.path.replacingOccurrences(of: snapshotPath.path + "/", with: "")
+            let relativePath = relativePath(from: fileURL, baseDirectory: snapshotPath)
             let target = destination.appendingPathComponent(relativePath)
             try fileManager.createDirectory(
                 at: target.deletingLastPathComponent(),
@@ -1341,8 +1350,11 @@ private extension HubClient {
             isCommitHash(revision)
             ? revision
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+        guard let safeResolvedCommitHash = try? validateCachePathComponent(resolvedCommitHash) else {
+            return nil
+        }
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
-            .appendingPathComponent(resolvedCommitHash)
+            .appendingPathComponent(safeResolvedCommitHash)
         guard FileManager.default.fileExists(atPath: snapshotPath.path) else {
             return nil
         }
@@ -1363,7 +1375,7 @@ private extension HubClient {
             guard values?.isRegularFile == true || values?.isSymbolicLink == true else {
                 continue
             }
-            let relativePath = fileURL.path.replacingOccurrences(of: snapshotPath.path + "/", with: "")
+            let relativePath = relativePath(from: fileURL, baseDirectory: snapshotPath)
             let hasMatch = globs.contains { glob in
                 fnmatch(glob, relativePath, 0) == 0
             }
@@ -1385,17 +1397,30 @@ private extension HubClient {
 
     /// Validates a server-provided value before using it as a cache path component.
     func validateCachePathComponent(_ value: String) throws -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
-            !value.isEmpty,
-            value != ".",
-            value != "..",
-            !value.contains("/"),
-            !value.contains("\\"),
-            !value.contains("\0")
+            !trimmed.isEmpty,
+            trimmed != ".",
+            trimmed != "..",
+            !trimmed.contains(".."),
+            !trimmed.contains("/"),
+            !trimmed.contains("\\"),
+            !trimmed.contains("\0")
         else {
             throw HubCacheError.invalidPathComponent(value)
         }
-        return value
+        return trimmed
+    }
+
+    /// Returns a path relative to the provided base directory.
+    func relativePath(from url: URL, baseDirectory: URL) -> String {
+        let filePath = url.path
+        let basePath = baseDirectory.path
+        let basePathWithSlash = basePath.hasSuffix("/") ? basePath : basePath + "/"
+        if filePath.hasPrefix(basePathWithSlash) {
+            return String(filePath.dropFirst(basePathWithSlash.count))
+        }
+        return url.lastPathComponent
     }
 
     /// Appends source file bytes to destination file.
