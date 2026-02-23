@@ -130,6 +130,19 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("blobs")
     }
 
+    /// Returns the metadata directory for a repository.
+    ///
+    /// Metadata files are stored outside snapshot directories so snapshots only
+    /// contain repository files.
+    public func metadataDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
+        let repoName = repo.description.replacingOccurrences(of: "/", with: "--")
+        let dirName = "\(kind.pluralized)--\(repoName)"
+        return
+            cacheDirectory
+            .appendingPathComponent(".metadata")
+            .appendingPathComponent(dirName)
+    }
+
     /// Returns the refs directory for a repository.
     public func refsDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("refs")
