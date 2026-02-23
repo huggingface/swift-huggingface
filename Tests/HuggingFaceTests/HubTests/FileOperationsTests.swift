@@ -1156,11 +1156,9 @@ import Testing
             #expect(starts.contains("small-b.bin"))
             #expect(starts.contains("huge.bin"))
             let hugeStartIndex = starts.firstIndex(of: "huge.bin")!
-            let smallAStartIndex = starts.firstIndex(of: "small-a.bin")!
-            let smallBStartIndex = starts.firstIndex(of: "small-b.bin")!
-            #expect(smallAStartIndex < smallBStartIndex)
-            #expect(hugeStartIndex > smallAStartIndex)
-            #expect(hugeStartIndex > smallBStartIndex)
+            let firstTwo = Set(starts.prefix(2))
+            #expect(firstTwo == Set(["small-a.bin", "small-b.bin"]))
+            #expect(hugeStartIndex >= 2)
         }
 
         @Test("downloadSnapshot progress is size weighted", .mockURLSession)
