@@ -409,7 +409,8 @@ public extension HubClient {
         endpoint: FileDownloadEndpoint = .resolve,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         progress: Progress? = nil,
-        transport: FileDownloadTransport = .automatic
+        transport: FileDownloadTransport = .automatic,
+        localFilesOnly: Bool = false
     ) async throws -> URL {
         // Check cache first
         if let cache = cache,
@@ -424,6 +425,9 @@ public extension HubClient {
                 progress.completedUnitCount = progress.totalUnitCount
             }
             return try copyFileToLocalDirectoryIfNeeded(cachedPath, repoPath: repoPath, destination: destination)
+        }
+        if localFilesOnly {
+            throw HubCacheError.cachedPathResolutionFailed(repoPath)
         }
         if endpoint == .resolve, transport.shouldAttemptXet, let xetDestination = destination {
             do {
@@ -465,15 +469,71 @@ public extension HubClient {
         // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
-        #if canImport(FoundationNetworking)
-            let (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
-        #else
-            let (tempURL, response) = try await session.download(
-                for: request,
-                delegate: progress.map { DownloadProgressDelegate(progress: $0) }
+        let resumeOffset: Int64
+        let incompleteBlobPath: URL?
+        if let cache, let etag = preflightMetadata?.normalizedEtag {
+            let path = cache.blobsDirectory(repo: repo, kind: kind)
+                .appendingPathComponent("\(etag).incomplete")
+            incompleteBlobPath = path
+            resumeOffset = fileSizeIfExists(at: path)
+            if resumeOffset > 0 {
+                request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+                if let progress {
+                    progress.completedUnitCount = resumeOffset
+                }
+            }
+        } else {
+            resumeOffset = 0
+            incompleteBlobPath = nil
+        }
+        let tempURL: URL
+        let response: URLResponse
+        do {
+            #if canImport(FoundationNetworking)
+                (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
+            #else
+                (tempURL, response) = try await session.download(
+                    for: request,
+                    delegate: progress.map { DownloadProgressDelegate(progress: $0, resumeOffset: resumeOffset) }
+                )
+            #endif
+        } catch {
+            if let cache = cache,
+                let fallback = cache.cachedFilePath(
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    filename: repoPath
+                )
+            {
+                return try copyFileToLocalDirectoryIfNeeded(fallback, repoPath: repoPath, destination: destination)
+            }
+            throw error
+        }
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
+        }
+        if httpResponse.statusCode == 416,
+            resumeOffset > 0,
+            let incompleteBlobPath
+        {
+            try? FileManager.default.removeItem(at: incompleteBlobPath)
+            return try await downloadFile(
+                at: repoPath,
+                from: repo,
+                to: destination,
+                kind: kind,
+                revision: revision,
+                endpoint: endpoint,
+                cachePolicy: cachePolicy,
+                progress: progress,
+                transport: transport,
+                localFilesOnly: localFilesOnly
             )
-        #endif
-        _ = try httpClient.validateResponse(response, data: nil)
+        }
+        guard (200 ..< 300).contains(httpResponse.statusCode) else {
+            throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
+        }
 
         // Store in cache before moving to destination
         // This fallback parses metadata from the existing GET response object (no extra request).
@@ -482,15 +542,52 @@ public extension HubClient {
             let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
-            try? await cache.storeFile(
-                at: tempURL,
-                repo: repo,
-                kind: kind,
-                revision: commitHash,
-                filename: repoPath,
-                etag: etag,
-                ref: revision != commitHash ? revision : nil
-            )
+            if resumeOffset > 0, let incompleteBlobPath {
+                do {
+                    let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
+                    try FileManager.default.createDirectory(
+                        at: blobsDirectory,
+                        withIntermediateDirectories: true
+                    )
+                    if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
+                        FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
+                    }
+                    try appendFileContents(from: tempURL, to: incompleteBlobPath)
+                    let blobPath = blobsDirectory.appendingPathComponent(etag)
+                    try? FileManager.default.removeItem(at: blobPath)
+                    try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
+                    try? FileManager.default.removeItem(at: tempURL)
+                    try? await cache.storeFile(
+                        at: blobPath,
+                        repo: repo,
+                        kind: kind,
+                        revision: commitHash,
+                        filename: repoPath,
+                        etag: etag,
+                        ref: revision != commitHash ? revision : nil
+                    )
+                } catch {
+                    try? await cache.storeFile(
+                        at: tempURL,
+                        repo: repo,
+                        kind: kind,
+                        revision: commitHash,
+                        filename: repoPath,
+                        etag: etag,
+                        ref: revision != commitHash ? revision : nil
+                    )
+                }
+            } else {
+                try? await cache.storeFile(
+                    at: tempURL,
+                    repo: repo,
+                    kind: kind,
+                    revision: commitHash,
+                    filename: repoPath,
+                    etag: etag,
+                    ref: revision != commitHash ? revision : nil
+                )
+            }
             if let cachedPath = cache.cachedFilePath(
                 repo: repo,
                 kind: kind,
@@ -542,7 +639,8 @@ public extension HubClient {
         endpoint: FileDownloadEndpoint = .resolve,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
         progress: Progress? = nil,
-        transport: FileDownloadTransport = .automatic
+        transport: FileDownloadTransport = .automatic,
+        localFilesOnly: Bool = false
     ) async throws -> URL {
         if transport == .automatic,
             let fileSizeBytes = entry.size,
@@ -557,7 +655,8 @@ public extension HubClient {
                 endpoint: endpoint,
                 cachePolicy: cachePolicy,
                 progress: progress,
-                transport: .lfs
+                transport: .lfs,
+                localFilesOnly: localFilesOnly
             )
         }
 
@@ -570,7 +669,8 @@ public extension HubClient {
             endpoint: endpoint,
             cachePolicy: cachePolicy,
             progress: progress,
-            transport: transport
+            transport: transport,
+            localFilesOnly: localFilesOnly
         )
     }
 
@@ -622,7 +722,8 @@ public extension HubClient {
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy,
-        transport: FileDownloadTransport = .automatic
+        transport: FileDownloadTransport = .automatic,
+        localFilesOnly: Bool = false
     ) async throws -> URL {
         return try await downloadFile(
             at: repoPath,
@@ -633,7 +734,8 @@ public extension HubClient {
             endpoint: endpoint,
             cachePolicy: cachePolicy,
             progress: nil,
-            transport: transport
+            transport: transport,
+            localFilesOnly: localFilesOnly
         )
     }
 }
@@ -643,9 +745,11 @@ public extension HubClient {
 #if !canImport(FoundationNetworking)
     private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
         private let progress: Progress
+        private let resumeOffset: Int64
 
-        init(progress: Progress) {
+        init(progress: Progress, resumeOffset: Int64 = 0) {
             self.progress = progress
+            self.resumeOffset = resumeOffset
         }
 
         func urlSession(
@@ -655,8 +759,10 @@ public extension HubClient {
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
-            progress.totalUnitCount = totalBytesExpectedToWrite
-            progress.completedUnitCount = totalBytesWritten
+            if totalBytesExpectedToWrite > 0 {
+                progress.totalUnitCount = totalBytesExpectedToWrite + resumeOffset
+            }
+            progress.completedUnitCount = totalBytesWritten + resumeOffset
         }
 
         func urlSession(
@@ -849,11 +955,14 @@ public extension HubClient {
         to destination: URL? = nil,
         revision: String = "main",
         matching globs: [String] = [],
+        returnCachePath: Bool = false,
+        localFilesOnly: Bool = false,
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         guard cache != nil || destination != nil else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
+        let effectiveDestination: URL? = returnCachePath ? nil : destination
 
         if let fastPath = cachedSnapshotPath(
             repo: repo,
@@ -868,10 +977,49 @@ public extension HubClient {
                     progressHandler(progress)
                 }
             }
-            return try copySnapshotToLocalDirectoryIfNeeded(from: fastPath, destination: destination)
+            return try copySnapshotToLocalDirectoryIfNeeded(
+                from: fastPath,
+                destination: effectiveDestination,
+                returnCachePath: returnCachePath
+            )
         }
 
-        let allEntries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+        if localFilesOnly {
+            guard
+                let cachedPath = cachedSnapshotPathForLocalFilesOnly(
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    matching: globs
+                )
+            else {
+                throw HubCacheError.cachedPathResolutionFailed(repo.description)
+            }
+            return try copySnapshotToLocalDirectoryIfNeeded(
+                from: cachedPath,
+                destination: effectiveDestination,
+                returnCachePath: returnCachePath
+            )
+        }
+
+        let allEntries: [Git.TreeEntry]
+        do {
+            allEntries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+        } catch {
+            if let cachedPath = cachedSnapshotPathForLocalFilesOnly(
+                repo: repo,
+                kind: kind,
+                revision: revision,
+                matching: globs
+            ) {
+                return try copySnapshotToLocalDirectoryIfNeeded(
+                    from: cachedPath,
+                    destination: effectiveDestination,
+                    returnCachePath: returnCachePath
+                )
+            }
+            throw error
+        }
         let entries =
             allEntries
             .filter { entry in
@@ -901,7 +1049,7 @@ public extension HubClient {
         for entry in entries {
             try validateSnapshotEntryPath(entry.path)
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
-            let fileDestination = destination?.appendingPathComponent(entry.path)
+            let fileDestination = effectiveDestination?.appendingPathComponent(entry.path)
             #if canImport(FoundationNetworking)
                 let samplingTask: Task<Void, Never>? =
                     if let progressHandler {
@@ -929,7 +1077,8 @@ public extension HubClient {
                         to: fileDestination,
                         kind: kind,
                         revision: revision,
-                        progress: fileProgress
+                        progress: fileProgress,
+                        localFilesOnly: localFilesOnly
                     )
                 } onCancel: {
                     samplingTask?.cancel()
@@ -961,9 +1110,6 @@ public extension HubClient {
             }
         }
 
-        if let destination {
-            return destination
-        }
         guard let cache else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
@@ -973,7 +1119,11 @@ public extension HubClient {
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(resolvedCommitHash)
-        return try copySnapshotToLocalDirectoryIfNeeded(from: snapshotPath, destination: destination)
+        return try copySnapshotToLocalDirectoryIfNeeded(
+            from: snapshotPath,
+            destination: effectiveDestination,
+            returnCachePath: returnCachePath
+        )
     }
 }
 
@@ -1117,8 +1267,12 @@ private extension HubClient {
     /// Copies a snapshot to a local directory if needed.
     func copySnapshotToLocalDirectoryIfNeeded(
         from snapshotPath: URL,
-        destination: URL?
+        destination: URL?,
+        returnCachePath: Bool = false
     ) throws -> URL {
+        if returnCachePath {
+            return snapshotPath
+        }
         guard let destination else {
             return snapshotPath
         }
@@ -1149,6 +1303,89 @@ private extension HubClient {
             try fileManager.copyItem(at: resolvedSource, to: target)
         }
         return destination
+    }
+
+    /// Returns an existing snapshot path from cache for local-only operations.
+    func cachedSnapshotPathForLocalFilesOnly(
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        matching globs: [String]
+    ) -> URL? {
+        if let completeSnapshot = cachedSnapshotPath(
+            repo: repo,
+            kind: kind,
+            revision: revision,
+            matching: globs
+        ) {
+            return completeSnapshot
+        }
+        guard let cache else {
+            return nil
+        }
+        let resolvedCommitHash =
+            isCommitHash(revision)
+            ? revision
+            : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(resolvedCommitHash)
+        guard FileManager.default.fileExists(atPath: snapshotPath.path) else {
+            return nil
+        }
+        guard !globs.isEmpty else {
+            return snapshotPath
+        }
+        guard
+            let enumerator = FileManager.default.enumerator(
+                at: snapshotPath,
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return nil
+        }
+        while let fileURL = enumerator.nextObject() as? URL {
+            let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values?.isRegularFile == true || values?.isSymbolicLink == true else {
+                continue
+            }
+            let relativePath = fileURL.path.replacingOccurrences(of: snapshotPath.path + "/", with: "")
+            let hasMatch = globs.contains { glob in
+                fnmatch(glob, relativePath, 0) == 0
+            }
+            if hasMatch {
+                return snapshotPath
+            }
+        }
+        return nil
+    }
+
+    /// Returns file size if the file exists, otherwise `0`.
+    func fileSizeIfExists(at url: URL) -> Int64 {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return 0
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    /// Appends source file bytes to destination file.
+    func appendFileContents(from source: URL, to destination: URL) throws {
+        let sourceHandle = try FileHandle(forReadingFrom: source)
+        let destinationHandle = try FileHandle(forWritingTo: destination)
+        defer {
+            try? sourceHandle.close()
+            try? destinationHandle.close()
+        }
+        _ = try destinationHandle.seekToEnd()
+        let chunkSize = 64 * 1024
+        while true {
+            let chunk = try sourceHandle.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+            try destinationHandle.write(contentsOf: chunk)
+        }
     }
 
     /// Downloads file data using Xet's content-addressable storage system.
