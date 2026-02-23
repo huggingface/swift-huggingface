@@ -553,6 +553,8 @@ public enum HubCacheError: Error, LocalizedError {
     case invalidPathComponent(String)
     /// A file was cached successfully, but its snapshot path could not be resolved.
     case cachedPathResolutionFailed(String)
+    /// Snapshot download needs either a cache directory or an explicit destination.
+    case snapshotRequiresCacheOrDestination(String)
 
     public var errorDescription: String? {
         switch self {
@@ -561,6 +563,9 @@ public enum HubCacheError: Error, LocalizedError {
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
         case .cachedPathResolutionFailed(let path):
             return "Unable to resolve cached file path for '\(path)'"
+        case .snapshotRequiresCacheOrDestination(let repo):
+            return
+                "Downloading snapshot for '\(repo)' requires either a configured cache or a destination"
         }
     }
 }

@@ -71,6 +71,19 @@ import Testing
             return (client, cacheDirectory)
         }
 
+        func createMockClientWithoutCache(bearerToken: String? = "test_token") -> HubClient {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MockURLProtocol.self]
+            let session = URLSession(configuration: configuration)
+            return HubClient(
+                session: session,
+                host: URL(string: "https://huggingface.co")!,
+                userAgent: "TestClient/1.0",
+                bearerToken: bearerToken,
+                cache: nil
+            )
+        }
+
         // MARK: - List Files Tests
 
         @Test("List files in repository", .mockURLSession)
@@ -432,6 +445,29 @@ import Testing
                     of: "user/model",
                     kind: .model,
                     revision: "main"
+                )
+            }
+        }
+
+        @Test("downloadSnapshot requires cache or destination", .mockURLSession)
+        func testDownloadSnapshotRequiresCacheOrDestination() async throws {
+            await MockURLProtocol.setHandler { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 500,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data("network should not be reached".utf8))
+            }
+
+            let client = createMockClientWithoutCache()
+            await #expect(throws: HubCacheError.self) {
+                _ = try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    revision: "main",
+                    matching: ["*.json"]
                 )
             }
         }

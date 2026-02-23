@@ -851,6 +851,10 @@ public extension HubClient {
         matching globs: [String] = [],
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
+        guard cache != nil || destination != nil else {
+            throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
+        }
+
         if let fastPath = cachedSnapshotPath(
             repo: repo,
             kind: kind,
@@ -957,17 +961,18 @@ public extension HubClient {
             }
         }
 
-        let resolvedCommitHash =
-            isCommitHash(revision)
-            ? revision
-            : cache?.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
-        let snapshotPath =
-            (cache?.snapshotsDirectory(repo: repo, kind: kind) ?? destination ?? URL(fileURLWithPath: "."))
-            .appendingPathComponent(resolvedCommitHash)
-
         if let destination {
             return destination
         }
+        guard let cache else {
+            throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
+        }
+        let resolvedCommitHash =
+            isCommitHash(revision)
+            ? revision
+            : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(resolvedCommitHash)
         return try copySnapshotToLocalDirectoryIfNeeded(from: snapshotPath, destination: destination)
     }
 }
