@@ -1546,8 +1546,16 @@ private extension HubClient {
 
     /// Returns a path relative to the provided base directory.
     func relativePath(from url: URL, baseDirectory: URL) -> String {
-        let filePath = url.path
-        let basePath = baseDirectory.path
+        func normalizedPath(_ path: String) -> String {
+            // macOS temp directories can be represented as either /var/... or /private/var/...
+            if path.hasPrefix("/private/var/") {
+                return String(path.dropFirst("/private".count))
+            }
+            return path
+        }
+
+        let filePath = normalizedPath(url.path)
+        let basePath = normalizedPath(baseDirectory.path)
         let basePathWithSlash = basePath.hasSuffix("/") ? basePath : basePath + "/"
         if filePath.hasPrefix(basePathWithSlash) {
             return String(filePath.dropFirst(basePathWithSlash.count))
