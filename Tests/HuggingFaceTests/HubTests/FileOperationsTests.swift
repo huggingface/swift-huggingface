@@ -68,6 +68,91 @@ import Testing
         }
     }
 
+    private final class SnapshotRequestRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _startedPaths: [String] = []
+        private var _activeRequests = 0
+        private var _maxConcurrentRequests = 0
+        private var _smallCompleted = false
+        private var _maxProgressBeforeSmallCompleted = 0.0
+
+        func begin(path: String) {
+            lock.lock()
+            _startedPaths.append(path)
+            _activeRequests += 1
+            _maxConcurrentRequests = max(_maxConcurrentRequests, _activeRequests)
+            lock.unlock()
+        }
+
+        func end(path: String) {
+            lock.lock()
+            _activeRequests = max(0, _activeRequests - 1)
+            if path == "small.bin" {
+                _smallCompleted = true
+            }
+            lock.unlock()
+        }
+
+        func recordProgress(_ value: Double) {
+            lock.lock()
+            if !_smallCompleted {
+                _maxProgressBeforeSmallCompleted = max(_maxProgressBeforeSmallCompleted, value)
+            }
+            lock.unlock()
+        }
+
+        var startedPaths: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _startedPaths
+        }
+
+        var maxConcurrentRequests: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _maxConcurrentRequests
+        }
+
+        var maxProgressBeforeSmallCompleted: Double {
+            lock.lock()
+            defer { lock.unlock() }
+            return _maxProgressBeforeSmallCompleted
+        }
+    }
+
+    private final class ProgressUnitRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _totals: [Int64] = []
+        private var _lastCompleted: Int64 = 0
+        private var _lastTotal: Int64 = 0
+
+        func record(progress: Progress) {
+            lock.lock()
+            _totals.append(progress.totalUnitCount)
+            _lastCompleted = progress.completedUnitCount
+            _lastTotal = progress.totalUnitCount
+            lock.unlock()
+        }
+
+        var totals: [Int64] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _totals
+        }
+
+        var lastCompleted: Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return _lastCompleted
+        }
+
+        var lastTotal: Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return _lastTotal
+        }
+    }
+
     @Suite("File Operations Tests", .serialized)
     struct FileOperationsTests {
         func createMockClient(bearerToken: String? = "test_token") -> HubClient {
@@ -1003,6 +1088,147 @@ import Testing
                 #expect(values.last ?? 0.0 >= 1.0 - 0.0001)
             }
         #endif
+
+        @Test("downloadSnapshot parallelizes only LFS entries", .mockURLSession)
+        func testDownloadSnapshotParallelizesOnlyLFSEntries() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let listResponse = """
+                [
+                    {"path": "small-a.bin", "type": "file", "oid": "a", "size": 8},
+                    {"path": "small-b.bin", "type": "file", "oid": "b", "size": 4},
+                    {"path": "huge.bin", "type": "file", "oid": "c", "size": 20000000}
+                ]
+                """
+            let recorder = SnapshotRequestRecorder()
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+
+                guard path.hasPrefix("/user/model/resolve/main/") else {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 404,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [:]
+                    )!
+                    return (response, Data())
+                }
+
+                let filename = String(path.dropFirst("/user/model/resolve/main/".count))
+                if request.httpMethod == "HEAD" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["ETag": "\"etag-\(filename)\"", "X-Repo-Commit": commit]
+                    )!
+                    return (response, Data())
+                }
+
+                recorder.begin(path: filename)
+                defer { recorder.end(path: filename) }
+                if filename != "huge.bin" {
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/octet-stream"]
+                )!
+                return (response, Data(repeating: 0x1, count: 16))
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            _ = try await client.downloadSnapshot(of: "user/model", kind: .model, revision: "main")
+
+            let starts = recorder.startedPaths
+            #expect(starts.contains("small-a.bin"))
+            #expect(starts.contains("small-b.bin"))
+            #expect(starts.contains("huge.bin"))
+            let hugeStartIndex = starts.firstIndex(of: "huge.bin")!
+            let firstTwo = Set(starts.prefix(2))
+            #expect(firstTwo == Set(["small-a.bin", "small-b.bin"]))
+            #expect(hugeStartIndex >= 2)
+        }
+
+        @Test("downloadSnapshot progress is size weighted", .mockURLSession)
+        func testDownloadSnapshotProgressIsSizeWeighted() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let listResponse = """
+                [
+                    {"path": "large.bin", "type": "file", "oid": "a", "size": 900},
+                    {"path": "small.bin", "type": "file", "oid": "b", "size": 100}
+                ]
+                """
+            let progressRecorder = ProgressUnitRecorder()
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+
+                guard path.hasPrefix("/user/model/resolve/main/") else {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 404,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [:]
+                    )!
+                    return (response, Data())
+                }
+
+                let filename = String(path.dropFirst("/user/model/resolve/main/".count))
+                if request.httpMethod == "HEAD" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["ETag": "\"etag-\(filename)\"", "X-Repo-Commit": commit]
+                    )!
+                    return (response, Data())
+                }
+
+                let bodySize = filename == "small.bin" ? 100 : 900
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/octet-stream"]
+                )!
+                return (response, Data(repeating: 0x3, count: bodySize))
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                progressHandler: { progress in
+                    progressRecorder.record(progress: progress)
+                }
+            )
+
+            #expect(progressRecorder.totals.contains(1000))
+            #expect(progressRecorder.lastTotal == 1000)
+            #expect(progressRecorder.lastCompleted == 1000)
+        }
 
         @Test("downloadSnapshot copies to destination when provided", .mockURLSession)
         func testDownloadSnapshotCopiesToDestinationWhenProvided() async throws {
