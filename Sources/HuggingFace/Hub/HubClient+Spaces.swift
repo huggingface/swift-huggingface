@@ -59,14 +59,14 @@ extension HubClient {
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
-        if let datasets { params["datasets"] = .string(datasets.csvValue) }
-        if let models { params["models"] = .string(models.csvValue) }
+        if let datasets { params["datasets"] = .string(datasets.rawValue) }
+        if let models { params["models"] = .string(models.rawValue) }
         if let linked { params["linked"] = .bool(linked) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
 
         return try await httpClient.fetchPaginated(.get, "/api/spaces", params: params)
     }
@@ -102,7 +102,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)

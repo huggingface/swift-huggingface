@@ -18,6 +18,15 @@ public struct CommaSeparatedList<Value: Hashable & Sendable>: Hashable, Sendable
     public init(_ values: [Value]) {
         self.storage = Set(values)
     }
+
+    private static func parse<S: StringProtocol>(_ rawValue: S) -> [String] {
+        rawValue
+            .split(separator: ",")
+            .compactMap { token in
+                let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+    }
 }
 
 // MARK: - SetAlgebra
@@ -65,11 +74,6 @@ extension CommaSeparatedList: SetAlgebra {
     public mutating func formSymmetricDifference(_ other: CommaSeparatedList<Value>) {
         storage.formSymmetricDifference(other.storage)
     }
-
-    private static func normalize<S: StringProtocol>(_ value: S) -> String? {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 }
 
 // MARK: - ExpressibleByArrayLiteral
@@ -84,28 +88,23 @@ extension CommaSeparatedList: ExpressibleByArrayLiteral {
 
 extension CommaSeparatedList where Value == String {
     /// Creates a list from a comma-separated string.
-    public init(_ csv: String) {
-        self.init(csv.split(separator: ",").compactMap(Self.normalize))
+    public init(_ rawValue: String) {
+        self.init(Self.parse(rawValue))
     }
 
     /// Sorted string values in the list.
     public var fields: [String] {
         storage.sorted()
     }
-
-    /// Comma-separated representation.
-    public var csvValue: String {
-        fields.joined(separator: ",")
-    }
 }
 
 extension CommaSeparatedList: RawRepresentable where Value == String {
     public init(rawValue: String) {
-        self.init(rawValue)
+        self.init(Self.parse(rawValue))
     }
 
     public var rawValue: String {
-        csvValue
+        fields.joined(separator: ",")
     }
 }
 
@@ -131,19 +130,20 @@ extension CommaSeparatedList: ExpressibleByUnicodeScalarLiteral where Value == S
 
 extension CommaSeparatedList where Value: RawRepresentable, Value.RawValue == String {
     /// Creates a list from a comma-separated string.
-    public init(csv: String) {
+    public init(rawValue: String) {
         self.init(
-            csv.split(separator: ",")
-                .compactMap(Self.normalize)
+            Self.parse(rawValue)
                 .compactMap(Value.init(rawValue:))
         )
     }
 
-    /// Comma-separated representation.
-    public var csvValue: String {
+    /// Raw comma-separated representation.
+    public var rawValue: String {
         storage.map(\.rawValue).sorted().joined(separator: ",")
     }
 }
+
+// MARK: - RawRepresentable CaseIterable Values
 
 extension CommaSeparatedList where Value: CaseIterable & RawRepresentable, Value.RawValue == String {
     /// A list containing all known enum values.

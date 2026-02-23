@@ -77,17 +77,17 @@ extension HubClient {
         if let benchmark { params["benchmark"] = .string(benchmark) }
         if let datasetName { params["dataset_name"] = .string(datasetName) }
         if let gated { params["gated"] = .bool(gated) }
-        if let languageCreators { params["language_creators"] = .string(languageCreators.csvValue) }
-        if let language { params["language"] = .string(language.csvValue) }
-        if let multilinguality { params["multilinguality"] = .string(multilinguality.csvValue) }
-        if let sizeCategories { params["size_categories"] = .string(sizeCategories.csvValue) }
-        if let taskCategories { params["task_categories"] = .string(taskCategories.csvValue) }
-        if let taskIds { params["task_ids"] = .string(taskIds.csvValue) }
+        if let languageCreators { params["language_creators"] = .string(languageCreators.rawValue) }
+        if let language { params["language"] = .string(language.rawValue) }
+        if let multilinguality { params["multilinguality"] = .string(multilinguality.rawValue) }
+        if let sizeCategories { params["size_categories"] = .string(sizeCategories.rawValue) }
+        if let taskCategories { params["task_categories"] = .string(taskCategories.rawValue) }
+        if let taskIds { params["task_ids"] = .string(taskIds.rawValue) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
         if let config { params["config"] = .bool(config) }
 
         return try await httpClient.fetchPaginated(.get, "/api/datasets", params: params)
@@ -124,7 +124,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
 
         return try await httpClient.fetch(.get, url: url, params: params)

@@ -91,18 +91,18 @@ extension HubClient {
         if let search { params["search"] = .string(search) }
         if let author { params["author"] = .string(author) }
         if let filter { params["filter"] = .string(filter) }
-        if let apps { params["apps"] = .string(apps.csvValue) }
+        if let apps { params["apps"] = .string(apps.rawValue) }
         if let gated { params["gated"] = .bool(gated) }
         if let inference { params["inference"] = .string(inference.rawValue) }
-        if let inferenceProvider { params["inference_provider"] = .string(inferenceProvider.csvValue) }
+        if let inferenceProvider { params["inference_provider"] = .string(inferenceProvider.rawValue) }
         if let modelName { params["model_name"] = .string(modelName) }
-        if let trainedDataset { params["trained_dataset"] = .string(trainedDataset.csvValue) }
+        if let trainedDataset { params["trained_dataset"] = .string(trainedDataset.rawValue) }
         if let pipelineTag { params["pipeline_tag"] = .string(pipelineTag) }
         if let sort { params["sort"] = .string(sort) }
         if let direction { params["direction"] = .int(direction.rawValue) }
         if let limit { params["limit"] = .int(limit) }
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
         if let cardData { params["cardData"] = .bool(cardData) }
         if let config { params["config"] = .bool(config) }
         if let fetchConfig, fetchConfig { params["config"] = .bool(true) }
@@ -147,7 +147,7 @@ extension HubClient {
 
         var params: [String: Value] = [:]
         if let full { params["full"] = .bool(full) }
-        if let expand { params["expand"] = .string(expand.csvValue) }
+        if let expand { params["expand"] = .string(expand.rawValue) }
         if let securityStatus { params["securityStatus"] = .bool(securityStatus) }
         if let filesMetadata, filesMetadata { params["blobs"] = .bool(true) }
         if let cardData { params["cardData"] = .bool(cardData) }

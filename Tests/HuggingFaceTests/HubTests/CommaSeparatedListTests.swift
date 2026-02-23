@@ -63,9 +63,9 @@ struct CommaSeparatedListTests {
     func testEnumValuesAndAll() {
         let all = CommaSeparatedList<HubClient.ModelInference>.all
         #expect(all.contains(.warm))
-        #expect(all.csvValue == "warm")
+        #expect(all.rawValue == "warm")
 
-        let parsed = CommaSeparatedList<HubClient.ModelInference>(csv: "warm,unknown,warm")
+        let parsed = CommaSeparatedList<HubClient.ModelInference>(rawValue: "warm,unknown,warm")
         #expect(parsed == all)
 
         let modelFields = CommaSeparatedList<HubClient.ModelExpandField>.all
