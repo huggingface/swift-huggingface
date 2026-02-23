@@ -130,6 +130,19 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("blobs")
     }
 
+    /// Returns the metadata directory for a repository.
+    ///
+    /// Metadata files are stored outside snapshot directories so snapshots only
+    /// contain repository files.
+    public func metadataDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
+        let repoName = repo.description.replacingOccurrences(of: "/", with: "--")
+        let dirName = "\(kind.pluralized)--\(repoName)"
+        return
+            cacheDirectory
+            .appendingPathComponent(".metadata")
+            .appendingPathComponent(dirName)
+    }
+
     /// Returns the refs directory for a repository.
     public func refsDirectory(repo: Repo.ID, kind: Repo.Kind) -> URL {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("refs")
@@ -538,12 +551,21 @@ public struct HubCache: Sendable {
 public enum HubCacheError: Error, LocalizedError {
     /// A path component contains unsafe characters that could enable path traversal attacks.
     case invalidPathComponent(String)
+    /// A file was cached successfully, but its snapshot path could not be resolved.
+    case cachedPathResolutionFailed(String)
+    /// Snapshot download needs either a cache directory or an explicit destination.
+    case snapshotRequiresCacheOrDestination(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidPathComponent(let component):
             return
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
+        case .cachedPathResolutionFailed(let path):
+            return "Unable to resolve cached file path for '\(path)'"
+        case .snapshotRequiresCacheOrDestination(let repo):
+            return
+                "Downloading snapshot for '\(repo)' requires either a configured cache or a destination"
         }
     }
 }

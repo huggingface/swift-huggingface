@@ -55,8 +55,6 @@ public enum FileDownloadEndpoint: String, Hashable, CaseIterable, Sendable {
 
     /// Raw endpoint (bypass resolve redirects).
     case raw
-
-    var pathComponent: String { rawValue }
 }
 
 // MARK: - Upload Operations
@@ -292,6 +290,12 @@ private struct FileMetadata: Sendable {
     }
 }
 
+/// Metadata about a cached snapshot of a repository.
+private struct CachedSnapshotMetadata: Codable, Sendable {
+    /// The entries in the snapshot.
+    let entries: [Git.TreeEntry]
+}
+
 public extension HubClient {
     /// Download file data using URLSession.dataTask
     /// - Parameters:
@@ -342,11 +346,10 @@ public extension HubClient {
         }
 
         // Fallback to existing LFS download method
-        let endpoint = endpoint.pathComponent
         let url = httpClient.host
             .appending(path: repo.namespace)
             .appending(path: repo.name)
-            .appending(path: endpoint)
+            .appending(path: endpoint.rawValue)
             .appending(component: revision)
             .appending(path: repoPath)
 
@@ -390,17 +393,17 @@ public extension HubClient {
     /// - Parameters:
     ///   - repoPath: Path to file in repository
     ///   - repo: Repository identifier
-    ///   - destination: Destination URL for downloaded file
+    ///   - destination: Optional destination URL for downloaded file
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional Progress object to track download progress
-    /// - Returns: Final destination URL
+    /// - Returns: Cached file path, or destination path when provided.
     func downloadFile(
         at repoPath: String,
         from repo: Repo.ID,
-        to destination: URL,
+        to destination: URL? = nil,
         kind: Repo.Kind = .model,
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
@@ -417,26 +420,19 @@ public extension HubClient {
                 filename: repoPath
             )
         {
-            // Create parent directory if needed
-            try FileManager.default.createDirectory(
-                at: destination.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            // Copy from cache to destination (resolve symlinks first)
-            let resolvedPath = cachedPath.resolvingSymlinksInPath()
-            try? FileManager.default.removeItem(at: destination)
-            try FileManager.default.copyItem(at: resolvedPath, to: destination)
-            progress?.completedUnitCount = progress?.totalUnitCount ?? 100
-            return destination
+            if let progress {
+                progress.completedUnitCount = progress.totalUnitCount
+            }
+            return try copyFileToLocalDirectoryIfNeeded(cachedPath, repoPath: repoPath, destination: destination)
         }
-        if endpoint == .resolve, transport.shouldAttemptXet {
+        if endpoint == .resolve, transport.shouldAttemptXet, let xetDestination = destination {
             do {
                 if let downloaded = try await downloadFileWithXet(
                     repoPath: repoPath,
                     repo: repo,
                     kind: kind,
                     revision: revision,
-                    destination: destination,
+                    destination: xetDestination,
                     progress: progress,
                     transport: transport
                 ) {
@@ -450,11 +446,10 @@ public extension HubClient {
         }
 
         // Fallback to existing LFS download method
-        let endpoint = endpoint.pathComponent
         let url = httpClient.host
             .appending(path: repo.namespace)
             .appending(path: repo.name)
-            .appending(path: endpoint)
+            .appending(path: endpoint.rawValue)
             .appending(component: revision)
             .appending(path: repoPath)
 
@@ -496,8 +491,23 @@ public extension HubClient {
                 etag: etag,
                 ref: revision != commitHash ? revision : nil
             )
+            if let cachedPath = cache.cachedFilePath(
+                repo: repo,
+                kind: kind,
+                revision: commitHash,
+                filename: repoPath
+            ) {
+                return try copyFileToLocalDirectoryIfNeeded(
+                    cachedPath,
+                    repoPath: repoPath,
+                    destination: destination
+                )
+            }
         }
 
+        guard let destination else {
+            throw HubCacheError.cachedPathResolutionFailed(repoPath)
+        }
         // Create parent directory if needed
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(),
@@ -515,18 +525,18 @@ public extension HubClient {
     /// - Parameters:
     ///   - entry: File entry from the repository tree
     ///   - repo: Repository identifier
-    ///   - destination: Destination URL for downloaded file
+    ///   - destination: Optional destination URL for downloaded file
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional Progress object to track download progress
     ///   - transport: Download transport selection
-    /// - Returns: Final destination URL
+    /// - Returns: Cached file path, or destination path when provided.
     func downloadFile(
         _ entry: Git.TreeEntry,
         from repo: Repo.ID,
-        to destination: URL,
+        to destination: URL? = nil,
         kind: Repo.Kind = .model,
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
@@ -607,7 +617,7 @@ public extension HubClient {
     func downloadContentsOfFile(
         at repoPath: String,
         from repo: Repo.ID,
-        to destination: URL,
+        to destination: URL? = nil,
         kind: Repo.Kind = .model,
         revision: String = "main",
         endpoint: FileDownloadEndpoint = .resolve,
@@ -817,30 +827,53 @@ public extension HubClient {
 // MARK: - Snapshot Download
 
 public extension HubClient {
-    /// Download a repository snapshot to a local directory.
+    /// Download a repository snapshot.
     ///
-    /// This method downloads all files from a repository to the specified destination.
+    /// This method downloads all files from a repository to the cache by default.
     /// Files are automatically cached in the Python-compatible cache directory,
     /// allowing cache reuse between Swift and Python Hugging Face clients.
     ///
     /// - Parameters:
     ///   - repo: Repository identifier
     ///   - kind: Kind of repository
-    ///   - destination: Local destination directory
+    ///   - destination: Optional local destination directory
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
-    /// - Returns: URL to the local snapshot directory
+    /// - Returns: URL to the cache snapshot directory by default,
+    ///            or destination when provided.
     func downloadSnapshot(
         of repo: Repo.ID,
         kind: Repo.Kind = .model,
-        to destination: URL,
+        to destination: URL? = nil,
         revision: String = "main",
         matching globs: [String] = [],
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
-        let entries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+        guard cache != nil || destination != nil else {
+            throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
+        }
+
+        if let fastPath = cachedSnapshotPath(
+            repo: repo,
+            kind: kind,
+            revision: revision,
+            matching: globs
+        ) {
+            let progress = Progress(totalUnitCount: 1)
+            progress.completedUnitCount = 1
+            if let progressHandler {
+                await MainActor.run {
+                    progressHandler(progress)
+                }
+            }
+            return try copySnapshotToLocalDirectoryIfNeeded(from: fastPath, destination: destination)
+        }
+
+        let allEntries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+        let entries =
+            allEntries
             .filter { entry in
                 guard !globs.isEmpty else { return true }
                 return globs.contains { glob in
@@ -855,10 +888,20 @@ public extension HubClient {
             }
         }
 
+        if let cache, isCommitHash(revision) {
+            try? saveCachedSnapshotMetadata(
+                CachedSnapshotMetadata(entries: allEntries),
+                cache: cache,
+                repo: repo,
+                kind: kind,
+                commitHash: revision
+            )
+        }
+
         for entry in entries {
             try validateSnapshotEntryPath(entry.path)
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
-            let fileDestination = destination.appendingPathComponent(entry.path)
+            let fileDestination = destination?.appendingPathComponent(entry.path)
             #if canImport(FoundationNetworking)
                 let samplingTask: Task<Void, Never>? =
                     if let progressHandler {
@@ -917,7 +960,20 @@ public extension HubClient {
                 progressHandler(progress)
             }
         }
-        return destination
+
+        if let destination {
+            return destination
+        }
+        guard let cache else {
+            throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
+        }
+        let resolvedCommitHash =
+            isCommitHash(revision)
+            ? revision
+            : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(resolvedCommitHash)
+        return try copySnapshotToLocalDirectoryIfNeeded(from: snapshotPath, destination: destination)
     }
 }
 
@@ -961,6 +1017,140 @@ private struct XetFileMetadata: Sendable {
 }
 
 private extension HubClient {
+    /// Generates the path to a cached snapshot.
+    func cachedSnapshotPath(
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        matching globs: [String]
+    ) -> URL? {
+        guard let cache,
+            isCommitHash(revision),
+            let metadata = loadCachedSnapshotMetadata(
+                cache: cache,
+                repo: repo,
+                kind: kind,
+                commitHash: revision
+            )
+        else {
+            return nil
+        }
+
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind).appendingPathComponent(revision)
+        let requiredEntries = metadata.entries.filter { entry in
+            guard !globs.isEmpty else { return true }
+            return globs.contains { glob in
+                fnmatch(glob, entry.path, 0) == 0
+            }
+        }
+
+        let isComplete = requiredEntries.allSatisfy { entry in
+            FileManager.default.fileExists(
+                atPath: snapshotPath.appendingPathComponent(entry.path).path
+            )
+        }
+        return isComplete ? snapshotPath : nil
+    }
+
+    /// Generates the URL for cached snapshot metadata.
+    func cachedSnapshotMetadataURL(
+        cache: HubCache,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        commitHash: String
+    ) -> URL {
+        cache.metadataDirectory(repo: repo, kind: kind)
+            .appendingPathComponent("\(commitHash).json")
+    }
+
+    /// Saves cached snapshot metadata to a file.
+    func saveCachedSnapshotMetadata(
+        _ metadata: CachedSnapshotMetadata,
+        cache: HubCache,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        commitHash: String
+    ) throws {
+        let url = cachedSnapshotMetadataURL(cache: cache, repo: repo, kind: kind, commitHash: commitHash)
+        let data = try JSONEncoder().encode(metadata)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// Loads cached snapshot metadata from a file.
+    func loadCachedSnapshotMetadata(
+        cache: HubCache,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        commitHash: String
+    ) -> CachedSnapshotMetadata? {
+        let url = cachedSnapshotMetadataURL(cache: cache, repo: repo, kind: kind, commitHash: commitHash)
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(CachedSnapshotMetadata.self, from: data)
+    }
+
+    /// Copies a file to a local directory if needed.
+    func copyFileToLocalDirectoryIfNeeded(
+        _ source: URL,
+        repoPath: String,
+        destination: URL?
+    ) throws -> URL {
+        guard let destination else {
+            return source
+        }
+        let target = destination.appendingPathComponent(repoPath)
+        try FileManager.default.createDirectory(
+            at: target.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.removeItem(at: target)
+        let resolvedSource = source.resolvingSymlinksInPath()
+        try FileManager.default.copyItem(at: resolvedSource, to: target)
+        return target
+    }
+
+    /// Copies a snapshot to a local directory if needed.
+    func copySnapshotToLocalDirectoryIfNeeded(
+        from snapshotPath: URL,
+        destination: URL?
+    ) throws -> URL {
+        guard let destination else {
+            return snapshotPath
+        }
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        guard
+            let enumerator = fileManager.enumerator(
+                at: snapshotPath,
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            return destination
+        }
+        while let fileURL = enumerator.nextObject() as? URL {
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true || values.isSymbolicLink == true else {
+                continue
+            }
+            let relativePath = fileURL.path.replacingOccurrences(of: snapshotPath.path + "/", with: "")
+            let target = destination.appendingPathComponent(relativePath)
+            try fileManager.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? fileManager.removeItem(at: target)
+            let resolvedSource = fileURL.resolvingSymlinksInPath()
+            try fileManager.copyItem(at: resolvedSource, to: target)
+        }
+        return destination
+    }
+
     /// Downloads file data using Xet's content-addressable storage system.
     func downloadDataWithXet(
         repoPath: String,
@@ -1326,4 +1516,10 @@ private extension URL {
             }
         #endif
     }
+}
+
+// MARK: -
+
+private func isCommitHash(_ revision: String) -> Bool {
+    revision.count == 40 && revision.allSatisfy(\.isHexDigit)
 }
