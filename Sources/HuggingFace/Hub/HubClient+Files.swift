@@ -293,7 +293,7 @@ public extension HubClient {
             let etag = httpResponse.value(forHTTPHeaderField: "ETag"),
             let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
         {
-            try? cache.storeData(
+            try? await cache.storeData(
                 data,
                 repo: repo,
                 kind: kind,
@@ -397,7 +397,7 @@ public extension HubClient {
             let etag = httpResponse.value(forHTTPHeaderField: "ETag"),
             let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
         {
-            try? cache.storeFile(
+            try? await cache.storeFile(
                 at: tempURL,
                 repo: repo,
                 kind: kind,

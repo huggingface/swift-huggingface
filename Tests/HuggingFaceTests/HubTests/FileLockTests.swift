@@ -1,11 +1,13 @@
 import Foundation
-
-#if canImport(FoundationNetworking)
-    import FoundationNetworking
-#endif
 import Testing
 
 @testable import HuggingFace
+
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#endif
 
 @Suite("FileLock Tests")
 struct FileLockTests {
@@ -20,28 +22,28 @@ struct FileLockTests {
         )
     }
 
-    // MARK: - Basic Lock Tests
+    // MARK: - Basic Locking
 
-    @Test("Lock can be acquired on new file")
-    func acquireLockNewFile() throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
+    @Test("Basic lock acquisition and release")
+    func basicLockAcquisition() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("test-file")
         let lock = FileLock(path: targetPath)
 
         var executed = false
-        try lock.withLock {
+        try await lock.withLock {
             executed = true
         }
 
         #expect(executed)
+        #expect(FileManager.default.fileExists(atPath: lock.lockPath.path))
     }
 
     @Test("Lock file is created with .lock extension")
-    func lockFileCreated() throws {
+    func lockFileCreated() async throws {
         let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
         let lock = FileLock(path: targetPath)
 
-        try lock.withLock {
-            // Lock file should exist while we hold the lock
+        try await lock.withLock {
             #expect(FileManager.default.fileExists(atPath: lock.lockPath.path))
         }
     }
@@ -55,91 +57,399 @@ struct FileLockTests {
         #expect(lock.lockPath.deletingPathExtension().lastPathComponent == "blob-abc123")
     }
 
-    @Test("Nested lock execution works")
-    func nestedLockExecution() throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
+    @Test("Lock blocks other acquirers")
+    func lockBlocksOtherAcquirers() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("blocks")
+        let lock1 = FileLock(path: targetPath)
+        let lock2 = FileLock(path: targetPath, maxRetries: 5, retryDelay: 0.05)
 
-        var value = 0
-        try lock.withLock {
-            value = 1
-            // Cannot acquire the same lock again from the same thread
-            // but sequential operations work
-        }
-        try lock.withLock {
-            value = 2
-        }
+        let lock1Acquired = Expectation()
+        let lock1CanRelease = Expectation()
+        let lock2Acquired = Expectation()
 
-        #expect(value == 2)
-    }
-
-    @Test("Lock returns value from closure")
-    func lockReturnsValue() throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        let result = try lock.withLock {
-            return 42
-        }
-
-        #expect(result == 42)
-    }
-
-    @Test("Lock propagates errors from closure")
-    func lockPropagatesErrors() throws {
-        let targetPath = tempDirectory.appendingPathComponent("test-file.txt")
-        let lock = FileLock(path: targetPath)
-
-        struct TestError: Error {}
-
-        #expect(throws: TestError.self) {
-            try lock.withLock {
-                throw TestError()
+        Task {
+            try await lock1.withLock {
+                lock1Acquired.fulfill()
+                await lock1CanRelease.wait(timeout: 5)
             }
         }
+
+        await lock1Acquired.wait(timeout: 5)
+        #expect(lock1Acquired.isFulfilled)
+
+        Task {
+            try await lock2.withLock {
+                lock2Acquired.fulfill()
+            }
+        }
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(!lock2Acquired.isFulfilled)
+
+        lock1CanRelease.fulfill()
+        await lock2Acquired.wait(timeout: 5)
+        #expect(lock2Acquired.isFulfilled)
     }
 
-    // MARK: - Concurrent Access Tests
+    @Test("Lock protects critical section")
+    func lockProtectsCriticalSection() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("counter")
+        let counterFile = tempDirectory.appendingPathComponent("counter.txt")
+        try "0".write(to: counterFile, atomically: true, encoding: .utf8)
 
-    @Test("Concurrent writes are serialized")
-    func concurrentWritesSerialized() async throws {
-        let targetPath = tempDirectory.appendingPathComponent("concurrent-test.txt")
-        let dataPath = tempDirectory.appendingPathComponent("data.txt")
-        let lock = FileLock(path: targetPath)
-
-        // Create the data file
-        try "".write(to: dataPath, atomically: true, encoding: .utf8)
-
-        // Run multiple concurrent tasks that each try to append to the file
-        await withTaskGroup(of: Void.self) { group in
-            for i in 0 ..< 10 {
+        let iterations = 100
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< iterations {
                 group.addTask {
-                    do {
-                        try await lock.withLock {
-                            // Read current content
-                            let current = try String(contentsOf: dataPath, encoding: .utf8)
-                            // Append our value
-                            let new = current + "\(i)\n"
-                            // Small delay to increase chance of race conditions without lock
-                            try await Task.sleep(for: .milliseconds(10))
-                            // Write back
-                            try new.write(to: dataPath, atomically: true, encoding: .utf8)
-                        }
-                    } catch {
-                        // Lock acquisition may fail in test due to timing
+                    let lock = FileLock(path: targetPath, maxRetries: 500, retryDelay: 0.01)
+                    try await lock.withLock {
+                        let current = Int(try String(contentsOf: counterFile, encoding: .utf8)) ?? 0
+                        try String(current + 1).write(to: counterFile, atomically: true, encoding: .utf8)
                     }
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        let finalValue = Int(try String(contentsOf: counterFile, encoding: .utf8)) ?? 0
+        #expect(finalValue == iterations)
+    }
+
+    // MARK: - Reentrant Locking
+
+    @Test("Reentrant locking with same path")
+    func reentrantLocking() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("reentrant")
+        let lock1 = FileLock(path: targetPath)
+        var innerExecuted = false
+
+        try await lock1.withLock {
+            let lock2 = FileLock(path: targetPath)
+            try await lock2.withLock {
+                innerExecuted = true
+            }
+        }
+
+        #expect(innerExecuted)
+    }
+
+    @Test("Nested locking with same lock object")
+    func nestedLockingSameObject() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("nested-same")
+        let lock = FileLock(path: targetPath)
+        var level1 = false
+        var level2 = false
+        var level3 = false
+
+        try await lock.withLock {
+            level1 = true
+            try await lock.withLock {
+                level2 = true
+                try await lock.withLock {
+                    level3 = true
+                }
+            }
+        }
+        #expect(level1 && level2 && level3)
+    }
+
+    @Test("Reentrant locking survives nested different lock path")
+    func reentrantLockingAcrossDifferentNestedPath() async throws {
+        let outerPath = tempDirectory.appendingPathComponent("outer-reentrant")
+        let innerPath = tempDirectory.appendingPathComponent("inner-reentrant")
+        let outerLock = FileLock(path: outerPath)
+        let innerLock = FileLock(path: innerPath)
+        var reenteredOuter = false
+
+        try await outerLock.withLock {
+            try await innerLock.withLock {
+                try await outerLock.withLock(blocking: false) {
+                    reenteredOuter = true
                 }
             }
         }
 
-        // Verify file has content (some writes may have been skipped due to lock contention)
-        let finalContent = try String(contentsOf: dataPath, encoding: .utf8)
-        let lines = finalContent.split(separator: "\n")
-        // At least some writes should have succeeded
-        #expect(lines.count > 0)
+        #expect(reenteredOuter)
     }
 
-    // MARK: - HubCache Integration Tests
+    @Test("Child task cannot reenter parent-held lock")
+    func childTaskDoesNotInheritReentrantOwnership() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("child-task-reentrancy")
+        let lock = FileLock(path: targetPath)
+        let childFinished = Expectation()
+        let childFailedToAcquire = Expectation()
+
+        try await lock.withLock {
+            Task {
+                do {
+                    _ = try await lock.withLock(blocking: false) {
+                        Issue.record("child task should not be treated as reentrant owner")
+                    }
+                } catch is FileLockError {
+                    childFailedToAcquire.fulfill()
+                } catch {
+                    Issue.record("unexpected error: \(error)")
+                }
+                childFinished.fulfill()
+            }
+
+            await childFinished.wait(timeout: 5)
+        }
+
+        #expect(childFailedToAcquire.isFulfilled)
+    }
+
+    @Test("Lock released on exception")
+    func lockReleasedOnException() async throws {
+        struct TestError: Error {}
+        let targetPath = tempDirectory.appendingPathComponent("exception")
+        let lock1 = FileLock(path: targetPath)
+
+        do {
+            try await lock1.withLock {
+                throw TestError()
+            }
+        } catch is TestError {}
+
+        var acquired = false
+        try await FileLock(path: targetPath, maxRetries: 1, retryDelay: 0.01).withLock {
+            acquired = true
+        }
+        #expect(acquired)
+    }
+
+    // MARK: - Concurrent Access
+
+    @Test("Concurrent tasks with separate lock instances")
+    func concurrentTasksWithSeparateLockInstances() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("thrash")
+        let dataFile = tempDirectory.appendingPathComponent("thrash.txt")
+        let taskCount = 50
+        let iterationsPerTask = 3
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for taskIndex in 0 ..< taskCount {
+                group.addTask {
+                    let lock = FileLock(path: targetPath, maxRetries: 500, retryDelay: 0.01)
+                    try await lock.withLock {
+                        for iteration in 0 ..< iterationsPerTask {
+                            let uuid = UUID().uuidString
+                            try uuid.write(to: dataFile, atomically: true, encoding: .utf8)
+                            let readBack = try String(contentsOf: dataFile, encoding: .utf8)
+                            guard readBack == uuid else {
+                                throw FileLockTestError.dataMismatch(
+                                    expected: uuid,
+                                    got: readBack,
+                                    iteration: taskIndex * iterationsPerTask + iteration
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+    }
+
+    // MARK: - File Permissions
+
+    @Test("Lock file has configured permissions")
+    func lockFilePermissions() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("mode")
+        let lock = FileLock(path: targetPath, mode: 0o666)
+
+        try await lock.withLock {
+            let attributes = try FileManager.default.attributesOfItem(atPath: lock.lockPath.path)
+            let permissions = (attributes[.posixPermissions] as? Int) ?? 0
+            #expect(permissions == 0o666)
+        }
+    }
+
+    @Test("Default lock file permissions")
+    func defaultLockFilePermissions() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("default-mode")
+        let lock = FileLock(path: targetPath)
+
+        try await lock.withLock {
+            let attributes = try FileManager.default.attributesOfItem(atPath: lock.lockPath.path)
+            let permissions = (attributes[.posixPermissions] as? Int) ?? 0
+            #expect(permissions == 0o644)
+        }
+    }
+
+    // MARK: - Non-blocking Mode
+
+    @Test("Non-blocking mode fails immediately when lock is held")
+    func nonBlockingMode() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("nonblocking")
+        let lock1 = FileLock(path: targetPath)
+        let holdingLock = Expectation()
+
+        Task {
+            try await lock1.withLock {
+                holdingLock.fulfill()
+                try await Task.sleep(for: .seconds(2))
+            }
+        }
+
+        await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
+
+        let lock2 = FileLock(path: targetPath, blocking: false)
+        let startTime = ContinuousClock.now
+        var didFail = false
+        do {
+            _ = try await lock2.withLock {
+                Issue.record("non-blocking lock should have failed")
+            }
+        } catch is FileLockError {
+            didFail = true
+        }
+        let elapsed = ContinuousClock.now - startTime
+        #expect(didFail)
+        #expect(elapsed < .milliseconds(100))
+    }
+
+    @Test("Non-blocking mode succeeds when lock is available")
+    func nonBlockingModeSuccess() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("nonblocking-success")
+        let lock = FileLock(path: targetPath, blocking: false)
+        var executed = false
+        try await lock.withLock {
+            executed = true
+        }
+        #expect(executed)
+    }
+
+    @Test("Blocking parameter override on withLock")
+    func blockingOverride() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("blocking-override")
+        let lock1 = FileLock(path: targetPath)
+        let holdingLock = Expectation()
+
+        Task {
+            try await lock1.withLock {
+                holdingLock.fulfill()
+                try await Task.sleep(for: .seconds(2))
+            }
+        }
+        await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
+
+        let lock2 = FileLock(path: targetPath, blocking: true)
+        var didFail = false
+        do {
+            _ = try await lock2.withLock(blocking: false) {
+                Issue.record("should have failed with blocking override")
+            }
+        } catch is FileLockError {
+            didFail = true
+        }
+        #expect(didFail)
+    }
+
+    // MARK: - Error Handling
+
+    @Test("Lock fails when path is a directory")
+    func lockFailsWhenPathIsDirectory() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("somedir")
+        // FileLock appends ".lock", so make that resulting lock path a directory.
+        try FileManager.default.createDirectory(
+            at: targetPath.appendingPathExtension("lock"),
+            withIntermediateDirectories: true
+        )
+
+        let lock = FileLock(path: targetPath, maxRetries: 0)
+        do {
+            _ = try await lock.withLock {
+                Issue.record("should not acquire lock on a directory")
+            }
+        } catch let error as FileLockError {
+            switch error {
+            case .openFailed(_, let err):
+                #expect(err == EISDIR)
+            default:
+                Issue.record("expected openFailed, got \(error)")
+            }
+        }
+    }
+
+    @Test("Lock succeeds with nested non-existent directories")
+    func lockSucceedsWithNestedDirectories() async throws {
+        let deepPath =
+            tempDirectory
+            .appendingPathComponent("a")
+            .appendingPathComponent("b")
+            .appendingPathComponent("c")
+            .appendingPathComponent("resource")
+        let lock = FileLock(path: deepPath)
+        var executed = false
+        try await lock.withLock {
+            executed = true
+        }
+        #expect(executed)
+        #expect(FileManager.default.fileExists(atPath: lock.lockPath.path))
+    }
+
+    @Test("Lock acquisition timeout")
+    func lockAcquisitionTimeout() async throws {
+        let targetPath = tempDirectory.appendingPathComponent("timeout")
+        let lock1 = FileLock(path: targetPath)
+        let holdingLock = Expectation()
+        let released = Expectation()
+
+        Task {
+            try await lock1.withLock {
+                holdingLock.fulfill()
+                try? await Task.sleep(for: .seconds(2))
+            }
+            released.fulfill()
+        }
+
+        await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
+
+        do {
+            _ = try await FileLock(path: targetPath, maxRetries: 2, retryDelay: 0.1).withLock {
+                Issue.record("should not have acquired lock")
+            }
+        } catch is FileLockError {}
+
+        await released.wait(timeout: 5)
+        #expect(released.isFulfilled)
+    }
+
+    @Test("Lock fails on read-only directory")
+    func lockFailsOnReadOnlyDirectory() async throws {
+        if geteuid() == 0 {
+            return
+        }
+
+        let readOnlyDir = tempDirectory.appendingPathComponent("readonly")
+        try FileManager.default.createDirectory(at: readOnlyDir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: readOnlyDir.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: readOnlyDir.path)
+        }
+
+        let targetPath = readOnlyDir.appendingPathComponent("test")
+        let lock = FileLock(path: targetPath, maxRetries: 0)
+
+        do {
+            _ = try await lock.withLock {
+                Issue.record("should not acquire lock in read-only directory")
+            }
+        } catch let error as FileLockError {
+            switch error {
+            case .openFailed(_, let err):
+                #expect(err == EACCES || err == EPERM)
+            default:
+                Issue.record("expected openFailed, got \(error)")
+            }
+        }
+    }
+
+    // MARK: - HubCache Integration
 
     @Test("HubCache storeFile uses locking")
     func hubCacheStoreFileUsesLocking() async throws {
@@ -149,18 +459,16 @@ struct FileLockTests {
         let etag = "shared-etag"
         let content = "test content"
 
-        // Create source files
         let sourceFile1 = tempDirectory.appendingPathComponent("source1.txt")
         let sourceFile2 = tempDirectory.appendingPathComponent("source2.txt")
         try content.write(to: sourceFile1, atomically: true, encoding: .utf8)
         try content.write(to: sourceFile2, atomically: true, encoding: .utf8)
 
-        // Run concurrent stores to the same blob
         await withTaskGroup(of: Void.self) { group in
             for i in 0 ..< 5 {
                 let sourceFile = i % 2 == 0 ? sourceFile1 : sourceFile2
                 group.addTask {
-                    try? cache.storeFile(
+                    try? await cache.storeFile(
                         at: sourceFile,
                         repo: repoID,
                         kind: .model,
@@ -172,7 +480,6 @@ struct FileLockTests {
             }
         }
 
-        // Verify blob was created correctly
         let blobPath = cache.blobsDirectory(repo: repoID, kind: .model)
             .appendingPathComponent(etag)
         #expect(FileManager.default.fileExists(atPath: blobPath.path))
@@ -180,8 +487,6 @@ struct FileLockTests {
         let storedContent = try String(contentsOf: blobPath, encoding: .utf8)
         #expect(storedContent == content)
 
-        // Verify lock file was created (and may still exist)
-        // Lock file existence is implementation detail, just verify no corruption
     }
 
     @Test("HubCache storeData uses locking")
@@ -193,11 +498,10 @@ struct FileLockTests {
         let content = "test data content"
         let data = Data(content.utf8)
 
-        // Run concurrent stores to the same blob
         await withTaskGroup(of: Void.self) { group in
             for i in 0 ..< 5 {
                 group.addTask {
-                    try? cache.storeData(
+                    try? await cache.storeData(
                         data,
                         repo: repoID,
                         kind: .model,
@@ -209,12 +513,59 @@ struct FileLockTests {
             }
         }
 
-        // Verify blob was created correctly
         let blobPath = cache.blobsDirectory(repo: repoID, kind: .model)
             .appendingPathComponent(etag)
         #expect(FileManager.default.fileExists(atPath: blobPath.path))
 
         let storedContent = try String(contentsOf: blobPath, encoding: .utf8)
         #expect(storedContent == content)
+    }
+}
+
+enum FileLockTestError: Error, CustomStringConvertible {
+    case dataMismatch(expected: String, got: String, iteration: Int)
+
+    var description: String {
+        switch self {
+        case .dataMismatch(let expected, let got, let iteration):
+            return "Data mismatch at iteration \(iteration): expected '\(expected)', got '\(got)'"
+        }
+    }
+}
+
+final class Expectation: Sendable {
+    private let fulfilled = Mutex(false)
+
+    var isFulfilled: Bool {
+        fulfilled.withLock { $0 }
+    }
+
+    func fulfill() {
+        fulfilled.withLock { $0 = true }
+    }
+
+    func wait(timeout: TimeInterval) async {
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        while !fulfilled.withLock({ $0 }) {
+            if ContinuousClock.now >= deadline {
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+private final class Mutex<Value>: @unchecked Sendable {
+    private var value: Value
+    private let lock = NSLock()
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func withLock<T>(_ body: (inout Value) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&value)
     }
 }

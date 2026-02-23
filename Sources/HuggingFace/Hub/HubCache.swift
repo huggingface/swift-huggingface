@@ -272,7 +272,7 @@ public struct HubCache: Sendable {
         filename: String,
         etag: String,
         ref: String? = nil
-    ) throws {
+    ) async throws {
         let normalizedEtag = normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
@@ -294,7 +294,7 @@ public struct HubCache: Sendable {
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lock = FileLock(path: blobPath)
 
-        try lock.withLock {
+        try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
                 try FileManager.default.copyItem(at: sourceURL, to: blobPath)
             }
@@ -349,7 +349,7 @@ public struct HubCache: Sendable {
         filename: String,
         etag: String,
         ref: String? = nil
-    ) throws {
+    ) async throws {
         let normalizedEtag = normalizeEtag(etag)
 
         // Validate path components to prevent path traversal attacks
@@ -371,7 +371,7 @@ public struct HubCache: Sendable {
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
         let lock = FileLock(path: blobPath)
 
-        try lock.withLock {
+        try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
                 try data.write(to: blobPath, options: .atomic)
             }
