@@ -177,7 +177,7 @@ import Testing
 
             #expect(info.exists == true)
             #expect(info.size == 12345)
-            #expect(info.etag == "\"abc123def\"")
+            #expect(info.etag == "abc123def")
             #expect(info.revision == "commit-sha-123")
             #expect(info.isLFS == false)
         }
