@@ -769,7 +769,7 @@ public extension HubClient {
             #if canImport(FoundationNetworking)
                 let samplingTask: Task<Void, Never>? =
                     if let progressHandler {
-                        Task {
+                        Task(priority: Task.currentPriority) {
                             while !Task.isCancelled {
                                 await MainActor.run {
                                     progressHandler(progress)
@@ -786,28 +786,25 @@ public extension HubClient {
 
             // downloadFile handles cache lookup and storage automatically
             do {
-                _ = try await downloadFile(
-                    at: filename,
-                    from: repo,
-                    to: fileDestination,
-                    kind: kind,
-                    revision: revision,
-                    progress: fileProgress
-                )
+                _ = try await withTaskCancellationHandler {
+                    try await downloadFile(
+                        at: filename,
+                        from: repo,
+                        to: fileDestination,
+                        kind: kind,
+                        revision: revision,
+                        progress: fileProgress
+                    )
+                } onCancel: {
+                    samplingTask?.cancel()
+                }
+                try Task.checkCancellation()
             } catch {
                 if let samplingTask {
                     samplingTask.cancel()
                     _ = await samplingTask.result
                 }
                 throw error
-            }
-
-            if Task.isCancelled {
-                if let samplingTask {
-                    samplingTask.cancel()
-                    _ = await samplingTask.result
-                }
-                return destination
             }
 
             fileProgress.completedUnitCount = fileProgress.totalUnitCount
