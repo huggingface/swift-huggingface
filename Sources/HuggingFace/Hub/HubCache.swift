@@ -254,6 +254,50 @@ public struct HubCache: Sendable {
         return nil
     }
 
+    /// Returns a validated blob path for an etag.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - etag: The etag used for content addressing.
+    /// - Returns: The URL to the blob path.
+    /// - Throws: `HubCacheError.invalidPathComponent` when etag is unsafe.
+    public func blobPath(repo: Repo.ID, kind: Repo.Kind, etag: String) throws -> URL {
+        let normalizedEtag = normalizeEtag(etag)
+        try validatePathComponent(normalizedEtag)
+        return blobsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(normalizedEtag)
+    }
+
+    /// Returns a validated path for an incomplete blob download.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - etag: The etag used for content addressing.
+    /// - Returns: The URL to the incomplete blob path (`<etag>.incomplete`).
+    /// - Throws: `HubCacheError.invalidPathComponent` when etag is unsafe.
+    public func incompleteBlobPath(repo: Repo.ID, kind: Repo.Kind, etag: String) throws -> URL {
+        let normalizedEtag = normalizeEtag(etag)
+        try validatePathComponent(normalizedEtag)
+        return blobsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent("\(normalizedEtag).incomplete")
+    }
+
+    /// Returns a validated snapshot directory path for a commit hash.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The kind of repository.
+    ///   - commitHash: The commit hash directory name under snapshots.
+    /// - Returns: The URL to the snapshot directory for that commit.
+    /// - Throws: `HubCacheError.invalidPathComponent` when commit hash is unsafe.
+    public func snapshotPath(repo: Repo.ID, kind: Repo.Kind, commitHash: String) throws -> URL {
+        try validatePathComponent(commitHash)
+        return snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commitHash)
+    }
+
     // MARK: - File Storage
 
     /// Stores a file in the cache.
