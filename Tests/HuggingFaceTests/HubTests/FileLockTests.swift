@@ -75,6 +75,7 @@ struct FileLockTests {
         }
 
         await lock1Acquired.wait(timeout: 5)
+        #expect(lock1Acquired.isFulfilled)
 
         Task {
             try await lock2.withLock {
@@ -292,6 +293,7 @@ struct FileLockTests {
         }
 
         await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
 
         let lock2 = FileLock(path: targetPath, blocking: false)
         let startTime = ContinuousClock.now
@@ -332,6 +334,7 @@ struct FileLockTests {
             }
         }
         await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
 
         let lock2 = FileLock(path: targetPath, blocking: true)
         var didFail = false
@@ -404,6 +407,7 @@ struct FileLockTests {
         }
 
         await holdingLock.wait(timeout: 5)
+        #expect(holdingLock.isFulfilled)
 
         do {
             _ = try await FileLock(path: targetPath, maxRetries: 2, retryDelay: 0.1).withLock {
@@ -412,6 +416,7 @@ struct FileLockTests {
         } catch is FileLockError {}
 
         await released.wait(timeout: 5)
+        #expect(released.isFulfilled)
     }
 
     @Test("Lock fails on read-only directory")

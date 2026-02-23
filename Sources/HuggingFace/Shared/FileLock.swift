@@ -4,6 +4,8 @@ import Foundation
     import Darwin
 #elseif canImport(Glibc)
     import Glibc
+#else
+    #error("FileLock is only supported on Darwin and Linux (Glibc) platforms.")
 #endif
 
 /// POSIX file permission bits,
@@ -98,8 +100,7 @@ public struct FileLock: Sendable {
         }
 
         // Fast path: reentrant acquisition only within the same task.
-        if await context.tryReentrantAcquire(taskID: currentTaskID)
-        {
+        if await context.tryReentrantAcquire(taskID: currentTaskID) {
             do {
                 let result = try await body()
                 await context.decrementCounter()
@@ -179,7 +180,7 @@ public struct FileLock: Sendable {
 
         switch errno {
         case ENOSYS: return .notSupported
-        case EWOULDBLOCK: return .wouldBlock
+        case EWOULDBLOCK, EAGAIN: return .wouldBlock
         default: return .error(errno)
         }
     }
