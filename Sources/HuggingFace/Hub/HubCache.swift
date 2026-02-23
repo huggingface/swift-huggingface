@@ -551,12 +551,16 @@ public struct HubCache: Sendable {
 public enum HubCacheError: Error, LocalizedError {
     /// A path component contains unsafe characters that could enable path traversal attacks.
     case invalidPathComponent(String)
+    /// A file was cached successfully, but its snapshot path could not be resolved.
+    case cachedPathResolutionFailed(String)
 
     public var errorDescription: String? {
         switch self {
         case .invalidPathComponent(let component):
             return
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
+        case .cachedPathResolutionFailed(let path):
+            return "Unable to resolve cached file path for '\(path)'"
         }
     }
 }

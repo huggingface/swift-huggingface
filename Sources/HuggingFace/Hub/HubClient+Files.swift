@@ -506,9 +506,7 @@ public extension HubClient {
         }
 
         guard let destination else {
-            throw HTTPClientError.unexpectedError(
-                "Unable to determine cached file path for '\(repoPath)'; provide a destination"
-            )
+            throw HubCacheError.cachedPathResolutionFailed(repoPath)
         }
         // Create parent directory if needed
         try FileManager.default.createDirectory(
