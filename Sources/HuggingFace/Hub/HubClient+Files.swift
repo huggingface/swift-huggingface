@@ -1047,6 +1047,44 @@ public extension HubClient {
 // MARK: - Snapshot Download
 
 public extension HubClient {
+    /// Download a repository snapshot to a destination directory.
+    ///
+    /// This method downloads all files from a repository to the cache and then
+    /// copies them to `destination`.
+    /// Files are automatically cached in the Python-compatible cache directory,
+    /// allowing cache reuse between Swift and Python Hugging Face clients.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
+    ///   - destination: Local destination directory
+    ///   - revision: Git revision (branch, tag, or commit)
+    ///   - matching: Glob patterns to filter files (empty array downloads all files)
+    ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
+    ///   - progressHandler: Optional closure called with progress updates.
+    ///     Updates are delivered on the main actor.
+    /// - Returns: URL to `destination`.
+    func downloadSnapshot(
+        of repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        to destination: URL,
+        revision: String = "main",
+        matching globs: [String] = [],
+        localFilesOnly: Bool = false,
+        progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> URL {
+        try await downloadSnapshot(
+            of: repo,
+            kind: kind,
+            to: destination,
+            revision: revision,
+            matching: globs,
+            returnCachePath: false,
+            localFilesOnly: localFilesOnly,
+            progressHandler: progressHandler
+        )
+    }
+
     /// Download a repository snapshot.
     ///
     /// This method downloads all files from a repository to the cache by default.
@@ -1056,32 +1094,49 @@ public extension HubClient {
     /// - Parameters:
     ///   - repo: Repository identifier
     ///   - kind: Kind of repository
-    ///   - destination: Optional local destination directory
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
-    ///   - useSnapshotCachePath: When `true`, ignore `destination` and return the cache snapshot path directly.
     ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
-    /// - Returns: URL to the cache snapshot directory by default,
-    ///            or destination when provided.
+    /// - Returns: URL to the cache snapshot directory.
     func downloadSnapshot(
         of repo: Repo.ID,
         kind: Repo.Kind = .model,
-        to destination: URL? = nil,
         revision: String = "main",
         matching globs: [String] = [],
-        useSnapshotCachePath: Bool = false,
         localFilesOnly: Bool = false,
         progressHandler: (@Sendable (Progress) -> Void)? = nil
+    ) async throws -> URL {
+        try await downloadSnapshot(
+            of: repo,
+            kind: kind,
+            to: nil,
+            revision: revision,
+            matching: globs,
+            returnCachePath: true,
+            localFilesOnly: localFilesOnly,
+            progressHandler: progressHandler
+        )
+    }
+
+    private func downloadSnapshot(
+        of repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        to destination: URL?,
+        revision: String,
+        matching globs: [String],
+        returnCachePath: Bool,
+        localFilesOnly: Bool,
+        progressHandler: (@Sendable (Progress) -> Void)?
     ) async throws -> URL {
         guard cache != nil || destination != nil else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
-        if useSnapshotCachePath, cache == nil {
+        if returnCachePath, cache == nil {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
-        let effectiveDestination: URL? = useSnapshotCachePath ? nil : destination
+        let effectiveDestination: URL? = returnCachePath ? nil : destination
 
         if let fastPath = cachedSnapshotPath(
             repo: repo,
@@ -1099,7 +1154,7 @@ public extension HubClient {
             return try copySnapshotToLocalDirectoryIfNeeded(
                 from: fastPath,
                 destination: effectiveDestination,
-                returnCachePath: useSnapshotCachePath
+                returnCachePath: returnCachePath
             )
         }
 
@@ -1117,7 +1172,7 @@ public extension HubClient {
             return try copySnapshotToLocalDirectoryIfNeeded(
                 from: cachedPath,
                 destination: effectiveDestination,
-                returnCachePath: useSnapshotCachePath
+                returnCachePath: returnCachePath
             )
         }
 
@@ -1134,7 +1189,7 @@ public extension HubClient {
                 return try copySnapshotToLocalDirectoryIfNeeded(
                     from: cachedPath,
                     destination: effectiveDestination,
-                    returnCachePath: useSnapshotCachePath
+                    returnCachePath: returnCachePath
                 )
             }
             throw error
@@ -1241,7 +1296,7 @@ public extension HubClient {
         return try copySnapshotToLocalDirectoryIfNeeded(
             from: snapshotPath,
             destination: effectiveDestination,
-            returnCachePath: useSnapshotCachePath
+            returnCachePath: returnCachePath
         )
     }
 }

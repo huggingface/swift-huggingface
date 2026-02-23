@@ -1115,24 +1115,15 @@ import Testing
             let (client, cacheDirectory) = createMockClientWithCache()
             defer { try? FileManager.default.removeItem(at: cacheDirectory) }
             let cache = HubCache(cacheDirectory: cacheDirectory)
-            let destination = FileManager.default.temporaryDirectory
-                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
-            defer { try? FileManager.default.removeItem(at: destination) }
-
             let result = try await client.downloadSnapshot(
                 of: "user/model",
                 kind: .model,
-                to: destination,
-                revision: commit,
-                useSnapshotCachePath: true
+                revision: commit
             )
             let expectedSnapshotPath = cache.snapshotsDirectory(repo: "user/model", kind: .model)
                 .appendingPathComponent(commit)
             #expect(result == expectedSnapshotPath)
             #expect(FileManager.default.fileExists(atPath: result.appendingPathComponent("config.json").path))
-            #expect(
-                FileManager.default.fileExists(atPath: destination.appendingPathComponent("config.json").path) == false
-            )
         }
 
         @Test("downloadSnapshot localFilesOnly uses cache without network", .mockURLSession)
