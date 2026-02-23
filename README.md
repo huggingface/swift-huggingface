@@ -530,10 +530,12 @@ let destination = try await client.downloadSnapshot(
 
 > [!NOTE]
 > Snapshot progress uses size-weighted units.
-> When file sizes are known, units correspond to bytes,
+> When file sizes are known from the tree listing response,
+> units correspond to bytes,
 > so `fractionCompleted` approximates overall bytes downloaded.
 > If a file size is unknown at scheduling time,
-> a small fallback unit is used until transfer metadata becomes available.
+> a small fallback unit is used,
+> and that file's weight remains fixed for the download.
 
 #### User Access Management
 
