@@ -61,8 +61,12 @@ public enum FileDownloadEndpoint: String, Hashable, CaseIterable, Sendable {
 
 // MARK: - Upload Operations
 
+/// Response from the upload endpoint.
 private struct UploadResponse: Codable {
+    /// The path to the uploaded file.
     let path: String
+
+    /// The commit hash of the uploaded file.
     let commit: String?
 }
 
@@ -232,22 +236,23 @@ public extension HubClient {
 /// Metadata associated with a Hub file response.
 private struct FileMetadata: Sendable {
     /// The repository commit hash from the `X-Repo-Commit` header.
-    public let commitHash: String?
+    let commitHash: String?
+
+    /// The raw ETag value from `X-Linked-Etag` or `ETag`, when available.
+    let etag: String?
 
     /// The normalized ETag used for cache storage.
-    ///
-    /// This value typically comes from `X-Linked-Etag` when available,
-    /// with `ETag` as a fallback.
-    public let etag: String?
+    let normalizedEtag: String?
 
     /// Creates file metadata from response header values.
     ///
     /// - Parameters:
     ///   - commitHash: The repository commit hash, if provided.
     ///   - etag: The normalized ETag value, if provided.
-    public init(commitHash: String?, etag: String?) {
+    init(commitHash: String?, etag: String?) {
         self.commitHash = commitHash
         self.etag = etag
+        normalizedEtag = etag.map(Self.normalizeEtag)
     }
 
     /// Creates file metadata from an HTTP response.
@@ -255,7 +260,7 @@ private struct FileMetadata: Sendable {
     /// - Parameter response: The response to parse.
     /// - Returns: `nil` when the response is not an HTTP response,
     ///            or when it does not contain either metadata header.
-    public init?(response: URLResponse) {
+    init?(response: URLResponse) {
         guard let httpResponse = response as? HTTPURLResponse else {
             return nil
         }
@@ -267,10 +272,7 @@ private struct FileMetadata: Sendable {
             return nil
         }
 
-        self.init(
-            commitHash: commitHash,
-            etag: etag.map(Self.normalizeEtag)
-        )
+        self.init(commitHash: commitHash, etag: etag)
     }
 
     private static func normalizeEtag(_ etag: String) -> String {
@@ -348,8 +350,14 @@ public extension HubClient {
             .appending(component: revision)
             .appending(path: repoPath)
 
-        // HEAD preflight to capture Hub metadata before potential cross-host CDN redirect
-        let preflightMetadata = try await fetchFileMetadata(url: url)
+        // HEAD preflight to capture Hub metadata before potential cross-host CDN redirect.
+        // Only needed when caching is enabled, and failures should not block the download.
+        let preflightMetadata: FileMetadata? =
+            if cache != nil {
+                try? await fetchFileMetadata(url: url)
+            } else {
+                nil
+            }
 
         // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
@@ -361,7 +369,7 @@ public extension HubClient {
         // using the fallback metadata from the GET response object (no extra request)
         let responseMetadata = FileMetadata(response: response)
         if let cache = cache,
-            let etag = preflightMetadata?.etag ?? responseMetadata?.etag,
+            let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
             try? await cache.storeData(
@@ -451,7 +459,13 @@ public extension HubClient {
             .appending(path: repoPath)
 
         // HEAD preflight: capture Hub metadata before potential cross-host CDN redirect.
-        let preflightMetadata = try await fetchFileMetadata(url: url)
+        // Only needed when caching is enabled, and failures should not block the download.
+        let preflightMetadata: FileMetadata? =
+            if cache != nil {
+                try? await fetchFileMetadata(url: url)
+            } else {
+                nil
+            }
 
         // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
@@ -468,9 +482,10 @@ public extension HubClient {
 
         // Store in cache before moving to destination
         // This fallback parses metadata from the existing GET response object (no extra request).
+        let responseMetadata = FileMetadata(response: response)
         if let cache = cache,
-            let etag = preflightMetadata?.etag ?? FileMetadata(response: response)?.etag,
-            let commitHash = preflightMetadata?.commitHash ?? FileMetadata(response: response)?.commitHash
+            let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
+            let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
             try? await cache.storeFile(
                 at: tempURL,
@@ -841,6 +856,7 @@ public extension HubClient {
         }
 
         for entry in entries {
+            try validateSnapshotEntryPath(entry.path)
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
             let fileDestination = destination.appendingPathComponent(entry.path)
             #if canImport(FoundationNetworking)
@@ -1025,7 +1041,11 @@ private extension HubClient {
         var request = try await httpClient.createRequest(.head, urlPath)
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        let (_, response) = try await metadataSession.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (_, response) = try await metadataSession.data(for: request)
+        #else
+            let (_, response) = try await session.data(for: request, delegate: SameHostRedirectDelegate.shared)
+        #endif
         guard let metadata = XetFileMetadata(response: response) else {
             return nil
         }
@@ -1053,8 +1073,26 @@ private extension HubClient {
     /// This captures `X-Linked-Etag` and `X-Repo-Commit` before a potential CDN redirect.
     func fetchFileMetadata(url: URL) async throws -> FileMetadata? {
         let request = try await httpClient.createRequest(.head, url: url)
-        let (_, response) = try await metadataSession.data(for: request)
+        #if canImport(FoundationNetworking)
+            let (_, response) = try await metadataSession.data(for: request)
+        #else
+            let (_, response) = try await session.data(for: request, delegate: SameHostRedirectDelegate.shared)
+        #endif
         return FileMetadata(response: response)
+    }
+
+    /// Validates a snapshot entry path before writing to local disk.
+    func validateSnapshotEntryPath(_ path: String) throws {
+        guard !path.trimmingCharacters(in: .whitespaces).isEmpty else {
+            throw HubCacheError.invalidPathComponent(path)
+        }
+        if path.contains("\0") || path.contains("\\") || path.hasPrefix("/") {
+            throw HubCacheError.invalidPathComponent(path)
+        }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.allSatisfy({ !$0.isEmpty && $0 != ".." }) else {
+            throw HubCacheError.invalidPathComponent(path)
+        }
     }
 }
 

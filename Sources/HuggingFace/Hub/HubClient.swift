@@ -59,6 +59,10 @@ public final class HubClient: Sendable {
     let httpClient: HTTPClient
 
     /// Session used to fetch file metadata before cross-host redirects.
+    ///
+    /// On Darwin, metadata preflight uses per-task delegates on `session` directly.
+    /// On FoundationNetworking, this dedicated session is configured with
+    /// `SameHostRedirectDelegate` to preserve cross-host redirect blocking.
     let metadataSession: URLSession
 
     /// The cache for downloaded files, or `nil` if caching is disabled.
@@ -159,11 +163,15 @@ public final class HubClient: Sendable {
             tokenProvider: tokenProvider,
             session: session
         )
-        self.metadataSession = URLSession(
-            configuration: session.configuration,
-            delegate: SameHostRedirectDelegate.shared,
-            delegateQueue: nil
-        )
+        #if canImport(FoundationNetworking)
+            self.metadataSession = URLSession(
+                configuration: session.configuration,
+                delegate: SameHostRedirectDelegate.shared,
+                delegateQueue: nil
+            )
+        #else
+            self.metadataSession = session
+        #endif
         self.cache = cache
     }
 

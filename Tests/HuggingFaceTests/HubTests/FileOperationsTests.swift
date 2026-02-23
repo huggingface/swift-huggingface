@@ -177,7 +177,7 @@ import Testing
 
             #expect(info.exists == true)
             #expect(info.size == 12345)
-            #expect(info.etag == "abc123def")
+            #expect(info.etag == "\"abc123def\"")
             #expect(info.revision == "commit-sha-123")
             #expect(info.isLFS == false)
         }
@@ -384,6 +384,41 @@ import Testing
                 try? FileManager.default.removeItem(at: destination)
             }
         #endif
+
+        @Test("downloadSnapshot rejects path traversal entries", .mockURLSession)
+        func testDownloadSnapshotRejectsPathTraversalEntry() async throws {
+            let listResponse = """
+                [
+                    {"path": "../outside.txt", "type": "file", "oid": "abc", "size": 10}
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                #expect(path.contains("/api/models/user/model/tree/"))
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (response, Data(listResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+
+            await #expect(throws: HubCacheError.self) {
+                _ = try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    to: destination,
+                    revision: "main"
+                )
+            }
+        }
 
         #if !canImport(FoundationNetworking)
             // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
