@@ -399,6 +399,7 @@ public extension HubClient {
     ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional Progress object to track download progress
+    ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     /// - Returns: Cached file path, or destination path when provided.
     func downloadFile(
         at repoPath: String,
@@ -1058,6 +1059,8 @@ public extension HubClient {
     ///   - destination: Optional local destination directory
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
+    ///   - useSnapshotCachePath: When `true`, ignore `destination` and return the cache snapshot path directly.
+    ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
     /// - Returns: URL to the cache snapshot directory by default,
