@@ -786,7 +786,7 @@ import Testing
                 kind: .model,
                 to: destination,
                 revision: commit,
-                returnCachePath: true
+                useSnapshotCachePath: true
             )
             let expectedSnapshotPath = cache.snapshotsDirectory(repo: "user/model", kind: .model)
                 .appendingPathComponent(commit)

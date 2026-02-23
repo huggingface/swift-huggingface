@@ -955,14 +955,14 @@ public extension HubClient {
         to destination: URL? = nil,
         revision: String = "main",
         matching globs: [String] = [],
-        returnCachePath: Bool = false,
+        useSnapshotCachePath: Bool = false,
         localFilesOnly: Bool = false,
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         guard cache != nil || destination != nil else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
-        let effectiveDestination: URL? = returnCachePath ? nil : destination
+        let effectiveDestination: URL? = useSnapshotCachePath ? nil : destination
 
         if let fastPath = cachedSnapshotPath(
             repo: repo,
@@ -980,7 +980,7 @@ public extension HubClient {
             return try copySnapshotToLocalDirectoryIfNeeded(
                 from: fastPath,
                 destination: effectiveDestination,
-                returnCachePath: returnCachePath
+                returnCachePath: useSnapshotCachePath
             )
         }
 
@@ -998,7 +998,7 @@ public extension HubClient {
             return try copySnapshotToLocalDirectoryIfNeeded(
                 from: cachedPath,
                 destination: effectiveDestination,
-                returnCachePath: returnCachePath
+                returnCachePath: useSnapshotCachePath
             )
         }
 
@@ -1015,7 +1015,7 @@ public extension HubClient {
                 return try copySnapshotToLocalDirectoryIfNeeded(
                     from: cachedPath,
                     destination: effectiveDestination,
-                    returnCachePath: returnCachePath
+                    returnCachePath: useSnapshotCachePath
                 )
             }
             throw error
@@ -1122,7 +1122,7 @@ public extension HubClient {
         return try copySnapshotToLocalDirectoryIfNeeded(
             from: snapshotPath,
             destination: effectiveDestination,
-            returnCachePath: returnCachePath
+            returnCachePath: useSnapshotCachePath
         )
     }
 }
