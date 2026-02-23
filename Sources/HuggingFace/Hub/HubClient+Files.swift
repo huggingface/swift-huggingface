@@ -467,29 +467,193 @@ public extension HubClient {
             }
 
         // GET request for the actual file bytes
-        var request = try await httpClient.createRequest(.get, url: url)
-        request.cachePolicy = cachePolicy
-        let resumeOffset: Int64
-        let incompleteBlobPath: URL?
+        var baseRequest = try await httpClient.createRequest(.get, url: url)
+        baseRequest.cachePolicy = cachePolicy
+
         if let cache, let etag = preflightMetadata?.normalizedEtag {
-            let path = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
-            incompleteBlobPath = path
-            resumeOffset = fileSizeIfExists(at: path)
-            if resumeOffset > 0 {
-                request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+            let blobPath = try cache.blobPath(repo: repo, kind: kind, etag: etag)
+            let incompleteBlobPath = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
+            let lock = FileLock(path: blobPath, maxRetries: nil)
+            return try await lock.withLock {
+                if let cachedPath = cache.cachedFilePath(
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    filename: repoPath
+                ) {
+                    if let progress {
+                        progress.completedUnitCount = progress.totalUnitCount
+                    }
+                    return try copyFileToLocalDirectoryIfNeeded(
+                        cachedPath,
+                        repoPath: repoPath,
+                        destination: destination
+                    )
+                }
+                if FileManager.default.fileExists(atPath: blobPath.path) {
+                    if let progress {
+                        progress.completedUnitCount = progress.totalUnitCount
+                    }
+                    return try copyFileToLocalDirectoryIfNeeded(
+                        blobPath,
+                        repoPath: repoPath,
+                        destination: destination
+                    )
+                }
+
+                while true {
+                    var request = baseRequest
+                    let resumeOffset = fileSizeIfExists(at: incompleteBlobPath)
+                    if resumeOffset > 0 {
+                        request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+                    }
+
+                    let tempURL: URL
+                    let response: URLResponse
+                    do {
+                        #if canImport(FoundationNetworking)
+                            (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
+                        #else
+                            (tempURL, response) = try await session.download(
+                                for: request,
+                                delegate: progress.map {
+                                    DownloadProgressDelegate(progress: $0, resumeOffset: resumeOffset)
+                                }
+                            )
+                        #endif
+                    } catch {
+                        if error is CancellationError {
+                            throw error
+                        }
+                        if let fallback = cache.cachedFilePath(
+                            repo: repo,
+                            kind: kind,
+                            revision: revision,
+                            filename: repoPath
+                        ) {
+                            return try copyFileToLocalDirectoryIfNeeded(
+                                fallback,
+                                repoPath: repoPath,
+                                destination: destination
+                            )
+                        }
+                        throw error
+                    }
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
+                    }
+                    if httpResponse.statusCode == 416, resumeOffset > 0 {
+                        try? FileManager.default.removeItem(at: tempURL)
+                        try? FileManager.default.removeItem(at: incompleteBlobPath)
+                        if let progress {
+                            progress.completedUnitCount = 0
+                        }
+                        continue
+                    }
+                    if !(200 ..< 300).contains(httpResponse.statusCode) {
+                        let errorData = try? Data(contentsOf: tempURL)
+                        try? FileManager.default.removeItem(at: tempURL)
+                        _ = try httpClient.validateResponse(response, data: errorData)
+                        throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
+                    }
+
+                    let shouldMergeResume =
+                        resumeOffset > 0
+                        && httpResponse.statusCode == 206
+                    if resumeOffset > 0, httpResponse.statusCode == 200 {
+                        // Some servers ignore Range and return the full content with 200.
+                        // Treat this as a fresh download to avoid appending full content to a partial file.
+                        try? FileManager.default.removeItem(at: incompleteBlobPath)
+                    }
+
+                    // Store in cache before moving to destination.
+                    // This fallback parses metadata from the existing GET response object (no extra request).
+                    let responseMetadata = FileMetadata(response: response)
+                    if let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash {
+                        if shouldMergeResume {
+                            do {
+                                let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
+                                try FileManager.default.createDirectory(
+                                    at: blobsDirectory,
+                                    withIntermediateDirectories: true
+                                )
+                                if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
+                                    FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
+                                }
+                                try appendFileContents(from: tempURL, to: incompleteBlobPath)
+                                if FileManager.default.fileExists(atPath: blobPath.path) {
+                                    _ = try FileManager.default.replaceItemAt(blobPath, withItemAt: incompleteBlobPath)
+                                } else {
+                                    try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
+                                }
+                                try? FileManager.default.removeItem(at: tempURL)
+                            } catch {
+                                try? FileManager.default.removeItem(at: incompleteBlobPath)
+                                try? FileManager.default.removeItem(at: tempURL)
+                                throw error
+                            }
+                            try? await cache.storeFile(
+                                at: blobPath,
+                                repo: repo,
+                                kind: kind,
+                                revision: commitHash,
+                                filename: repoPath,
+                                etag: etag,
+                                ref: revision != commitHash ? revision : nil
+                            )
+                        } else {
+                            try? await cache.storeFile(
+                                at: tempURL,
+                                repo: repo,
+                                kind: kind,
+                                revision: commitHash,
+                                filename: repoPath,
+                                etag: etag,
+                                ref: revision != commitHash ? revision : nil
+                            )
+                        }
+                        if let cachedPath = cache.cachedFilePath(
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath
+                        ) {
+                            return try copyFileToLocalDirectoryIfNeeded(
+                                cachedPath,
+                                repoPath: repoPath,
+                                destination: destination
+                            )
+                        }
+                    }
+
+                    guard let destination else {
+                        throw HubCacheError.cachedPathResolutionFailed(repoPath)
+                    }
+                    // Create parent directory if needed
+                    try FileManager.default.createDirectory(
+                        at: destination.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+
+                    // Move from temporary location to final destination
+                    try? FileManager.default.removeItem(at: destination)
+                    try FileManager.default.moveItem(at: tempURL, to: destination)
+
+                    return destination
+                }
             }
-        } else {
-            resumeOffset = 0
-            incompleteBlobPath = nil
         }
+
+        let resumeOffset: Int64 = 0
         let tempURL: URL
         let response: URLResponse
         do {
             #if canImport(FoundationNetworking)
-                (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
+                (tempURL, response) = try await session.asyncDownload(for: baseRequest, progress: progress)
             #else
                 (tempURL, response) = try await session.download(
-                    for: request,
+                    for: baseRequest,
                     delegate: progress.map { DownloadProgressDelegate(progress: $0, resumeOffset: resumeOffset) }
                 )
             #endif
@@ -512,42 +676,11 @@ public extension HubClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
         }
-        if httpResponse.statusCode == 416,
-            resumeOffset > 0,
-            let incompleteBlobPath
-        {
-            try? FileManager.default.removeItem(at: tempURL)
-            try? FileManager.default.removeItem(at: incompleteBlobPath)
-            if let progress {
-                progress.completedUnitCount = 0
-            }
-            return try await downloadFile(
-                at: repoPath,
-                from: repo,
-                to: destination,
-                kind: kind,
-                revision: revision,
-                endpoint: endpoint,
-                cachePolicy: cachePolicy,
-                progress: progress,
-                transport: transport,
-                localFilesOnly: localFilesOnly
-            )
-        }
         if !(200 ..< 300).contains(httpResponse.statusCode) {
             let errorData = try? Data(contentsOf: tempURL)
             try? FileManager.default.removeItem(at: tempURL)
             _ = try httpClient.validateResponse(response, data: errorData)
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
-        }
-        let shouldMergeResume =
-            resumeOffset > 0
-            && httpResponse.statusCode == 206
-            && incompleteBlobPath != nil
-        if resumeOffset > 0, httpResponse.statusCode == 200, let incompleteBlobPath {
-            // Some servers ignore Range and return the full content with 200.
-            // Treat this as a fresh download to avoid appending full content to a partial file.
-            try? FileManager.default.removeItem(at: incompleteBlobPath)
         }
 
         // Store in cache before moving to destination
@@ -557,52 +690,15 @@ public extension HubClient {
             let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
-            if shouldMergeResume, let incompleteBlobPath {
-                do {
-                    let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
-                    try FileManager.default.createDirectory(
-                        at: blobsDirectory,
-                        withIntermediateDirectories: true
-                    )
-                    let blobPath = try cache.blobPath(repo: repo, kind: kind, etag: etag)
-                    let lock = FileLock(path: blobPath)
-                    try await lock.withLock {
-                        if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
-                            FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
-                        }
-                        try appendFileContents(from: tempURL, to: incompleteBlobPath)
-                        if FileManager.default.fileExists(atPath: blobPath.path) {
-                            _ = try FileManager.default.replaceItemAt(blobPath, withItemAt: incompleteBlobPath)
-                        } else {
-                            try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
-                        }
-                    }
-                    try? FileManager.default.removeItem(at: tempURL)
-                    try? await cache.storeFile(
-                        at: blobPath,
-                        repo: repo,
-                        kind: kind,
-                        revision: commitHash,
-                        filename: repoPath,
-                        etag: etag,
-                        ref: revision != commitHash ? revision : nil
-                    )
-                } catch {
-                    try? FileManager.default.removeItem(at: incompleteBlobPath)
-                    try? FileManager.default.removeItem(at: tempURL)
-                    throw error
-                }
-            } else {
-                try? await cache.storeFile(
-                    at: tempURL,
-                    repo: repo,
-                    kind: kind,
-                    revision: commitHash,
-                    filename: repoPath,
-                    etag: etag,
-                    ref: revision != commitHash ? revision : nil
-                )
-            }
+            try? await cache.storeFile(
+                at: tempURL,
+                repo: repo,
+                kind: kind,
+                revision: commitHash,
+                filename: repoPath,
+                etag: etag,
+                ref: revision != commitHash ? revision : nil
+            )
             if let cachedPath = cache.cachedFilePath(
                 repo: repo,
                 kind: kind,

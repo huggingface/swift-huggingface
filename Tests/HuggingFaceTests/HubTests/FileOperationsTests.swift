@@ -40,6 +40,34 @@ import Testing
         }
     }
 
+    private final class RequestRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _getCount = 0
+        private var _rangeHeaders: [String] = []
+
+        func recordGet(rangeHeader: String?) -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            _getCount += 1
+            if let rangeHeader {
+                _rangeHeaders.append(rangeHeader)
+            }
+            return _getCount
+        }
+
+        var getCount: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return _getCount
+        }
+
+        var rangeHeaders: [String] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _rangeHeaders
+        }
+    }
+
     @Suite("File Operations Tests", .serialized)
     struct FileOperationsTests {
         func createMockClient(bearerToken: String? = "test_token") -> HubClient {
@@ -529,6 +557,252 @@ import Testing
             #expect(FileManager.default.fileExists(atPath: incompletePath.path) == false)
             #expect(try Data(contentsOf: blobPath) == full)
             #expect(try Data(contentsOf: cachedPath) == full)
+        }
+
+        @Test("downloadFile serializes concurrent resume before ranged request", .mockURLSession)
+        func testDownloadFileConcurrentResumeSerializesRangedRequest() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let partial = Data("hello ".utf8)
+            let remainder = Data("world".utf8)
+            let full = Data("hello world".utf8)
+            let expectedRange = "bytes=\(partial.count)-"
+            let requestRecorder = RequestRecorder()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    if request.httpMethod == "HEAD" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: [
+                                "ETag": "\"etag-123\"",
+                                "X-Repo-Commit": commit,
+                            ]
+                        )!
+                        return (response, Data())
+                    }
+                    let getIndex = requestRecorder.recordGet(
+                        rangeHeader: request.value(forHTTPHeaderField: "Range")
+                    )
+                    if getIndex == 1 {
+                        Thread.sleep(forTimeInterval: 0.25)
+                    }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 206,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "text/plain",
+                            "Content-Length": "\(remainder.count)",
+                        ]
+                    )!
+                    return (response, remainder)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let repoID: Repo.ID = "user/model"
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+            let incompletePath = blobsDir.appendingPathComponent("etag-123.incomplete")
+            try partial.write(to: incompletePath, options: .atomic)
+
+            async let firstPath = client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: nil,
+                revision: "main"
+            )
+            async let secondPath = client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: nil,
+                revision: "main"
+            )
+            let (resolvedFirstPath, resolvedSecondPath) = try await (firstPath, secondPath)
+
+            #expect(requestRecorder.getCount == 1)
+            #expect(requestRecorder.rangeHeaders == [expectedRange])
+            #expect(try Data(contentsOf: resolvedFirstPath) == full)
+            #expect(try Data(contentsOf: resolvedSecondPath) == full)
+        }
+
+        @Test("downloadFile concurrent resume produces uncorrupted blob", .mockURLSession)
+        func testDownloadFileConcurrentResumeNoCorruption() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let partial = Data("hello ".utf8)
+            let remainder = Data("world".utf8)
+            let full = Data("hello world".utf8)
+            let requestRecorder = RequestRecorder()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    if request.httpMethod == "HEAD" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: [
+                                "ETag": "\"etag-123\"",
+                                "X-Repo-Commit": commit,
+                            ]
+                        )!
+                        return (response, Data())
+                    }
+                    let getIndex = requestRecorder.recordGet(
+                        rangeHeader: request.value(forHTTPHeaderField: "Range")
+                    )
+                    if getIndex == 1 {
+                        Thread.sleep(forTimeInterval: 0.25)
+                    }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 206,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "text/plain",
+                            "Content-Length": "\(remainder.count)",
+                        ]
+                    )!
+                    return (response, remainder)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let repoID: Repo.ID = "user/model"
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+            let incompletePath = blobsDir.appendingPathComponent("etag-123.incomplete")
+            try partial.write(to: incompletePath, options: .atomic)
+
+            let resolvedPaths = try await withThrowingTaskGroup(of: URL.self) { group in
+                for _ in 0 ..< 4 {
+                    group.addTask {
+                        try await client.downloadContentsOfFile(
+                            at: "test.txt",
+                            from: repoID,
+                            to: nil,
+                            revision: "main"
+                        )
+                    }
+                }
+                var paths: [URL] = []
+                for try await path in group {
+                    paths.append(path)
+                }
+                return paths
+            }
+
+            let blobPath = blobsDir.appendingPathComponent("etag-123")
+            #expect(requestRecorder.getCount == 1)
+            #expect(FileManager.default.fileExists(atPath: blobPath.path))
+            #expect(FileManager.default.fileExists(atPath: incompletePath.path) == false)
+            #expect(try Data(contentsOf: blobPath) == full)
+            for path in resolvedPaths {
+                #expect(try Data(contentsOf: path) == full)
+            }
+        }
+
+        @Test("downloadFile waiter does not fail while lock is held for long resume", .mockURLSession)
+        func testDownloadFileResumeWaiterDoesNotFailOnLongLock() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let partial = Data("hello ".utf8)
+            let remainder = Data("world".utf8)
+            let full = Data("hello world".utf8)
+            let requestRecorder = RequestRecorder()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    if request.httpMethod == "HEAD" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: [
+                                "ETag": "\"etag-123\"",
+                                "X-Repo-Commit": commit,
+                            ]
+                        )!
+                        return (response, Data())
+                    }
+                    let getIndex = requestRecorder.recordGet(
+                        rangeHeader: request.value(forHTTPHeaderField: "Range")
+                    )
+                    if getIndex == 1 {
+                        Thread.sleep(forTimeInterval: 6.5)
+                    }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 206,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "text/plain",
+                            "Content-Length": "\(remainder.count)",
+                        ]
+                    )!
+                    return (response, remainder)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let repoID: Repo.ID = "user/model"
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+            let incompletePath = blobsDir.appendingPathComponent("etag-123.incomplete")
+            try partial.write(to: incompletePath, options: .atomic)
+
+            async let firstPath = client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: nil,
+                revision: "main"
+            )
+            async let secondPath = client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: nil,
+                revision: "main"
+            )
+            let (resolvedFirstPath, resolvedSecondPath) = try await (firstPath, secondPath)
+
+            let blobPath = blobsDir.appendingPathComponent("etag-123")
+            #expect(requestRecorder.getCount == 1)
+            #expect(FileManager.default.fileExists(atPath: blobPath.path))
+            #expect(FileManager.default.fileExists(atPath: incompletePath.path) == false)
+            #expect(try Data(contentsOf: blobPath) == full)
+            #expect(try Data(contentsOf: resolvedFirstPath) == full)
+            #expect(try Data(contentsOf: resolvedSecondPath) == full)
         }
 
         #if !canImport(FoundationNetworking)
