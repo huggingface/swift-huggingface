@@ -472,8 +472,9 @@ public extension HubClient {
         let resumeOffset: Int64
         let incompleteBlobPath: URL?
         if let cache, let etag = preflightMetadata?.normalizedEtag {
+            let safeEtag = try validateCachePathComponent(etag)
             let path = cache.blobsDirectory(repo: repo, kind: kind)
-                .appendingPathComponent("\(etag).incomplete")
+                .appendingPathComponent("\(safeEtag).incomplete")
             incompleteBlobPath = path
             resumeOffset = fileSizeIfExists(at: path)
             if resumeOffset > 0 {
@@ -498,6 +499,9 @@ public extension HubClient {
                 )
             #endif
         } catch {
+            if error is CancellationError {
+                throw error
+            }
             if let cache = cache,
                 let fallback = cache.cachedFilePath(
                     repo: repo,
@@ -534,6 +538,15 @@ public extension HubClient {
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
         }
+        let shouldMergeResume =
+            resumeOffset > 0
+            && httpResponse.statusCode == 206
+            && incompleteBlobPath != nil
+        if resumeOffset > 0, httpResponse.statusCode == 200, let incompleteBlobPath {
+            // Some servers ignore Range and return the full content with 200.
+            // Treat this as a fresh download to avoid appending full content to a partial file.
+            try? FileManager.default.removeItem(at: incompleteBlobPath)
+        }
 
         // Store in cache before moving to destination
         // This fallback parses metadata from the existing GET response object (no extra request).
@@ -542,20 +555,24 @@ public extension HubClient {
             let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
-            if resumeOffset > 0, let incompleteBlobPath {
+            if shouldMergeResume, let incompleteBlobPath {
                 do {
+                    let safeEtag = try validateCachePathComponent(etag)
                     let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
                     try FileManager.default.createDirectory(
                         at: blobsDirectory,
                         withIntermediateDirectories: true
                     )
-                    if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
-                        FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
+                    let blobPath = blobsDirectory.appendingPathComponent(safeEtag)
+                    let lock = FileLock(path: blobPath)
+                    try await lock.withLock {
+                        if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
+                            FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
+                        }
+                        try appendFileContents(from: tempURL, to: incompleteBlobPath)
+                        try? FileManager.default.removeItem(at: blobPath)
+                        try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
                     }
-                    try appendFileContents(from: tempURL, to: incompleteBlobPath)
-                    let blobPath = blobsDirectory.appendingPathComponent(etag)
-                    try? FileManager.default.removeItem(at: blobPath)
-                    try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
                     try? FileManager.default.removeItem(at: tempURL)
                     try? await cache.storeFile(
                         at: blobPath,
@@ -567,15 +584,9 @@ public extension HubClient {
                         ref: revision != commitHash ? revision : nil
                     )
                 } catch {
-                    try? await cache.storeFile(
-                        at: tempURL,
-                        repo: repo,
-                        kind: kind,
-                        revision: commitHash,
-                        filename: repoPath,
-                        etag: etag,
-                        ref: revision != commitHash ? revision : nil
-                    )
+                    try? FileManager.default.removeItem(at: incompleteBlobPath)
+                    try? FileManager.default.removeItem(at: tempURL)
+                    throw error
                 }
             } else {
                 try? await cache.storeFile(
@@ -960,6 +971,9 @@ public extension HubClient {
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         guard cache != nil || destination != nil else {
+            throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
+        }
+        if useSnapshotCachePath, cache == nil {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
         let effectiveDestination: URL? = useSnapshotCachePath ? nil : destination
@@ -1369,6 +1383,21 @@ private extension HubClient {
         return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
+    /// Validates a server-provided value before using it as a cache path component.
+    func validateCachePathComponent(_ value: String) throws -> String {
+        guard
+            !value.isEmpty,
+            value != ".",
+            value != "..",
+            !value.contains("/"),
+            !value.contains("\\"),
+            !value.contains("\0")
+        else {
+            throw HubCacheError.invalidPathComponent(value)
+        }
+        return value
+    }
+
     /// Appends source file bytes to destination file.
     func appendFileContents(from source: URL, to destination: URL) throws {
         let sourceHandle = try FileHandle(forReadingFrom: source)
@@ -1377,7 +1406,9 @@ private extension HubClient {
             try? sourceHandle.close()
             try? destinationHandle.close()
         }
+
         _ = try destinationHandle.seekToEnd()
+
         let chunkSize = 64 * 1024
         while true {
             let chunk = try sourceHandle.read(upToCount: chunkSize) ?? Data()

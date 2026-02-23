@@ -467,6 +467,70 @@ import Testing
             #expect(try Data(contentsOf: cachedPath) == full)
         }
 
+        @Test("downloadFile handles server ignoring range by treating as fresh download", .mockURLSession)
+        func testDownloadFileResumeRangeIgnoredReturnsFullBody() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let partial = Data("hello ".utf8)
+            let full = Data("hello world".utf8)
+            let expectedRange = "bytes=\(partial.count)-"
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    if request.httpMethod == "HEAD" {
+                        let response = HTTPURLResponse(
+                            url: request.url!,
+                            statusCode: 200,
+                            httpVersion: "HTTP/1.1",
+                            headerFields: [
+                                "ETag": "\"etag-123\"",
+                                "X-Repo-Commit": commit,
+                            ]
+                        )!
+                        return (response, Data())
+                    }
+                    #expect(request.value(forHTTPHeaderField: "Range") == expectedRange)
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "text/plain",
+                            "Content-Length": "\(full.count)",
+                        ]
+                    )!
+                    return (response, full)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let repoID: Repo.ID = "user/model"
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let blobsDir = cache.blobsDirectory(repo: repoID, kind: .model)
+            try FileManager.default.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+            let incompletePath = blobsDir.appendingPathComponent("etag-123.incomplete")
+            try partial.write(to: incompletePath, options: .atomic)
+
+            let cachedPath = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: nil,
+                revision: "main"
+            )
+            let blobPath = blobsDir.appendingPathComponent("etag-123")
+            #expect(FileManager.default.fileExists(atPath: incompletePath.path) == false)
+            #expect(try Data(contentsOf: blobPath) == full)
+            #expect(try Data(contentsOf: cachedPath) == full)
+        }
+
         #if !canImport(FoundationNetworking)
             // Disabled on Linux: FoundationNetworking URLProtocol client can crash during finishLoading.
             @Test("downloadSnapshot invokes progressHandler during file download", .mockURLSession)
