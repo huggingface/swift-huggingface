@@ -56,7 +56,10 @@ public final class HubClient: Sendable {
     public static let `default` = HubClient()
 
     /// The underlying HTTP client.
-    internal let httpClient: HTTPClient
+    let httpClient: HTTPClient
+
+    /// Session used to fetch file metadata before cross-host redirects.
+    let metadataSession: URLSession
 
     /// The cache for downloaded files, or `nil` if caching is disabled.
     ///
@@ -155,6 +158,11 @@ public final class HubClient: Sendable {
             userAgent: userAgent,
             tokenProvider: tokenProvider,
             session: session
+        )
+        self.metadataSession = URLSession(
+            configuration: session.configuration,
+            delegate: SameHostRedirectDelegate.shared,
+            delegateQueue: nil
         )
         self.cache = cache
     }
