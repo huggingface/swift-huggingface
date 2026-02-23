@@ -12,6 +12,23 @@ import Foundation
 import Xet
 
 private let xetMinimumFileSizeBytes = 16 * 1024 * 1024  // 16MiB
+private let snapshotUnknownFileWeight: Int64 = 1
+
+private final class SnapshotProgressBox: @unchecked Sendable {
+    let value: Progress
+
+    init(_ value: Progress) {
+        self.value = value
+    }
+}
+
+private struct SnapshotDownloadWorkItem: Sendable {
+    let entry: Git.TreeEntry
+    let transport: FileDownloadTransport
+    let weight: Int64
+    let destination: URL?
+    let progress: SnapshotProgressBox
+}
 
 /// Controls which transport is used for file downloads.
 public enum FileDownloadTransport: Hashable, CaseIterable, Sendable {
@@ -185,6 +202,7 @@ public extension HubClient {
         message: String,
         maxConcurrent: Int = 3
     ) async throws -> [(path: String, commit: String?)] {
+        let maxConcurrent = max(1, maxConcurrent)
         let entries = Array(batch)
 
         return try await withThrowingTaskGroup(
@@ -1071,7 +1089,8 @@ public extension HubClient {
         revision: String = "main",
         matching globs: [String] = [],
         localFilesOnly: Bool = false,
-        progressHandler: (@Sendable (Progress) -> Void)? = nil
+        maxConcurrentDownloads: Int = 8,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
@@ -1081,6 +1100,7 @@ public extension HubClient {
             matching: globs,
             returnCachePath: false,
             localFilesOnly: localFilesOnly,
+            maxConcurrentDownloads: maxConcurrentDownloads,
             progressHandler: progressHandler
         )
     }
@@ -1097,6 +1117,9 @@ public extension HubClient {
     ///   - revision: Git revision (branch, tag, or commit)
     ///   - matching: Glob patterns to filter files (empty array downloads all files)
     ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
+    ///   - maxConcurrentDownloads: Maximum number of concurrent downloads for LFS files.
+    ///                             This value is ignored for non-LFS files.
+    ///                             The default value is 8. Values less than 1 are treated as 1.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
     /// - Returns: URL to the cache snapshot directory.
@@ -1106,7 +1129,8 @@ public extension HubClient {
         revision: String = "main",
         matching globs: [String] = [],
         localFilesOnly: Bool = false,
-        progressHandler: (@Sendable (Progress) -> Void)? = nil
+        maxConcurrentDownloads: Int = 8,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
@@ -1116,6 +1140,7 @@ public extension HubClient {
             matching: globs,
             returnCachePath: true,
             localFilesOnly: localFilesOnly,
+            maxConcurrentDownloads: maxConcurrentDownloads,
             progressHandler: progressHandler
         )
     }
@@ -1128,8 +1153,10 @@ public extension HubClient {
         matching globs: [String],
         returnCachePath: Bool,
         localFilesOnly: Bool,
-        progressHandler: (@Sendable (Progress) -> Void)?
+        maxConcurrentDownloads: Int,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)?
     ) async throws -> URL {
+        let maxConcurrentDownloads = max(1, maxConcurrentDownloads)
         guard cache != nil || destination != nil else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
@@ -1147,9 +1174,7 @@ public extension HubClient {
             let progress = Progress(totalUnitCount: 1)
             progress.completedUnitCount = 1
             if let progressHandler {
-                await MainActor.run {
-                    progressHandler(progress)
-                }
+                await progressHandler(progress)
             }
             return try copySnapshotToLocalDirectoryIfNeeded(
                 from: fastPath,
@@ -1203,11 +1228,12 @@ public extension HubClient {
                 }
             }
 
-        let progress = Progress(totalUnitCount: Int64(entries.count))
+        let totalWeight = entries.reduce(Int64(0)) { partial, entry in
+            partial + snapshotWeight(for: entry)
+        }
+        let progress = Progress(totalUnitCount: max(totalWeight, 1))
         if let progressHandler {
-            await MainActor.run {
-                progressHandler(progress)
-            }
+            await progressHandler(progress)
         }
 
         if let cache, isCommitHash(revision) {
@@ -1220,68 +1246,67 @@ public extension HubClient {
             )
         }
 
-        for entry in entries {
+        let workItems = try entries.map { entry in
             try validateSnapshotEntryPath(entry.path)
-            let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
-            let fileDestination = effectiveDestination?.appendingPathComponent(entry.path)
-            #if canImport(FoundationNetworking)
-                let samplingTask: Task<Void, Never>? =
-                    if let progressHandler {
-                        Task(priority: Task.currentPriority) {
-                            while !Task.isCancelled {
-                                await MainActor.run {
-                                    progressHandler(progress)
-                                }
-                                try? await Task.sleep(for: .milliseconds(100))
-                            }
-                        }
-                    } else {
-                        nil
-                    }
-            #else
-                let samplingTask: Task<Void, Never>? = nil
-            #endif
-
-            // downloadFile handles cache lookup and storage automatically
-            do {
-                _ = try await withTaskCancellationHandler {
-                    try await downloadFile(
-                        entry,
-                        from: repo,
-                        to: fileDestination,
-                        kind: kind,
-                        revision: revision,
-                        progress: fileProgress,
-                        localFilesOnly: localFilesOnly
-                    )
-                } onCancel: {
-                    samplingTask?.cancel()
+            let weight = snapshotWeight(for: entry)
+            let fileProgress = Progress(totalUnitCount: weight, parent: progress, pendingUnitCount: weight)
+            return SnapshotDownloadWorkItem(
+                entry: entry,
+                transport: snapshotTransport(for: entry),
+                weight: weight,
+                destination: effectiveDestination?.appendingPathComponent(entry.path),
+                progress: SnapshotProgressBox(fileProgress)
+            )
+        }
+        let lfsEntries =
+            workItems
+            .filter { $0.transport == .lfs }
+            .sorted {
+                if $0.weight == $1.weight {
+                    return $0.entry.path < $1.entry.path
                 }
-                try Task.checkCancellation()
-            } catch {
-                if let samplingTask {
-                    samplingTask.cancel()
-                    _ = await samplingTask.result
-                }
-                throw error
+                return $0.weight > $1.weight
             }
+        let xetEntries = workItems.filter { $0.transport != .lfs }
 
-            fileProgress.completedUnitCount = fileProgress.totalUnitCount
+        let samplingTask = makeSnapshotProgressSamplingTask(
+            progress: progress,
+            progressHandler: progressHandler
+        )
+
+        do {
+            try await downloadSnapshotWorkItemsConcurrently(
+                lfsEntries,
+                maxConcurrent: maxConcurrentDownloads,
+                repo: repo,
+                kind: kind,
+                revision: revision,
+                localFilesOnly: localFilesOnly
+            )
+            for workItem in xetEntries {
+                try await downloadSnapshotWorkItem(
+                    workItem,
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    localFilesOnly: localFilesOnly
+                )
+            }
+        } catch {
+            samplingTask?.cancel()
             if let samplingTask {
-                samplingTask.cancel()
                 _ = await samplingTask.result
             }
-            if let progressHandler {
-                await MainActor.run {
-                    progressHandler(progress)
-                }
-            }
+            throw error
+        }
+
+        samplingTask?.cancel()
+        if let samplingTask {
+            _ = await samplingTask.result
         }
 
         if let progressHandler {
-            await MainActor.run {
-                progressHandler(progress)
-            }
+            await progressHandler(progress)
         }
 
         guard let cache else {
@@ -1341,6 +1366,94 @@ private struct XetFileMetadata: Sendable {
 }
 
 private extension HubClient {
+    func snapshotWeight(for entry: Git.TreeEntry) -> Int64 {
+        guard let size = entry.size else {
+            return snapshotUnknownFileWeight
+        }
+        return max(Int64(size), 1)
+    }
+
+    func snapshotTransport(for entry: Git.TreeEntry) -> FileDownloadTransport {
+        let useXet = FileDownloadTransport.automatic.shouldUseXet(
+            fileSizeBytes: entry.size,
+            minimumFileSizeBytes: xetMinimumFileSizeBytes
+        )
+        return useXet ? .automatic : .lfs
+    }
+
+    func makeSnapshotProgressSamplingTask(
+        progress: Progress,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)?
+    ) -> Task<Void, Never>? {
+        guard let progressHandler else {
+            return nil
+        }
+        let boxedProgress = SnapshotProgressBox(progress)
+        return Task(priority: Task.currentPriority) {
+            while !Task.isCancelled {
+                await progressHandler(boxedProgress.value)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    func downloadSnapshotWorkItem(
+        _ workItem: SnapshotDownloadWorkItem,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        localFilesOnly: Bool
+    ) async throws {
+        _ = try await downloadFile(
+            workItem.entry,
+            from: repo,
+            to: workItem.destination,
+            kind: kind,
+            revision: revision,
+            progress: workItem.progress.value,
+            transport: workItem.transport,
+            localFilesOnly: localFilesOnly
+        )
+        workItem.progress.value.completedUnitCount = workItem.progress.value.totalUnitCount
+    }
+
+    func downloadSnapshotWorkItemsConcurrently(
+        _ workItems: [SnapshotDownloadWorkItem],
+        maxConcurrent: Int,
+        repo: Repo.ID,
+        kind: Repo.Kind,
+        revision: String,
+        localFilesOnly: Bool
+    ) async throws {
+        guard !workItems.isEmpty else {
+            return
+        }
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            var activeCount = 0
+            for workItem in workItems {
+                while activeCount >= maxConcurrent {
+                    if try await group.next() != nil {
+                        activeCount -= 1
+                    }
+                }
+
+                group.addTask {
+                    try await self.downloadSnapshotWorkItem(
+                        workItem,
+                        repo: repo,
+                        kind: kind,
+                        revision: revision,
+                        localFilesOnly: localFilesOnly
+                    )
+                }
+                activeCount += 1
+            }
+
+            for try await _ in group {}
+        }
+    }
+
     /// Generates the path to a cached snapshot.
     func cachedSnapshotPath(
         repo: Repo.ID,
