@@ -7,7 +7,7 @@ import Testing
 
 @testable import HuggingFace
 
-#if swift(>=6.1)
+#if swift(>=6.1) && !os(Linux)
     private final class ProgressCallCounter: @unchecked Sendable {
         private let lock = NSLock()
         private var _count = 0
