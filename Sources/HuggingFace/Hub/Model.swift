@@ -44,6 +44,36 @@ public struct Model: Identifiable, Codable, Sendable {
     /// The card data (README metadata).
     public let cardData: [String: Value]?
 
+    /// The model config.
+    public let config: [String: Value]?
+
+    /// The all-time download count.
+    public let downloadsAllTime: Int?
+
+    /// The trending score.
+    public let trendingScore: Int?
+
+    /// The used storage in bytes.
+    public let usedStorage: Int?
+
+    /// The resource group metadata.
+    public let resourceGroup: [String: Value]?
+
+    /// Transformers metadata.
+    public let transformersInfo: [String: Value]?
+
+    /// Inference metadata.
+    public let inference: Value?
+
+    /// Inference provider mapping metadata.
+    public let inferenceProviderMapping: Value?
+
+    /// Linked spaces.
+    public let spaces: [String]?
+
+    /// Safetensors metadata.
+    public let safetensors: [String: Value]?
+
     /// The sibling files information.
     public let siblings: [SiblingInfo]?
 
@@ -52,8 +82,12 @@ public struct Model: Identifiable, Codable, Sendable {
         /// The relative path of the file.
         public let relativeFilename: String
 
+        /// The file size in bytes, when available.
+        public let size: Int?
+
         private enum CodingKeys: String, CodingKey {
             case relativeFilename = "rfilename"
+            case size
         }
     }
 
@@ -72,6 +106,16 @@ public struct Model: Identifiable, Codable, Sendable {
         case pipelineTag = "pipeline_tag"
         case createdAt
         case cardData
+        case config
+        case downloadsAllTime
+        case trendingScore
+        case usedStorage
+        case resourceGroup
+        case transformersInfo
+        case inference
+        case inferenceProviderMapping
+        case spaces
+        case safetensors
         case siblings
     }
 }

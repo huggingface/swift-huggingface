@@ -293,6 +293,111 @@ import Testing
                 _ = try await client.createRepo(kind: .model, name: "existing-model")
             }
         }
+
+        @Test("Create space repo with existOk skips space requirement", .mockURLSession)
+        func testCreateSpaceRepoExistOkWithoutSpaceConfiguration() async throws {
+            let errorResponse = """
+                {
+                    "error": "Repository already exists"
+                }
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/repos/create")
+                #expect(request.httpMethod == "POST")
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 409,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(errorResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let result = try await client.createRepo(
+                kind: .space,
+                name: "existing-space",
+                organization: "myorg",
+                existOk: true
+            )
+
+            #expect(result.url == "https://huggingface.co/spaces/myorg/existing-space")
+            #expect(result.repoId == nil)
+        }
+
+        @Test("Create space repo sends space configuration payload", .mockURLSession)
+        func testCreateSpaceRepoWithConfiguration() async throws {
+            let mockResponse = """
+                {
+                    "url": "https://huggingface.co/spaces/myorg/new-space",
+                    "repoId": "space-123"
+                }
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/repos/create")
+                #expect(request.httpMethod == "POST")
+
+                if let body = request.httpBody,
+                    let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+                {
+                    #expect(json["type"] as? String == "space")
+                    #expect(json["name"] as? String == "new-space")
+                    #expect(json["organization"] as? String == "myorg")
+                    #expect(json["sdk"] as? String == "gradio")
+                    #expect(json["hardware"] as? String == "cpu-basic")
+                    #expect(json["storageTier"] as? String == "small")
+                    #expect(json["sleepTimeSeconds"] as? Int == 3600)
+
+                    if let secrets = json["secrets"] as? [[String: Any]] {
+                        #expect(secrets.count == 1)
+                        #expect(secrets[0]["key"] as? String == "API_KEY")
+                        #expect(secrets[0]["value"] as? String == "secret")
+                    }
+
+                    if let variables = json["variables"] as? [[String: Any]] {
+                        #expect(variables.count == 1)
+                        #expect(variables[0]["key"] as? String == "ENV")
+                        #expect(variables[0]["value"] as? String == "prod")
+                        #expect(variables[0]["description"] as? String == "Environment name")
+                    }
+                }
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let result = try await client.createRepo(
+                kind: .space,
+                name: "new-space",
+                organization: "myorg",
+                space: Repo.SpaceConfiguration(
+                    sdk: "gradio",
+                    hardware: "cpu-basic",
+                    storage: "small",
+                    sleepTime: 3600,
+                    secrets: [
+                        .init(key: "API_KEY", value: "secret")
+                    ],
+                    variables: [
+                        .init(key: "ENV", value: "prod", description: "Environment name")
+                    ]
+                )
+            )
+
+            #expect(result.url == "https://huggingface.co/spaces/myorg/new-space")
+            #expect(result.repoId == "space-123")
+        }
     }
 
 #endif  // swift(>=6.1)

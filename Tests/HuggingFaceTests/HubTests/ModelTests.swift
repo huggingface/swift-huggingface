@@ -104,6 +104,49 @@ import Testing
             #expect(result.items[0].id == "google/bert-base-uncased")
         }
 
+        @Test("List models with additional query parameters", .mockURLSession)
+        func testListModelsWithAdditionalParameters() async throws {
+            let mockResponse = """
+                [
+                    {
+                        "id": "google/bert-base-uncased"
+                    }
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/models")
+
+                let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+                let query = Dictionary(uniqueKeysWithValues: (queryItems ?? []).map { ($0.name, $0.value ?? "") })
+
+                #expect(query["apps"] == "text-generation-inference")
+                #expect(query["gated"] == "true")
+                #expect(query["model_name"] == "bert-base")
+                #expect(query["inference_provider"]?.contains("hf-inference") == true)
+                #expect(query["inference_provider"]?.contains("fal-ai") == true)
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let result = try await client.listModels(
+                apps: ["text-generation-inference"],
+                gated: true,
+                inferenceProvider: ["hf-inference", "fal-ai"],
+                modelName: "bert-base"
+            )
+
+            #expect(result.items.count == 1)
+        }
+
         @Test("Get specific model", .mockURLSession)
         func testGetModel() async throws {
             let mockResponse = """

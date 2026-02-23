@@ -41,6 +41,24 @@ public struct Space: Identifiable, Codable, Sendable {
     /// The card data (README metadata).
     public let cardData: [String: Value]?
 
+    /// Linked dataset repositories.
+    public let datasets: [String]?
+
+    /// Linked model repositories.
+    public let models: [String]?
+
+    /// The space subdomain.
+    public let subdomain: String?
+
+    /// The trending score.
+    public let trendingScore: Int?
+
+    /// The used storage in bytes.
+    public let usedStorage: Int?
+
+    /// The resource group metadata.
+    public let resourceGroup: [String: Value]?
+
     /// The sibling files information.
     public let siblings: [SiblingInfo]?
 
@@ -49,8 +67,12 @@ public struct Space: Identifiable, Codable, Sendable {
         /// The relative path of the file.
         public let relativeFilename: String
 
+        /// The file size in bytes, when available.
+        public let size: Int?
+
         private enum CodingKeys: String, CodingKey {
             case relativeFilename = "rfilename"
+            case size
         }
     }
 
@@ -173,6 +195,12 @@ public struct Space: Identifiable, Codable, Sendable {
         case createdAt
         case runtime
         case cardData
+        case datasets
+        case models
+        case subdomain
+        case trendingScore
+        case usedStorage
+        case resourceGroup
         case siblings
     }
 }

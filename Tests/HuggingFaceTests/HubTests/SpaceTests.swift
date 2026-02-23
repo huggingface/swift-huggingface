@@ -104,6 +104,46 @@ import Testing
             #expect(result.items[0].id == "user/demo-space")
         }
 
+        @Test("List spaces with additional query parameters", .mockURLSession)
+        func testListSpacesWithAdditionalParameters() async throws {
+            let mockResponse = """
+                [
+                    {
+                        "id": "user/demo-space"
+                    }
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/spaces")
+
+                let queryItems = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
+                let query = Dictionary(uniqueKeysWithValues: (queryItems ?? []).map { ($0.name, $0.value ?? "") })
+
+                #expect(query["datasets"]?.contains("datasets/squad") == true)
+                #expect(query["models"]?.contains("google/bert-base-uncased") == true)
+                #expect(query["linked"] == "true")
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let result = try await client.listSpaces(
+                datasets: ["datasets/squad"],
+                models: ["google/bert-base-uncased"],
+                linked: true
+            )
+
+            #expect(result.items.count == 1)
+        }
+
         @Test("Get specific space", .mockURLSession)
         func testGetSpace() async throws {
             let mockResponse = """

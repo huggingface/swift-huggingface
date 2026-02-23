@@ -38,6 +38,27 @@ public struct Dataset: Identifiable, Codable, Sendable {
     /// The card data (README metadata).
     public let cardData: [String: Value]?
 
+    /// Dataset description.
+    public let description: String?
+
+    /// Dataset citation.
+    public let citation: String?
+
+    /// Papers With Code identifier.
+    public let paperswithcodeID: String?
+
+    /// The all-time download count.
+    public let downloadsAllTime: Int?
+
+    /// The trending score.
+    public let trendingScore: Int?
+
+    /// The used storage in bytes.
+    public let usedStorage: Int?
+
+    /// The resource group metadata.
+    public let resourceGroup: [String: Value]?
+
     /// The sibling files information.
     public let siblings: [SiblingInfo]?
 
@@ -46,8 +67,12 @@ public struct Dataset: Identifiable, Codable, Sendable {
         /// The relative path of the file.
         public let relativeFilename: String
 
+        /// The file size in bytes, when available.
+        public let size: Int?
+
         private enum CodingKeys: String, CodingKey {
             case relativeFilename = "rfilename"
+            case size
         }
     }
 
@@ -64,6 +89,13 @@ public struct Dataset: Identifiable, Codable, Sendable {
         case tags
         case createdAt
         case cardData
+        case description
+        case citation
+        case paperswithcodeID = "paperswithcode_id"
+        case downloadsAllTime
+        case trendingScore
+        case usedStorage
+        case resourceGroup
         case siblings
     }
 }
