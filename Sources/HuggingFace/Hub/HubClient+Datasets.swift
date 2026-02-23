@@ -4,7 +4,7 @@ import Foundation
 
 extension HubClient {
     /// Expandable dataset fields for Hub API responses.
-    public enum DatasetExpandField: Hashable, CaseIterable, RawRepresentable, Sendable {
+    public enum DatasetExpandField: String, Hashable, CaseIterable, Sendable {
         case author
         case cardData
         case citation
@@ -16,7 +16,7 @@ extension HubClient {
         case gated
         case lastModified
         case likes
-        case paperswithcodeID
+        case paperswithcodeID = "paperswithcode_id"
         case `private`
         case siblings
         case sha
@@ -24,121 +24,6 @@ extension HubClient {
         case trendingScore
         case usedStorage
         case resourceGroup
-        case custom(String)
-
-        public init?(rawValue: String) {
-            switch rawValue {
-            case "author":
-                self = .author
-            case "cardData":
-                self = .cardData
-            case "citation":
-                self = .citation
-            case "createdAt":
-                self = .createdAt
-            case "disabled":
-                self = .disabled
-            case "description":
-                self = .description
-            case "downloads":
-                self = .downloads
-            case "downloadsAllTime":
-                self = .downloadsAllTime
-            case "gated":
-                self = .gated
-            case "lastModified":
-                self = .lastModified
-            case "likes":
-                self = .likes
-            case "paperswithcode_id":
-                self = .paperswithcodeID
-            case "private":
-                self = .private
-            case "siblings":
-                self = .siblings
-            case "sha":
-                self = .sha
-            case "tags":
-                self = .tags
-            case "trendingScore":
-                self = .trendingScore
-            case "usedStorage":
-                self = .usedStorage
-            case "resourceGroup":
-                self = .resourceGroup
-            default:
-                self = .custom(rawValue)
-            }
-        }
-
-        public var rawValue: String {
-            switch self {
-            case .author:
-                "author"
-            case .cardData:
-                "cardData"
-            case .citation:
-                "citation"
-            case .createdAt:
-                "createdAt"
-            case .disabled:
-                "disabled"
-            case .description:
-                "description"
-            case .downloads:
-                "downloads"
-            case .downloadsAllTime:
-                "downloadsAllTime"
-            case .gated:
-                "gated"
-            case .lastModified:
-                "lastModified"
-            case .likes:
-                "likes"
-            case .paperswithcodeID:
-                "paperswithcode_id"
-            case .private:
-                "private"
-            case .siblings:
-                "siblings"
-            case .sha:
-                "sha"
-            case .tags:
-                "tags"
-            case .trendingScore:
-                "trendingScore"
-            case .usedStorage:
-                "usedStorage"
-            case .resourceGroup:
-                "resourceGroup"
-            case let .custom(value):
-                value
-            }
-        }
-
-        public static var allCases: [Self] {
-            [
-                .author,
-                .cardData,
-                .citation,
-                .createdAt,
-                .disabled,
-                .description,
-                .downloads,
-                .downloadsAllTime,
-                .gated,
-                .lastModified,
-                .likes,
-                .paperswithcodeID,
-                .private,
-                .siblings,
-                .sha,
-                .tags,
-                .trendingScore,
-                .usedStorage,
-                .resourceGroup,
-            ]
-        }
     }
 
     /// Lists datasets from the Hub.
@@ -182,7 +67,7 @@ extension HubClient {
         sizeCategories: CommaSeparatedList<String>? = nil,
         taskCategories: CommaSeparatedList<String>? = nil,
         taskIds: CommaSeparatedList<String>? = nil,
-        expand: CommaSeparatedList<DatasetExpandField>? = nil
+        expand: ExtensibleCommaSeparatedList<DatasetExpandField>? = nil
     ) async throws -> PaginatedResponse<Dataset> {
         var params: [String: Value] = [:]
 
@@ -222,7 +107,7 @@ extension HubClient {
         _ id: Repo.ID,
         revision: String? = nil,
         full: Bool? = nil,
-        expand: CommaSeparatedList<DatasetExpandField>? = nil,
+        expand: ExtensibleCommaSeparatedList<DatasetExpandField>? = nil,
         filesMetadata: Bool? = nil
     ) async throws -> Dataset {
         var url = httpClient.host

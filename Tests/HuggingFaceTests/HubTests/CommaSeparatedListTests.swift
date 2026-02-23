@@ -61,29 +61,33 @@ struct CommaSeparatedListTests {
 
     @Test("Supports enum values, all constructor, and custom cases")
     func testEnumValuesAllAndCustomCases() {
-        let all = CommaSeparatedList<HubClient.ModelInference>.all
-        #expect(all.contains(.warm))
+        let all = CommaSeparatedList<Extensible<HubClient.ModelInference>>.all
+        #expect(all.contains(.known(.warm)))
         #expect(all.rawValue == "warm")
 
-        let parsed = CommaSeparatedList<HubClient.ModelInference>(rawValue: "warm,unknown,warm")
-        #expect(parsed.contains(.warm))
+        let parsed = CommaSeparatedList<Extensible<HubClient.ModelInference>>(rawValue: "warm,unknown,warm")
+        #expect(parsed.contains(.known(.warm)))
         #expect(parsed.contains(.custom("unknown")))
         #expect(parsed.rawValue == "unknown,warm")
 
-        let modelFields = CommaSeparatedList<HubClient.ModelExpandField>.all
-        #expect(modelFields.contains(.author))
-        #expect(modelFields.contains(.safetensors))
+        let modelFields = CommaSeparatedList<Extensible<HubClient.ModelExpandField>>.all
+        #expect(modelFields.contains(.known(.author)))
+        #expect(modelFields.contains(.known(.safetensors)))
 
-        let customModelFields = CommaSeparatedList<HubClient.ModelExpandField>(
+        let customModelFields = CommaSeparatedList<Extensible<HubClient.ModelExpandField>>(
             rawValue: "author,previewScore,safetensors"
         )
         #expect(customModelFields.contains(.custom("previewScore")))
         #expect(customModelFields.rawValue == "author,previewScore,safetensors")
 
-        let customDatasetFields = CommaSeparatedList<HubClient.DatasetExpandField>(rawValue: "author,futureField")
+        let customDatasetFields = CommaSeparatedList<Extensible<HubClient.DatasetExpandField>>(
+            rawValue: "author,futureField"
+        )
         #expect(customDatasetFields.contains(.custom("futureField")))
 
-        let customSpaceFields = CommaSeparatedList<HubClient.SpaceExpandField>(rawValue: "runtime,nextRuntime")
+        let customSpaceFields = CommaSeparatedList<Extensible<HubClient.SpaceExpandField>>(
+            rawValue: "runtime,nextRuntime"
+        )
         #expect(customSpaceFields.contains(.custom("nextRuntime")))
     }
 }

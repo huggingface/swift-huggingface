@@ -1,5 +1,45 @@
 import Foundation
 
+/// A string-backed value that can be one of the known values or an unknown custom value.
+public enum Extensible<Value: Hashable & Sendable>: Hashable, Sendable {
+    /// A known value.
+    case known(Value)
+
+    /// An unknown custom value.
+    case custom(String)
+}
+
+extension Extensible: RawRepresentable where Value: RawRepresentable, Value.RawValue == String {
+    public init?(rawValue: String) {
+        if let value = Value(rawValue: rawValue) {
+            self = .known(value)
+        } else {
+            self = .custom(rawValue)
+        }
+    }
+
+    public var rawValue: String {
+        switch self {
+        case let .known(value):
+            value.rawValue
+        case let .custom(value):
+            value
+        }
+    }
+}
+
+extension Extensible: CaseIterable where Value: CaseIterable & RawRepresentable, Value.RawValue == String {
+    public static var allCases: [Self] {
+        Value.allCases.map(Self.known)
+    }
+}
+
+/// A comma-separated list of extensible values.
+public typealias ExtensibleCommaSeparatedList<Value> = CommaSeparatedList<Extensible<Value>>
+where Value: RawRepresentable & Hashable & Sendable, Value.RawValue == String
+
+// MARK: -
+
 /// A set-backed list encoded as comma-separated query parameter values.
 public struct CommaSeparatedList<Value: Hashable & Sendable>: Hashable, Sendable {
     private var storage: Set<Value>
