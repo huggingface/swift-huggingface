@@ -472,9 +472,7 @@ public extension HubClient {
         let resumeOffset: Int64
         let incompleteBlobPath: URL?
         if let cache, let etag = preflightMetadata?.normalizedEtag {
-            let safeEtag = try validateCachePathComponent(etag)
-            let path = cache.blobsDirectory(repo: repo, kind: kind)
-                .appendingPathComponent("\(safeEtag).incomplete")
+            let path = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
             incompleteBlobPath = path
             resumeOffset = fileSizeIfExists(at: path)
             if resumeOffset > 0 {
@@ -561,13 +559,12 @@ public extension HubClient {
         {
             if shouldMergeResume, let incompleteBlobPath {
                 do {
-                    let safeEtag = try validateCachePathComponent(etag)
                     let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
                     try FileManager.default.createDirectory(
                         at: blobsDirectory,
                         withIntermediateDirectories: true
                     )
-                    let blobPath = blobsDirectory.appendingPathComponent(safeEtag)
+                    let blobPath = try cache.blobPath(repo: repo, kind: kind, etag: etag)
                     let lock = FileLock(path: blobPath)
                     try await lock.withLock {
                         if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
@@ -1350,11 +1347,9 @@ private extension HubClient {
             isCommitHash(revision)
             ? revision
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
-        guard let safeResolvedCommitHash = try? validateCachePathComponent(resolvedCommitHash) else {
+        guard let snapshotPath = try? cache.snapshotPath(repo: repo, kind: kind, commitHash: resolvedCommitHash) else {
             return nil
         }
-        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
-            .appendingPathComponent(safeResolvedCommitHash)
         guard FileManager.default.fileExists(atPath: snapshotPath.path) else {
             return nil
         }
@@ -1393,23 +1388,6 @@ private extension HubClient {
         }
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes?[.size] as? NSNumber)?.int64Value ?? 0
-    }
-
-    /// Validates a server-provided value before using it as a cache path component.
-    func validateCachePathComponent(_ value: String) throws -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard
-            !trimmed.isEmpty,
-            trimmed != ".",
-            trimmed != "..",
-            !trimmed.contains(".."),
-            !trimmed.contains("/"),
-            !trimmed.contains("\\"),
-            !trimmed.contains("\0")
-        else {
-            throw HubCacheError.invalidPathComponent(value)
-        }
-        return trimmed
     }
 
     /// Returns a path relative to the provided base directory.
