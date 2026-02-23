@@ -1025,10 +1025,7 @@ private extension HubClient {
         var request = try await httpClient.createRequest(.head, urlPath)
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        let (_, response) = try await session.data(
-            for: request,
-            delegate: NoRedirectDelegate.shared
-        )
+        let (_, response) = try await metadataSession.data(for: request)
         guard let metadata = XetFileMetadata(response: response) else {
             return nil
         }
@@ -1061,28 +1058,9 @@ private extension HubClient {
     }
 }
 
-// MARK: - Redirect Delegates
+// MARK: - Same-Host Redirect Delegate
 
-/// Blocks HTTP redirects.
-final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    static let shared = NoRedirectDelegate()
-
-    private override init() {
-        super.init()
-    }
-
-    func urlSession(
-        _: URLSession,
-        task _: URLSessionTask,
-        willPerformHTTPRedirection _: HTTPURLResponse,
-        newRequest _: URLRequest,
-        completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        completionHandler(nil)
-    }
-}
-
-/// Follows same-host redirects while blocking cross-host redirects (for CDN header capture).
+/// Follows same-host redirects while blocking cross-host redirects.
 final class SameHostRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     static let shared = SameHostRedirectDelegate()
 
