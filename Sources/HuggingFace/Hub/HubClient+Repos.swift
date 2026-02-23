@@ -26,7 +26,7 @@ extension HubClient {
         resourceGroupId: String? = nil,
         space: Repo.SpaceConfiguration? = nil
     ) async throws -> (url: String, repoId: String?) {
-        if kind == .space && space == nil {
+        if kind == .space && space == nil && !existOk {
             throw HTTPClientError.requestError("space is required when creating a space repository")
         }
 
