@@ -88,6 +88,22 @@ struct HubCacheTests {
         #expect(snapshotsDir.deletingLastPathComponent().lastPathComponent == "models--user--repo")
     }
 
+    @Test("Lock path uses .locks hierarchy")
+    func lockPathUsesLocksHierarchy() throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+        let blobPath = cache.blobsDirectory(repo: repoID, kind: .model).appendingPathComponent("etag123")
+
+        let lockPath = cache.lockPath(for: blobPath).appendingPathExtension("lock")
+        let expected = tempDirectory
+            .appendingPathComponent(".locks")
+            .appendingPathComponent("models--user--repo")
+            .appendingPathComponent("blobs")
+            .appendingPathComponent("etag123.lock")
+
+        #expect(lockPath == expected)
+    }
+
     // MARK: - Ref Resolution Tests
 
     @Test("Resolve revision from ref file")
