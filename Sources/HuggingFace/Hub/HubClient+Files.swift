@@ -61,6 +61,15 @@ public enum FileDownloadEndpoint: String, Hashable, CaseIterable, Sendable {
 
 // MARK: - Upload Operations
 
+/// Response from the upload endpoint.
+private struct UploadResponse: Codable {
+    /// The path to the uploaded file.
+    let path: String
+
+    /// The commit hash of the uploaded file.
+    let commit: String?
+}
+
 public extension HubClient {
     /// Upload a single file to a repository
     /// - Parameters:
@@ -224,6 +233,65 @@ public extension HubClient {
 
 // MARK: - Download Operations
 
+/// Metadata associated with a Hub file response.
+private struct FileMetadata: Sendable {
+    /// The repository commit hash from the `X-Repo-Commit` header.
+    let commitHash: String?
+
+    /// The raw ETag value from `X-Linked-Etag` or `ETag`, when available.
+    let etag: String?
+
+    /// The normalized ETag used for cache storage.
+    let normalizedEtag: String?
+
+    /// Creates file metadata from response header values.
+    ///
+    /// - Parameters:
+    ///   - commitHash: The repository commit hash, if provided.
+    ///   - etag: The normalized ETag value, if provided.
+    init(commitHash: String?, etag: String?) {
+        self.commitHash = commitHash
+        self.etag = etag
+        normalizedEtag = etag.map(Self.normalizeEtag)
+    }
+
+    /// Creates file metadata from an HTTP response.
+    ///
+    /// - Parameter response: The response to parse.
+    /// - Returns: `nil` when the response is not an HTTP response,
+    ///            or when it does not contain either metadata header.
+    init?(response: URLResponse) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return nil
+        }
+
+        let linkedEtag = httpResponse.value(forHTTPHeaderField: "X-Linked-Etag")
+        let etag = linkedEtag ?? httpResponse.value(forHTTPHeaderField: "ETag")
+        let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
+        guard commitHash != nil || etag != nil else {
+            return nil
+        }
+
+        self.init(commitHash: commitHash, etag: etag)
+    }
+
+    private static func normalizeEtag(_ etag: String) -> String {
+        var normalized = etag
+
+        // Remove weak validator prefix
+        if normalized.hasPrefix("W/") {
+            normalized = String(normalized.dropFirst(2))
+        }
+
+        // Remove surrounding quotes
+        if normalized.hasPrefix("\""), normalized.hasSuffix("\"") {
+            normalized = String(normalized.dropFirst().dropLast())
+        }
+
+        return normalized
+    }
+}
+
 public extension HubClient {
     /// Download file data using URLSession.dataTask
     /// - Parameters:
@@ -281,17 +349,28 @@ public extension HubClient {
             .appending(path: endpoint)
             .appending(component: revision)
             .appending(path: repoPath)
+
+        // HEAD preflight to capture Hub metadata before potential cross-host CDN redirect.
+        // Only needed when caching is enabled, and failures should not block the download.
+        let preflightMetadata: FileMetadata? =
+            if cache != nil {
+                try? await fetchFileMetadata(url: url)
+            } else {
+                nil
+            }
+
+        // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
-
         let (data, response) = try await session.data(for: request)
         _ = try httpClient.validateResponse(response, data: data)
 
-        // Store in cache if we have etag and commit info
+        // Store in cache if we have etag and commit info,
+        // using the fallback metadata from the GET response object (no extra request)
+        let responseMetadata = FileMetadata(response: response)
         if let cache = cache,
-            let httpResponse = response as? HTTPURLResponse,
-            let etag = httpResponse.value(forHTTPHeaderField: "ETag"),
-            let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
+            let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
+            let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
             try? await cache.storeData(
                 data,
@@ -378,9 +457,19 @@ public extension HubClient {
             .appending(path: endpoint)
             .appending(component: revision)
             .appending(path: repoPath)
+
+        // HEAD preflight: capture Hub metadata before potential cross-host CDN redirect.
+        // Only needed when caching is enabled, and failures should not block the download.
+        let preflightMetadata: FileMetadata? =
+            if cache != nil {
+                try? await fetchFileMetadata(url: url)
+            } else {
+                nil
+            }
+
+        // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
-
         #if canImport(FoundationNetworking)
             let (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
         #else
@@ -392,10 +481,11 @@ public extension HubClient {
         _ = try httpClient.validateResponse(response, data: nil)
 
         // Store in cache before moving to destination
+        // This fallback parses metadata from the existing GET response object (no extra request).
+        let responseMetadata = FileMetadata(response: response)
         if let cache = cache,
-            let httpResponse = response as? HTTPURLResponse,
-            let etag = httpResponse.value(forHTTPHeaderField: "ETag"),
-            let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
+            let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
+            let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
             try? await cache.storeFile(
                 at: tempURL,
@@ -702,8 +792,11 @@ public extension HubClient {
             let exists = httpResponse.statusCode == 200 || httpResponse.statusCode == 206
             let size = httpResponse.value(forHTTPHeaderField: "Content-Length")
                 .flatMap { Int64($0) }
-            let etag = httpResponse.value(forHTTPHeaderField: "ETag")
-            let revision = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
+
+            let metadata = FileMetadata(response: response)
+            let etag = metadata?.etag
+            let revision = metadata?.commitHash
+
             let isLFS =
                 httpResponse.value(forHTTPHeaderField: "X-Linked-Size") != nil
                 || httpResponse.value(forHTTPHeaderField: "Link")?.contains("lfs") == true
@@ -747,25 +840,25 @@ public extension HubClient {
         matching globs: [String] = [],
         progressHandler: (@Sendable (Progress) -> Void)? = nil
     ) async throws -> URL {
-        let filenames = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
-            .map(\.path)
-            .filter { filename in
+        let entries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+            .filter { entry in
                 guard !globs.isEmpty else { return true }
                 return globs.contains { glob in
-                    fnmatch(glob, filename, 0) == 0
+                    fnmatch(glob, entry.path, 0) == 0
                 }
             }
 
-        let progress = Progress(totalUnitCount: Int64(filenames.count))
+        let progress = Progress(totalUnitCount: Int64(entries.count))
         if let progressHandler {
             await MainActor.run {
                 progressHandler(progress)
             }
         }
 
-        for filename in filenames {
+        for entry in entries {
+            try validateSnapshotEntryPath(entry.path)
             let fileProgress = Progress(totalUnitCount: 100, parent: progress, pendingUnitCount: 1)
-            let fileDestination = destination.appendingPathComponent(filename)
+            let fileDestination = destination.appendingPathComponent(entry.path)
             #if canImport(FoundationNetworking)
                 let samplingTask: Task<Void, Never>? =
                     if let progressHandler {
@@ -788,7 +881,7 @@ public extension HubClient {
             do {
                 _ = try await withTaskCancellationHandler {
                     try await downloadFile(
-                        at: filename,
+                        entry,
                         from: repo,
                         to: fileDestination,
                         kind: kind,
@@ -829,6 +922,43 @@ public extension HubClient {
 }
 
 // MARK: - Xet Operations
+
+/// Metadata associated with a Xet-enabled Hub file response.
+private struct XetFileMetadata: Sendable {
+    /// The content-addressed Xet object ID from `X-Xet-Hash`.
+    let fileID: String
+
+    /// The linked file size in bytes, when available.
+    let fileSizeBytes: Int?
+
+    /// Creates Xet metadata from an HTTP response.
+    ///
+    /// - Parameter response: The response to parse.
+    /// - Returns: `nil` when the response does not include a valid Xet file ID.
+    init?(response: URLResponse) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return nil
+        }
+
+        let rawFileID = httpResponse.value(forHTTPHeaderField: "X-Xet-Hash")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let fileID = rawFileID, !fileID.isEmpty else {
+            return nil
+        }
+        guard fileID.count == 64, fileID.allSatisfy(\.isHexDigit) else {
+            return nil
+        }
+
+        let rawSize =
+            httpResponse.value(forHTTPHeaderField: "X-Linked-Size")
+            ?? ((200 ... 299).contains(httpResponse.statusCode)
+                ? httpResponse.value(forHTTPHeaderField: "Content-Length")
+                : nil)
+
+        self.fileID = fileID
+        fileSizeBytes = rawSize.flatMap(Int.init)
+    }
+}
 
 private extension HubClient {
     /// Downloads file data using Xet's content-addressable storage system.
@@ -893,6 +1023,14 @@ private extension HubClient {
         return destination
     }
 
+    /// Fetch the Xet file ID for a given repository, path, and revision.
+    /// - Parameters:
+    ///   - repoPath: Path to file
+    ///   - repo: Repository identifier
+    ///   - revision: Git revision
+    ///   - transport: Transport to use
+    /// - Returns: Xet file ID
+    /// - Throws: Error if the file ID cannot be fetched
     func fetchXetFileID(
         repoPath: String,
         repo: Repo.ID,
@@ -903,96 +1041,86 @@ private extension HubClient {
         var request = try await httpClient.createRequest(.head, urlPath)
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
-        let (_, response) = try await session.data(
-            for: request,
-            delegate: NoRedirectDelegate()
-        )
-        guard let httpResponse = response as? HTTPURLResponse else {
+        #if canImport(FoundationNetworking)
+            let (_, response) = try await metadataSession.data(for: request)
+        #else
+            let (_, response) = try await session.data(for: request, delegate: SameHostRedirectDelegate.shared)
+        #endif
+        guard let metadata = XetFileMetadata(response: response) else {
             return nil
         }
 
-        let rawFileID = httpResponse.value(forHTTPHeaderField: "X-Xet-Hash")?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let fileID = rawFileID, !fileID.isEmpty else {
-            return nil
-        }
-
-        let rawSize =
-            httpResponse.value(forHTTPHeaderField: "X-Linked-Size")
-            ?? ((200 ... 299).contains(httpResponse.statusCode)
-                ? httpResponse.value(forHTTPHeaderField: "Content-Length")
-                : nil)
-        let fileSizeBytes = rawSize.flatMap(Int.init)
         if !transport.shouldUseXet(
-            fileSizeBytes: fileSizeBytes,
+            fileSizeBytes: metadata.fileSizeBytes,
             minimumFileSizeBytes: xetMinimumFileSizeBytes
         ) {
             return nil
         }
 
-        return isValidHash(fileID, pattern: sha256Pattern) ? fileID : nil
+        return metadata.fileID
     }
 
+    /// Generate the Xet refresh URL for a given repository, kind, and revision.
     func xetRefreshURL(for repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL {
         let url = httpClient.host.appendingPathComponent(
             "api/\(kind.pluralized)/\(repo)/xet-read-token/\(revision)"
         )
         return url
     }
+
+    /// Fetch metadata without following cross-host redirects.
+    ///
+    /// This captures `X-Linked-Etag` and `X-Repo-Commit` before a potential CDN redirect.
+    func fetchFileMetadata(url: URL) async throws -> FileMetadata? {
+        let request = try await httpClient.createRequest(.head, url: url)
+        #if canImport(FoundationNetworking)
+            let (_, response) = try await metadataSession.data(for: request)
+        #else
+            let (_, response) = try await session.data(for: request, delegate: SameHostRedirectDelegate.shared)
+        #endif
+        return FileMetadata(response: response)
+    }
+
+    /// Validates a snapshot entry path before writing to local disk.
+    func validateSnapshotEntryPath(_ path: String) throws {
+        guard !path.trimmingCharacters(in: .whitespaces).isEmpty else {
+            throw HubCacheError.invalidPathComponent(path)
+        }
+        if path.contains("\0") || path.contains("\\") || path.hasPrefix("/") {
+            throw HubCacheError.invalidPathComponent(path)
+        }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.allSatisfy({ !$0.isEmpty && $0 != ".." }) else {
+            throw HubCacheError.invalidPathComponent(path)
+        }
+    }
 }
 
-private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+// MARK: - Same-Host Redirect Delegate
+
+/// Follows same-host redirects while blocking cross-host redirects.
+final class SameHostRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    static let shared = SameHostRedirectDelegate()
+
+    private override init() {
+        super.init()
+    }
+
     func urlSession(
         _: URLSession,
-        task _: URLSessionTask,
+        task: URLSessionTask,
         willPerformHTTPRedirection _: HTTPURLResponse,
-        newRequest _: URLRequest,
+        newRequest request: URLRequest,
         completionHandler: @escaping (URLRequest?) -> Void
     ) {
-        completionHandler(nil)
-    }
-}
-
-// MARK: - Metadata Helpers
-
-extension HubClient {
-    private var sha256Pattern: String { "^[0-9a-f]{64}$" }
-    private var commitHashPattern: String { "^[0-9a-f]{40}$" }
-
-    /// Read metadata about a file in the local directory.
-    func readDownloadMetadata(at metadataPath: URL) -> LocalDownloadFileMetadata? {
-        FileManager.default.readDownloadMetadata(at: metadataPath)
-    }
-
-    /// Write metadata about a downloaded file.
-    func writeDownloadMetadata(commitHash: String, etag: String, to metadataPath: URL) throws {
-        try FileManager.default.writeDownloadMetadata(
-            commitHash: commitHash,
-            etag: etag,
-            to: metadataPath
-        )
-    }
-
-    /// Check if a hash matches the expected pattern.
-    func isValidHash(_ hash: String, pattern: String) -> Bool {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return false
+        guard let originalHost = task.originalRequest?.url?.host,
+            let newHost = request.url?.host
+        else {
+            completionHandler(nil)
+            return
         }
-        let range = NSRange(location: 0, length: hash.utf16.count)
-        return regex.firstMatch(in: hash, options: [], range: range) != nil
+        completionHandler(originalHost == newHost ? request : nil)
     }
-
-    /// Compute SHA256 hash of a file.
-    func computeFileHash(at url: URL) throws -> String {
-        try FileManager.default.computeFileHash(at: url)
-    }
-}
-
-// MARK: -
-
-private struct UploadResponse: Codable {
-    let path: String
-    let commit: String?
 }
 
 // MARK: -
