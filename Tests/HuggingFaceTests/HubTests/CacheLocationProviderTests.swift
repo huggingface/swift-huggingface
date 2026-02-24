@@ -79,6 +79,62 @@ struct CacheLocationProviderTests {
         #expect(resolved?.lastPathComponent == "hub")
     }
 
+    @Test("Environment provider prioritizes HF_HUB_CACHE over HF_HOME")
+    func environmentProviderPrioritizesHubCache() throws {
+        let provider = CacheLocationProvider.environment
+        let resolved = provider.resolveFromEnvironment([
+            "HF_HUB_CACHE": "/tmp/hf-hub-cache",
+            "HF_HOME": "/tmp/hf-home",
+        ])
+
+        #expect(resolved?.path == "/tmp/hf-hub-cache")
+    }
+
+    @Test("Environment provider uses HF_HOME when HF_HUB_CACHE is missing")
+    func environmentProviderUsesHFHome() throws {
+        let provider = CacheLocationProvider.environment
+        let resolved = provider.resolveFromEnvironment([
+            "HF_HOME": "/tmp/hf-home"
+        ])
+
+        #expect(resolved?.path == "/tmp/hf-home/hub")
+    }
+
+    #if os(macOS)
+        @Test("Default cache directory uses home cache on non-sandboxed macOS")
+        func defaultCacheDirectoryNonSandboxedMacOS() throws {
+            let resolved = CacheLocationProvider.defaultCacheDirectory(
+                environment: [:],
+                homeDirectory: URL(fileURLWithPath: "/Users/test-user"),
+                cachesDirectory: URL(fileURLWithPath: "/Users/test-user/Library/Caches")
+            )
+
+            #expect(resolved.path == "/Users/test-user/.cache/huggingface/hub")
+        }
+
+        @Test("Default cache directory uses app caches when sandboxed")
+        func defaultCacheDirectorySandboxedMacOS() throws {
+            let resolved = CacheLocationProvider.defaultCacheDirectory(
+                environment: ["APP_SANDBOX_CONTAINER_ID": "com.example.app"],
+                homeDirectory: URL(fileURLWithPath: "/Users/test-user"),
+                cachesDirectory: URL(fileURLWithPath: "/sandbox/Library/Caches")
+            )
+
+            #expect(resolved.path == "/sandbox/Library/Caches/huggingface/hub")
+        }
+    #else
+        @Test("Default cache directory uses caches directory on non-macOS")
+        func defaultCacheDirectoryNonMacOS() throws {
+            let resolved = CacheLocationProvider.defaultCacheDirectory(
+                environment: ["APP_SANDBOX_CONTAINER_ID": "ignored"],
+                homeDirectory: URL(fileURLWithPath: "/home/test-user"),
+                cachesDirectory: URL(fileURLWithPath: "/platform/Library/Caches")
+            )
+
+            #expect(resolved.path == "/platform/Library/Caches/huggingface/hub")
+        }
+    #endif
+
     // MARK: - Composite Location Tests
 
     @Test("Composite provider returns first valid result")
