@@ -492,7 +492,7 @@ public extension HubClient {
         if let cache, let etag = preflightMetadata?.normalizedEtag {
             let blobPath = try cache.blobPath(repo: repo, kind: kind, etag: etag)
             let incompleteBlobPath = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
-            let lock = FileLock(path: blobPath, maxRetries: nil)
+            let lock = FileLock(path: cache.lockPath(for: blobPath), maxRetries: nil)
             return try await lock.withLock {
                 if let cachedPath = cache.cachedFilePath(
                     repo: repo,

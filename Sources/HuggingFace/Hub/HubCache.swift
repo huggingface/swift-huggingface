@@ -153,6 +153,25 @@ public struct HubCache: Sendable {
         repoDirectory(repo: repo, kind: kind).appendingPathComponent("snapshots")
     }
 
+    /// Returns the lock-file base path in the `.locks` hierarchy for a cache path.
+    ///
+    /// For paths within `cacheDirectory`, this mirrors the relative layout under
+    /// `<cacheDirectory>/.locks/...`.
+    /// For paths outside the cache directory, the original path is returned.
+    public func lockPath(for path: URL) -> URL {
+        let cachePath = cacheDirectory.standardizedFileURL.path
+        let targetPath = path.standardizedFileURL.path
+        let cachePrefix = cachePath.hasSuffix("/") ? cachePath : cachePath + "/"
+        guard targetPath.hasPrefix(cachePrefix) else {
+            return path
+        }
+
+        let relativePath = String(targetPath.dropFirst(cachePrefix.count))
+        return cacheDirectory
+            .appendingPathComponent(".locks")
+            .appendingPathComponent(relativePath)
+    }
+
     // MARK: - Revision Resolution
 
     /// Resolves a reference (branch/tag) to its commit hash.
@@ -349,7 +368,7 @@ public struct HubCache: Sendable {
 
         // Store blob (content-addressed) with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: blobPath)
+        let lock = FileLock(path: lockPath(for: blobPath))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
@@ -426,7 +445,7 @@ public struct HubCache: Sendable {
 
         // Store blob with file locking
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let lock = FileLock(path: blobPath)
+        let lock = FileLock(path: lockPath(for: blobPath))
 
         try await lock.withLock {
             if !FileManager.default.fileExists(atPath: blobPath.path) {
