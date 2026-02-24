@@ -167,7 +167,8 @@ public struct HubCache: Sendable {
         }
 
         let relativePath = String(targetPath.dropFirst(cachePrefix.count))
-        return cacheDirectory
+        return
+            cacheDirectory
             .appendingPathComponent(".locks")
             .appendingPathComponent(relativePath)
     }

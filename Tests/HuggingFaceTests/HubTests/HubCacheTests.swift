@@ -95,7 +95,8 @@ struct HubCacheTests {
         let blobPath = cache.blobsDirectory(repo: repoID, kind: .model).appendingPathComponent("etag123")
 
         let lockPath = cache.lockPath(for: blobPath).appendingPathExtension("lock")
-        let expected = tempDirectory
+        let expected =
+            tempDirectory
             .appendingPathComponent(".locks")
             .appendingPathComponent("models--user--repo")
             .appendingPathComponent("blobs")
