@@ -1085,7 +1085,7 @@ public extension HubClient {
     ///   - revision: Git revision (branch, tag, or commit hash).
     ///   - globs: Glob patterns to filter files (empty array checks all files).
     /// - Returns: Path to the verified snapshot directory, or `nil`.
-    func cachedSnapshotPath(
+    func resolveCachedSnapshot(
         repo: Repo.ID,
         kind: Repo.Kind = .model,
         revision: String = "main",
@@ -1241,9 +1241,9 @@ public extension HubClient {
         // Fast path: commit hashes are immutable, so cached files are always
         // valid. Branch names must go through the network to check for new
         // commits. Callers who want a cache-only lookup with ref resolution
-        // (no network) can use cachedSnapshotPath() directly.
+        // (no network) can use resolveCachedSnapshot() directly.
         if isCommitHash(revision),
-            let fastPath = cachedSnapshotPath(
+            let fastPath = resolveCachedSnapshot(
                 repo: repo,
                 kind: kind,
                 revision: revision,
@@ -1643,7 +1643,7 @@ private extension HubClient {
         revision: String,
         matching globs: [String]
     ) -> URL? {
-        if let completeSnapshot = cachedSnapshotPath(
+        if let completeSnapshot = resolveCachedSnapshot(
             repo: repo,
             kind: kind,
             revision: revision,
