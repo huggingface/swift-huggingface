@@ -1103,7 +1103,7 @@ public extension HubClient {
             commit = revision
         } else if let resolved = cache.resolveRevision(
             repo: repo, kind: kind, ref: revision
-        ) {
+        ), isCommitHash(resolved) {
             commit = resolved
         } else {
             return nil
@@ -1315,16 +1315,6 @@ public extension HubClient {
             await progressHandler(progress)
         }
 
-        if let cache, isCommitHash(revision) {
-            try? saveCachedSnapshotMetadata(
-                CachedSnapshotMetadata(entries: allEntries),
-                cache: cache,
-                repo: repo,
-                kind: kind,
-                commitHash: revision
-            )
-        }
-
         let workItems = try entries.map { entry in
             try validateSnapshotEntryPath(entry.path)
             let weight = snapshotWeight(for: entry)
@@ -1395,6 +1385,21 @@ public extension HubClient {
             isCommitHash(revision)
             ? revision
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+
+        // Save snapshot metadata so resolveCachedSnapshot can verify completeness
+        // on future calls without a network round-trip. We save after downloads
+        // because individual file downloads update the refs file, which lets us
+        // resolve branch names (e.g. "main") to their commit hash.
+        if isCommitHash(resolvedCommitHash) {
+            try? saveCachedSnapshotMetadata(
+                CachedSnapshotMetadata(entries: allEntries),
+                cache: cache,
+                repo: repo,
+                kind: kind,
+                commitHash: resolvedCommitHash
+            )
+        }
+
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(resolvedCommitHash)
         return try copySnapshotToLocalDirectoryIfNeeded(
