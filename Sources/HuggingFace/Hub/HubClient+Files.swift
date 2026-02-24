@@ -1200,7 +1200,10 @@ public extension HubClient {
             at: localPath.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try? fileManager.removeItem(at: localPath)
-        try fileManager.copyItem(at: cachedPath, to: localPath)
+        // Resolve symlinks because snapshot entries are relative symlinks to blobs
+        // (e.g., ../../blobs/etag). copyItem preserves symlinks, unlike Python's
+        // shutil.copyfile which follows them, so we must resolve first.
+        try fileManager.copyItem(at: cachedPath.resolvingSymlinksInPath(), to: localPath)
         return localPath
     }
 
@@ -1230,7 +1233,8 @@ public extension HubClient {
                 at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true
             )
             try? fileManager.removeItem(at: destURL)
-            try fileManager.copyItem(at: fileURL, to: destURL)
+            // See comment in copyToLocalDirectoryIfNeeded above
+            try fileManager.copyItem(at: fileURL.resolvingSymlinksInPath(), to: destURL)
         }
 
         return localDirectory
