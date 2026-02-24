@@ -227,8 +227,6 @@ public extension HubClient {
 
 /// Constants for download operations.
 private enum DownloadConstants {
-    /// Size of the buffer for streaming downloads (64 KB).
-    static let bufferSize = 65536
     /// Interval between speed updates during downloads (250 ms).
     static let speedUpdateIntervalNanoseconds: UInt64 = 250_000_000
 }
@@ -1187,11 +1185,6 @@ public extension HubClient {
         guard let snapshotPath = cache.snapshotPath(repo: repo, kind: kind, revision: revision) else {
             throw HubCacheError.offlineModeError("Repository '\(repo)' not available in cache")
         }
-
-        guard FileManager.default.fileExists(atPath: snapshotPath.path) else {
-            throw HubCacheError.offlineModeError("Repository '\(repo)' not available in cache")
-        }
-
         return snapshotPath
     }
 
