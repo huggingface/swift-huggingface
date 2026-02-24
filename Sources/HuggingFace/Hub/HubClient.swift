@@ -38,7 +38,11 @@ import Foundation
 ///
 /// 1. `HF_HUB_CACHE` environment variable
 /// 2. `HF_HOME` environment variable + `/hub`
-/// 3. `~/.cache/huggingface/hub` (standard location)
+/// 3. `~/.cache/huggingface/hub` (non-sandboxed macOS) or
+///    `Library/Caches/huggingface/hub` (sandboxed Apple apps and other platforms)
+///
+/// In sandboxed apps, the default cache is app-scoped. To use a shared
+/// location, set `HF_HUB_CACHE` / `HF_HOME` or pass an explicit `HubCache`.
 ///
 /// To disable caching, pass `cache: nil` when initializing the client.
 ///

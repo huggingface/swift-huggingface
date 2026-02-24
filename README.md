@@ -79,6 +79,33 @@ import HuggingFace
 let client = HubClient.default
 ```
 
+#### Cache Location
+
+Downloaded Hub files are cached in a Python-compatible directory using this order:
+
+1. `HF_HUB_CACHE`
+2. `HF_HOME/hub`
+3. Default location:
+   - non-sandboxed macOS: `~/.cache/huggingface/hub`
+   - sandboxed Apple apps and other platforms: `Library/Caches/huggingface/hub`
+
+In sandboxed apps,
+the default cache is app-scoped rather than shared globally.
+To use a shared or custom location,
+set `HF_HUB_CACHE` / `HF_HOME`,
+or pass an explicit cache:
+
+```swift
+let cache = HubCache(location: .fixed(directory: myCacheURL))
+let client = HubClient(cache: cache)
+```
+
+To disable caching entirely:
+
+```swift
+let client = HubClient(cache: nil)
+```
+
 #### Models
 
 ```swift

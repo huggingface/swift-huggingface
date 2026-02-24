@@ -21,6 +21,9 @@ import Foundation
 /// 2. `HF_HOME` environment variable + `/hub`
 /// 3. `~/.cache/huggingface/hub` (standard location)
 ///
+/// On sandboxed Apple apps, the default location falls back to the app container
+/// caches directory instead of a shared home-directory cache.
+///
 /// ## Fixed Path
 ///
 /// For a specific cache directory:
@@ -79,7 +82,8 @@ public indirect enum CacheLocationProvider: Sendable {
     ///
     /// 1. `HF_HUB_CACHE` environment variable
     /// 2. `HF_HOME` environment variable + `/hub`
-    /// 3. `~/.cache/huggingface/hub` (macOS) or `Library/Caches/huggingface/hub` (other platforms)
+    /// 3. `~/.cache/huggingface/hub` (non-sandboxed macOS) or
+    ///    `Library/Caches/huggingface/hub` (sandboxed Apple apps and other platforms)
     ///
     /// This follows the same detection logic as the Python `huggingface_hub` library,
     /// enabling cache sharing between Swift and Python clients.
@@ -155,8 +159,9 @@ public indirect enum CacheLocationProvider: Sendable {
     /// Checks in order:
     /// 1. `HF_HUB_CACHE` environment variable
     /// 2. `HF_HOME` environment variable + `/hub`
-    /// 3. `~/.cache/huggingface/hub` (macOS) or `Library/Caches/huggingface/hub` (other platforms)
-    private func resolveFromEnvironment(
+    /// 3. `~/.cache/huggingface/hub` (non-sandboxed macOS) or
+    ///    `Library/Caches/huggingface/hub` (sandboxed Apple apps and other platforms)
+    func resolveFromEnvironment(
         _ env: [String: String] = ProcessInfo.processInfo.environment
     ) -> URL? {
         let locationSources: [() -> URL?] = [
@@ -172,20 +177,9 @@ public indirect enum CacheLocationProvider: Sendable {
                 let expandedPath = NSString(string: hfHome).expandingTildeInPath
                 return URL(fileURLWithPath: expandedPath).appendingPathComponent("hub")
             },
-            // 3. Default: ~/.cache/huggingface/hub (macOS) or Caches/huggingface/hub (iOS)
+            // 3. Default cache location
             {
-                #if os(macOS)
-                    let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-                    return
-                        homeDirectory
-                        .appendingPathComponent(".cache")
-                        .appendingPathComponent("huggingface")
-                        .appendingPathComponent("hub")
-                #else
-                    return URL.cachesDirectory
-                        .appendingPathComponent("huggingface")
-                        .appendingPathComponent("hub")
-                #endif
+                Self.defaultCacheDirectory(environment: env)
             },
         ]
 
@@ -193,6 +187,36 @@ public indirect enum CacheLocationProvider: Sendable {
             .lazy
             .compactMap { $0() }
             .first
+    }
+
+    /// Returns the default cache directory when no cache env vars are set.
+    ///
+    /// This is kept internal so tests can verify platform-specific behavior
+    /// deterministically.
+    static func defaultCacheDirectory(
+        environment env: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        cachesDirectory: URL = URL.cachesDirectory
+    ) -> URL {
+        #if os(macOS)
+            let isSandboxed = env["APP_SANDBOX_CONTAINER_ID"] != nil
+            if isSandboxed {
+                return
+                    cachesDirectory
+                    .appendingPathComponent("huggingface")
+                    .appendingPathComponent("hub")
+            }
+            return
+                homeDirectory
+                .appendingPathComponent(".cache")
+                .appendingPathComponent("huggingface")
+                .appendingPathComponent("hub")
+        #else
+            return
+                cachesDirectory
+                .appendingPathComponent("huggingface")
+                .appendingPathComponent("hub")
+        #endif
     }
 }
 
