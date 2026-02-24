@@ -1219,7 +1219,7 @@ public extension HubClient {
         guard let enumerator = fileManager.enumerator(
             at: snapshotPath,
             includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
+            options: []
         ) else {
             return localDirectory
         }
