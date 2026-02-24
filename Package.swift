@@ -38,5 +38,10 @@ let package = Package(
             name: "HuggingFaceTests",
             dependencies: ["HuggingFace"]
         ),
+        .testTarget(
+            name: "HubBenchmarks",
+            dependencies: ["HuggingFace"],
+            path: "Tests/HubBenchmarks"
+        ),
     ]
 )
