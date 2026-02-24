@@ -333,8 +333,16 @@ public extension HubClient {
         transport: FileDownloadTransport = .automatic,
         cachePolicy: URLRequest.CachePolicy = .useProtocolCachePolicy
     ) async throws -> Data {
+        // Branch refs must resolve metadata first to avoid stale ref-based cache hits.
+        // Commit hashes are immutable, so immediate cache lookup is safe.
+        let canUseRevisionCache = isCommitHash(revision)
+        // For branch refs, allow cached fallback only when the network request itself
+        // fails. HTTP status errors still propagate to preserve freshness semantics.
+        let canFallBackToRevisionCacheOnError = !isCommitHash(revision)
+
         // Check cache first
-        if let cache = cache,
+        if let cache,
+            canUseRevisionCache,
             let cachedPath = cache.cachedFilePath(
                 repo: repo,
                 kind: kind,
@@ -380,16 +388,78 @@ public extension HubClient {
                 nil
             }
 
+        // For branch refs, prefer cache keyed by the resolved commit from HEAD metadata.
+        // This keeps freshness semantics while still avoiding GET when cache already has
+        // the commit-scoped file or blob.
+        if let cache,
+            !isCommitHash(revision),
+            let commitHash = preflightMetadata?.commitHash,
+            let etag = preflightMetadata?.normalizedEtag
+        {
+            if let cachedPath = cache.cachedFilePath(
+                repo: repo,
+                kind: kind,
+                revision: commitHash,
+                filename: repoPath
+            ) {
+                if revision != commitHash {
+                    try? cache.updateRef(repo: repo, kind: kind, ref: revision, commit: commitHash)
+                }
+                return try Data(contentsOf: cachedPath)
+            }
+
+            if let blobPath = cache.cachedBlobPath(repo: repo, kind: kind, etag: etag) {
+                try? await cache.storeFile(
+                    at: blobPath,
+                    repo: repo,
+                    kind: kind,
+                    revision: commitHash,
+                    filename: repoPath,
+                    etag: etag,
+                    ref: revision != commitHash ? revision : nil
+                )
+                if let cachedPath = cache.cachedFilePath(
+                    repo: repo,
+                    kind: kind,
+                    revision: commitHash,
+                    filename: repoPath
+                ) {
+                    return try Data(contentsOf: cachedPath)
+                }
+                return try Data(contentsOf: blobPath)
+            }
+        }
+
         // GET request for the actual file bytes
         var request = try await httpClient.createRequest(.get, url: url)
         request.cachePolicy = cachePolicy
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            if error is CancellationError {
+                throw error
+            }
+            if let cache,
+                canFallBackToRevisionCacheOnError,
+                let fallback = cache.cachedFilePath(
+                    repo: repo,
+                    kind: kind,
+                    revision: revision,
+                    filename: repoPath
+                )
+            {
+                return try Data(contentsOf: fallback)
+            }
+            throw error
+        }
         _ = try httpClient.validateResponse(response, data: data)
 
         // Store in cache if we have etag and commit info,
         // using the fallback metadata from the GET response object (no extra request)
         let responseMetadata = FileMetadata(response: response)
-        if let cache = cache,
+        if let cache,
             let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
@@ -431,8 +501,15 @@ public extension HubClient {
         transport: FileDownloadTransport = .automatic,
         localFilesOnly: Bool = false
     ) async throws -> URL {
+        // For networked calls, branch refs should not use ref-based cache before metadata
+        // refresh. `localFilesOnly` explicitly opts into ref-based offline behavior.
+        let canUseRevisionCache = isCommitHash(revision) || localFilesOnly
+        // For branch refs, allow cached fallback only when network transport fails.
+        let canFallBackToRevisionCacheOnError = canUseRevisionCache || !isCommitHash(revision)
+
         // Check cache first
-        if let cache = cache,
+        if let cache,
+            canUseRevisionCache,
             let cachedPath = cache.cachedFilePath(
                 repo: repo,
                 kind: kind,
@@ -485,6 +562,60 @@ public extension HubClient {
                 nil
             }
 
+        // For branch refs, resolve commit/etag from HEAD first. Then read/write cache
+        // under the resolved commit so we can refresh refs without unnecessary GET.
+        if let cache,
+            !isCommitHash(revision),
+            let commitHash = preflightMetadata?.commitHash,
+            let etag = preflightMetadata?.normalizedEtag
+        {
+            if let cachedPath = cache.cachedFilePath(
+                repo: repo,
+                kind: kind,
+                revision: commitHash,
+                filename: repoPath
+            ) {
+                if revision != commitHash {
+                    try? cache.updateRef(repo: repo, kind: kind, ref: revision, commit: commitHash)
+                }
+                if let progress {
+                    progress.completedUnitCount = progress.totalUnitCount
+                }
+                return try copyFileToLocalDirectoryIfNeeded(
+                    cachedPath,
+                    repoPath: repoPath,
+                    destination: destination
+                )
+            }
+
+            if let blobPath = cache.cachedBlobPath(repo: repo, kind: kind, etag: etag) {
+                try? await cache.storeFile(
+                    at: blobPath,
+                    repo: repo,
+                    kind: kind,
+                    revision: commitHash,
+                    filename: repoPath,
+                    etag: etag,
+                    ref: revision != commitHash ? revision : nil
+                )
+                if let cachedPath = cache.cachedFilePath(
+                    repo: repo,
+                    kind: kind,
+                    revision: commitHash,
+                    filename: repoPath
+                ) {
+                    if let progress {
+                        progress.completedUnitCount = progress.totalUnitCount
+                    }
+                    return try copyFileToLocalDirectoryIfNeeded(
+                        cachedPath,
+                        repoPath: repoPath,
+                        destination: destination
+                    )
+                }
+            }
+        }
+
         // GET request for the actual file bytes
         var baseRequest = try await httpClient.createRequest(.get, url: url)
         baseRequest.cachePolicy = cachePolicy
@@ -494,12 +625,14 @@ public extension HubClient {
             let incompleteBlobPath = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
             let lock = FileLock(path: cache.lockPath(for: blobPath), maxRetries: nil)
             return try await lock.withLock {
-                if let cachedPath = cache.cachedFilePath(
+                if canUseRevisionCache,
+                    let cachedPath = cache.cachedFilePath(
                     repo: repo,
                     kind: kind,
                     revision: revision,
                     filename: repoPath
-                ) {
+                    )
+                {
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
@@ -544,12 +677,14 @@ public extension HubClient {
                         if error is CancellationError {
                             throw error
                         }
-                        if let fallback = cache.cachedFilePath(
+                        if canFallBackToRevisionCacheOnError,
+                            let fallback = cache.cachedFilePath(
                             repo: repo,
                             kind: kind,
                             revision: revision,
                             filename: repoPath
-                        ) {
+                            )
+                        {
                             return try copyFileToLocalDirectoryIfNeeded(
                                 fallback,
                                 repoPath: repoPath,
@@ -680,7 +815,8 @@ public extension HubClient {
             if error is CancellationError {
                 throw error
             }
-            if let cache = cache,
+            if let cache,
+                canFallBackToRevisionCacheOnError,
                 let fallback = cache.cachedFilePath(
                     repo: repo,
                     kind: kind,
@@ -705,7 +841,7 @@ public extension HubClient {
         // Store in cache before moving to destination
         // This fallback parses metadata from the existing GET response object (no extra request).
         let responseMetadata = FileMetadata(response: response)
-        if let cache = cache,
+        if let cache,
             let etag = preflightMetadata?.normalizedEtag ?? responseMetadata?.normalizedEtag,
             let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash
         {
@@ -1062,6 +1198,79 @@ public extension HubClient {
     }
 }
 
+// MARK: - Snapshot Cache Lookup
+
+public extension HubClient {
+    /// Returns the cached snapshot path if all files matching the given globs
+    /// are already downloaded, without making any network calls.
+    ///
+    /// This method resolves the revision (commit hash or branch name) to a
+    /// local commit hash and checks cached snapshot metadata to verify that all
+    /// matching files have been downloaded. Returns `nil` if the snapshot is
+    /// missing, incomplete, or has no cached metadata.
+    ///
+    /// Use this method to avoid the latency of a network call when you only
+    /// need to check whether files are already available locally. Note that for
+    /// branch names (e.g. "main"), the returned snapshot may not reflect the
+    /// latest remote version — use ``downloadSnapshot(of:kind:revision:matching:localFilesOnly:maxConcurrentDownloads:progressHandler:)``
+    /// when freshness matters.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier.
+    ///   - kind: Kind of repository.
+    ///   - revision: Git revision (branch, tag, or commit hash).
+    ///   - globs: Glob patterns to filter files (empty array checks all files).
+    /// - Returns: Path to the verified snapshot directory, or `nil`.
+    func resolveCachedSnapshot(
+        repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        matching globs: [String] = []
+    ) -> URL? {
+        guard let cache else { return nil }
+
+        // Resolve branch/tag names to commit hashes via the local refs file,
+        // which was written during a previous successful download. This avoids
+        // a network round-trip (100-200ms) at the cost of potentially returning
+        // a snapshot that doesn't reflect the latest remote version. Commit hashes
+        // are immutable, so a cache hit for a hash is always valid.
+        let commit: String
+        if isCommitHash(revision) {
+            commit = revision
+        } else if let resolved = cache.resolveRevision(
+            repo: repo, kind: kind, ref: revision
+        ), isCommitHash(resolved) {
+            commit = resolved
+        } else {
+            return nil
+        }
+
+        guard
+            let metadata = loadCachedSnapshotMetadata(
+                cache: cache, repo: repo, kind: kind, commitHash: commit
+            )
+        else {
+            return nil
+        }
+
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commit)
+        let requiredEntries = metadata.entries.filter { entry in
+            guard !globs.isEmpty else { return true }
+            return globs.contains { glob in
+                fnmatch(glob, entry.path, 0) == 0
+            }
+        }
+
+        let isComplete = requiredEntries.allSatisfy { entry in
+            FileManager.default.fileExists(
+                atPath: snapshotPath.appendingPathComponent(entry.path).path
+            )
+        }
+        return isComplete ? snapshotPath : nil
+    }
+}
+
 // MARK: - Snapshot Download
 
 public extension HubClient {
@@ -1165,12 +1374,18 @@ public extension HubClient {
         }
         let effectiveDestination: URL? = returnCachePath ? nil : destination
 
-        if let fastPath = cachedSnapshotPath(
-            repo: repo,
-            kind: kind,
-            revision: revision,
-            matching: globs
-        ) {
+        // Fast path: commit hashes are immutable, so cached files are always
+        // valid. Branch names must go through the network to check for new
+        // commits. Callers who want a cache-only lookup with ref resolution
+        // (no network) can use resolveCachedSnapshot() directly.
+        if isCommitHash(revision),
+            let fastPath = resolveCachedSnapshot(
+                repo: repo,
+                kind: kind,
+                revision: revision,
+                matching: globs
+            )
+        {
             let progress = Progress(totalUnitCount: 1)
             progress.completedUnitCount = 1
             if let progressHandler {
@@ -1234,16 +1449,6 @@ public extension HubClient {
         let progress = Progress(totalUnitCount: max(totalWeight, 1))
         if let progressHandler {
             await progressHandler(progress)
-        }
-
-        if let cache, isCommitHash(revision) {
-            try? saveCachedSnapshotMetadata(
-                CachedSnapshotMetadata(entries: allEntries),
-                cache: cache,
-                repo: repo,
-                kind: kind,
-                commitHash: revision
-            )
         }
 
         let workItems = try entries.map { entry in
@@ -1316,6 +1521,21 @@ public extension HubClient {
             isCommitHash(revision)
             ? revision
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+
+        // Save snapshot metadata so resolveCachedSnapshot can verify completeness
+        // on future calls without a network round-trip. We save after downloads
+        // because individual file downloads update the refs file, which lets us
+        // resolve branch names (e.g. "main") to their commit hash.
+        if isCommitHash(resolvedCommitHash) {
+            try? saveCachedSnapshotMetadata(
+                CachedSnapshotMetadata(entries: allEntries),
+                cache: cache,
+                repo: repo,
+                kind: kind,
+                commitHash: resolvedCommitHash
+            )
+        }
+
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(resolvedCommitHash)
         return try copySnapshotToLocalDirectoryIfNeeded(
@@ -1454,41 +1674,6 @@ private extension HubClient {
         }
     }
 
-    /// Generates the path to a cached snapshot.
-    func cachedSnapshotPath(
-        repo: Repo.ID,
-        kind: Repo.Kind,
-        revision: String,
-        matching globs: [String]
-    ) -> URL? {
-        guard let cache,
-            isCommitHash(revision),
-            let metadata = loadCachedSnapshotMetadata(
-                cache: cache,
-                repo: repo,
-                kind: kind,
-                commitHash: revision
-            )
-        else {
-            return nil
-        }
-
-        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind).appendingPathComponent(revision)
-        let requiredEntries = metadata.entries.filter { entry in
-            guard !globs.isEmpty else { return true }
-            return globs.contains { glob in
-                fnmatch(glob, entry.path, 0) == 0
-            }
-        }
-
-        let isComplete = requiredEntries.allSatisfy { entry in
-            FileManager.default.fileExists(
-                atPath: snapshotPath.appendingPathComponent(entry.path).path
-            )
-        }
-        return isComplete ? snapshotPath : nil
-    }
-
     /// Generates the URL for cached snapshot metadata.
     func cachedSnapshotMetadataURL(
         cache: HubCache,
@@ -1599,7 +1784,7 @@ private extension HubClient {
         revision: String,
         matching globs: [String]
     ) -> URL? {
-        if let completeSnapshot = cachedSnapshotPath(
+        if let completeSnapshot = resolveCachedSnapshot(
             repo: repo,
             kind: kind,
             revision: revision,

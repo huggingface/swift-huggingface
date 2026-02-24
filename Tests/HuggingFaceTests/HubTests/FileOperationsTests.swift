@@ -458,6 +458,341 @@ import Testing
             _ = try await client.downloadContentsOfFile(at: "test.txt", from: repoID, endpoint: .raw)
         }
 
+        @Test("downloadContentsOfFile with main refreshes to latest commit", .mockURLSession)
+        func testDownloadContentsOfFileMainRefreshesToLatestCommit() async throws {
+            let commit1 = "1234567890123456789012345678901234567890"
+            let commit2 = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            let body1 = Data("v1".utf8)
+            let body2 = Data("v2".utf8)
+            let headCalls = ProgressCallCounter()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String]
+                    if request.httpMethod == "HEAD" {
+                        headCalls.increment()
+                        headers = ["ETag": "\"etag-v1\"", "X-Repo-Commit": commit1]
+                    } else {
+                        headers = ["Content-Type": "text/plain"]
+                    }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body1)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            let first = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(first == body1)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String]
+                    if request.httpMethod == "HEAD" {
+                        headCalls.increment()
+                        headers = ["ETag": "\"etag-v2\"", "X-Repo-Commit": commit2]
+                    } else {
+                        headers = ["Content-Type": "text/plain"]
+                    }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body2)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let second = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(second == body2)
+            #expect(headCalls.count >= 2)
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            #expect(cache.resolveRevision(repo: "user/model", kind: .model, ref: "main") == commit2)
+        }
+
+        @Test("downloadContentsOfFile with main updates commit when blob is unchanged", .mockURLSession)
+        func testDownloadContentsOfFileMainRefreshesCommitWhenBlobUnchanged() async throws {
+            let commit1 = "1234567890123456789012345678901234567890"
+            let commit2 = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            let body = Data("stable".utf8)
+            let secondGetCalls = ProgressCallCounter()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-stable\"", "X-Repo-Commit": commit1]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            let first = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(first == body)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    if request.httpMethod == "GET" {
+                        secondGetCalls.increment()
+                    }
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-stable\"", "X-Repo-Commit": commit2]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let second = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(second == body)
+            #expect(secondGetCalls.count == 0)
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            #expect(cache.resolveRevision(repo: "user/model", kind: .model, ref: "main") == commit2)
+        }
+
+        @Test("downloadContentsOfFile with main falls back to cached file on network error", .mockURLSession)
+        func testDownloadContentsOfFileMainFallsBackToCacheOnNetworkError() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let body = Data("cached-body".utf8)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-cached\"", "X-Repo-Commit": commit]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            let first = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(first == body)
+
+            await MockURLProtocol.setHandler { _ in
+                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+            }
+
+            let second = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+            #expect(second == body)
+        }
+
+        @Test("downloadContentsOfFile with main does not fall back on HTTP errors", .mockURLSession)
+        func testDownloadContentsOfFileMainDoesNotFallBackOnHTTPError() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let body = Data("cached-body".utf8)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-cached\"", "X-Repo-Commit": commit]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            _ = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+
+            await MockURLProtocol.setHandler { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data("{\"error\":\"not found\"}".utf8))
+            }
+
+            await #expect(throws: HTTPClientError.self) {
+                _ = try await client.downloadContentsOfFile(
+                    at: "test.txt",
+                    from: "user/model",
+                    revision: "main"
+                )
+            }
+        }
+
+        @Test("downloadFile with main falls back to cached file on network error", .mockURLSession)
+        func testDownloadFileMainFallsBackToCacheOnNetworkError() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let body = Data("cached-file".utf8)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-cached\"", "X-Repo-Commit": commit]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            _ = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                revision: "main"
+            )
+
+            await MockURLProtocol.setHandler { _ in
+                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+            }
+
+            let destination = cacheDirectory.appendingPathComponent("offline-copy", isDirectory: true)
+            let copied = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: "user/model",
+                to: destination,
+                revision: "main"
+            )
+            #expect(copied.path == destination.appendingPathComponent("test.txt").path)
+            #expect(try Data(contentsOf: copied) == body)
+        }
+
         @Test("downloadFile localFilesOnly returns cached file without network", .mockURLSession)
         func testDownloadFileLocalFilesOnlyUsesCache() async throws {
             let commit = "1234567890123456789012345678901234567890"
@@ -1417,6 +1752,227 @@ import Testing
             #expect(FileManager.default.fileExists(atPath: result.appendingPathComponent("config.json").path))
         }
 
+        @Test("downloadSnapshot with main refreshes to latest commit", .mockURLSession)
+        func testDownloadSnapshotMainRefreshesToLatestCommit() async throws {
+            let commit1 = "1234567890123456789012345678901234567890"
+            let commit2 = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            let listResponse = """
+                [
+                    {"path": "config.json", "type": "file", "oid": "abc", "size": 12}
+                ]
+                """
+            let body1 = Data("{\"version\":1}".utf8)
+            let body2 = Data("{\"version\":2}".utf8)
+            let treeCalls = ProgressCallCounter()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    treeCalls.increment()
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                if path == "/user/model/resolve/main/config.json" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-v1\"", "X-Repo-Commit": commit1]
+                        } else {
+                            ["Content-Type": "application/json"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body1)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let first = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                matching: ["config.json"]
+            )
+            #expect(first.lastPathComponent == commit1)
+            #expect(try Data(contentsOf: first.appendingPathComponent("config.json")) == body1)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    treeCalls.increment()
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                if path == "/user/model/resolve/main/config.json" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-v2\"", "X-Repo-Commit": commit2]
+                        } else {
+                            ["Content-Type": "application/json"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body2)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let second = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                matching: ["config.json"]
+            )
+            #expect(treeCalls.count == 2)
+            #expect(second.lastPathComponent == commit2)
+            #expect(second != first)
+            #expect(try Data(contentsOf: second.appendingPathComponent("config.json")) == body2)
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            #expect(cache.resolveRevision(repo: "user/model", kind: .model, ref: "main") == commit2)
+        }
+
+        @Test("downloadSnapshot with main updates commit even when blob is unchanged", .mockURLSession)
+        func testDownloadSnapshotMainRefreshesCommitWhenBlobUnchanged() async throws {
+            let commit1 = "1234567890123456789012345678901234567890"
+            let commit2 = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            let listResponse = """
+                [
+                    {"path": "config.json", "type": "file", "oid": "abc", "size": 12}
+                ]
+                """
+            let body = Data("{\"stable\":true}".utf8)
+            let secondGetCalls = ProgressCallCounter()
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                if path == "/user/model/resolve/main/config.json" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-stable\"", "X-Repo-Commit": commit1]
+                        } else {
+                            ["Content-Type": "application/json"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let first = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                matching: ["config.json"]
+            )
+            #expect(first.lastPathComponent == commit1)
+            #expect(try Data(contentsOf: first.appendingPathComponent("config.json")) == body)
+
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                if path == "/user/model/resolve/main/config.json" {
+                    if request.httpMethod == "GET" {
+                        secondGetCalls.increment()
+                    }
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-stable\"", "X-Repo-Commit": commit2]
+                        } else {
+                            ["Content-Type": "application/json"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : body)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let second = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                matching: ["config.json"]
+            )
+            #expect(second.lastPathComponent == commit2)
+            #expect(try Data(contentsOf: second.appendingPathComponent("config.json")) == body)
+            #expect(secondGetCalls.count == 0)
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            #expect(cache.resolveRevision(repo: "user/model", kind: .model, ref: "main") == commit2)
+        }
+
         @Test("downloadSnapshot falls back to cache when tree request fails", .mockURLSession)
         func testDownloadSnapshotFallsBackToCacheOnTreeFailure() async throws {
             let commit = "1234567890123456789012345678901234567890"
@@ -1647,6 +2203,171 @@ import Testing
                 matching: ["config.json"]
             )
             #expect(treeCalls.count == 2)
+        }
+
+        // MARK: - Resolve Cached Snapshot Tests
+
+        /// Sets up the on-disk cache structure that `resolveCachedSnapshot` reads:
+        /// refs file, metadata JSON, snapshot directory, and (optionally) snapshot files.
+        private func setUpCacheForResolve(
+            cacheDirectory: URL,
+            repo: Repo.ID = "user/model",
+            kind: Repo.Kind = .model,
+            ref: String? = "main",
+            commit: String,
+            entries: [(path: String, createFile: Bool)]
+        ) throws {
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+
+            // Write refs/<ref> → commit hash
+            if let ref {
+                let refsDir = cache.refsDirectory(repo: repo, kind: kind)
+                try FileManager.default.createDirectory(
+                    at: refsDir, withIntermediateDirectories: true)
+                try commit.write(
+                    to: refsDir.appendingPathComponent(ref),
+                    atomically: true, encoding: .utf8)
+            }
+
+            // Write metadata JSON (same format as CachedSnapshotMetadata, which is private)
+            let metadataDir = cache.metadataDirectory(repo: repo, kind: kind)
+            try FileManager.default.createDirectory(
+                at: metadataDir, withIntermediateDirectories: true)
+            let entriesJSON = entries.map { entry in
+                """
+                {"path":"\(entry.path)","type":"file","oid":"sha-\(entry.path)","size":10}
+                """
+            }.joined(separator: ",")
+            let metadataJSON = Data("""
+                {"entries":[\(entriesJSON)]}
+                """.utf8)
+            try metadataJSON.write(
+                to: metadataDir.appendingPathComponent("\(commit).json"))
+
+            // Create snapshot directory and files
+            let snapshotDir = cache.snapshotsDirectory(repo: repo, kind: kind)
+                .appendingPathComponent(commit)
+            try FileManager.default.createDirectory(
+                at: snapshotDir, withIntermediateDirectories: true)
+            for entry in entries where entry.createFile {
+                let filePath = snapshotDir.appendingPathComponent(entry.path)
+                try FileManager.default.createDirectory(
+                    at: filePath.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                try Data("content".utf8).write(to: filePath)
+            }
+        }
+
+        @Test("resolveCachedSnapshot resolves branch name via refs file")
+        func testResolveCachedSnapshotResolvesBranchViaRefs() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: true),
+                ]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main", matching: ["*.json", "*.safetensors"])
+
+            #expect(result != nil)
+            #expect(result?.lastPathComponent == commit)
+            #expect(FileManager.default.fileExists(
+                atPath: result!.appendingPathComponent("config.json").path))
+        }
+
+        @Test("resolveCachedSnapshot returns nil for unresolved branch")
+        func testResolveCachedSnapshotReturnsNilForUnresolvedBranch() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            // Set up cache for "main" but query "develop"
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                ref: "main",
+                commit: commit,
+                entries: [("config.json", createFile: true)]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "develop")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot returns nil when metadata is missing")
+        func testResolveCachedSnapshotReturnsNilWithoutMetadata() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+
+            // Only write the refs file, no metadata
+            let refsDir = cache.refsDirectory(repo: "user/model", kind: .model)
+            try FileManager.default.createDirectory(
+                at: refsDir, withIntermediateDirectories: true)
+            try commit.write(
+                to: refsDir.appendingPathComponent("main"),
+                atomically: true, encoding: .utf8)
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot returns nil when snapshot files are incomplete")
+        func testResolveCachedSnapshotReturnsNilWhenFilesIncomplete() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: false),  // missing from disk
+                ]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot with glob ignores non-matching missing files")
+        func testResolveCachedSnapshotGlobIgnoresNonMatchingMissingFiles() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            // model.safetensors is missing but shouldn't matter when glob only asks for *.json
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: false),
+                ]
+            )
+
+            let withGlob = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main", matching: ["*.json"])
+            let withoutGlob = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(withGlob != nil)
+            #expect(withoutGlob == nil)
         }
 
         // MARK: - Delete Tests

@@ -5,8 +5,11 @@
 
     @testable import HuggingFace
 
-    /// Benchmarks run only when `HF_TOKEN` is available.
-    let benchmarksEnabled = ProcessInfo.processInfo.environment["HF_TOKEN"]?.isEmpty == false
+    /// Benchmarks run only when explicitly enabled.
+    ///
+    /// Run from command line:
+    ///   RUN_BENCHMARKS=1 swift test --filter HubBenchmarks
+    let benchmarksEnabled = ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] == "1"
 
     @Suite("Hub Benchmarks", .serialized, .enabled(if: benchmarksEnabled))
     struct DownloadSnapshotBenchmarks {
@@ -23,6 +26,7 @@
             let cache = HubCache(cacheDirectory: Self.cacheDirectory)
             return HubClient(
                 host: URL(string: "https://huggingface.co")!,
+                tokenProvider: .environment,
                 cache: cache
             )
         }
@@ -86,6 +90,89 @@
             printLatencySummary(
                 times: times
             )
+            if !checksumMatches {
+                printChecksums(checksums: baselineChecksums ?? [:])
+                print("")
+            }
+        }
+
+        @Test("Prefer cached snapshot for branch ref (fallback to network)")
+        func preferCachedSnapshotForBranchRef() async throws {
+            let repoID: Repo.ID = "mlx-community/Qwen3-0.6B-Base-DQ5"
+            let revision = "main"
+            let globs = ["*.json"]
+            let client = createClient()
+
+            // Warm cache + refs/metadata using a branch revision so subsequent
+            // resolveCachedSnapshot(revision: "main") can run without network.
+            _ = try await client.downloadSnapshot(
+                of: repoID,
+                revision: revision,
+                matching: globs
+            )
+
+            let workload = try await resolveWorkload(
+                client: client,
+                repoID: repoID,
+                revision: revision,
+                matching: globs
+            )
+
+            let iterations = 5
+            var times: [Double] = []
+            var baselineChecksums: [String: String]?
+            var checksumMatches = true
+            var cacheHitCount = 0
+
+            printHeader(
+                "Prefer cached snapshot (branch ref)",
+                description: "Resolving *.json from \(repoID) via \(revision) with cache-first fallback"
+            )
+            printWorkload(workload, includeLargestFile: true)
+
+            for i in 1 ... iterations {
+                let start = CFAbsoluteTimeGetCurrent()
+                let snapshotPath: URL
+                let source: String
+                if let cachedPath = client.resolveCachedSnapshot(
+                    repo: repoID,
+                    revision: revision,
+                    matching: globs
+                ) {
+                    snapshotPath = cachedPath
+                    source = "cache"
+                    cacheHitCount += 1
+                } else {
+                    snapshotPath = try await client.downloadSnapshot(
+                        of: repoID,
+                        revision: revision,
+                        matching: globs
+                    )
+                    source = "network"
+                }
+                let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
+                times.append(elapsed)
+
+                let checksums = try computeChecksums(
+                    in: snapshotPath,
+                    for: workload.files.map(\.path)
+                )
+                if let baselineChecksums {
+                    if checksums != baselineChecksums {
+                        checksumMatches = false
+                    }
+                    #expect(checksums == baselineChecksums)
+                } else {
+                    baselineChecksums = checksums
+                }
+
+                printLatencyIteration(i, time: elapsed)
+                print("      source: \(source)")
+            }
+
+            printLatencySummary(times: times)
+            print("    Cache hits: \(cacheHitCount)/\(iterations)")
+            print("")
             if !checksumMatches {
                 printChecksums(checksums: baselineChecksums ?? [:])
                 print("")
