@@ -179,18 +179,22 @@ public struct HubCache: Sendable {
     ///   - revision: Git revision (branch, tag, commit hash, or ref)
     /// - Returns: Path to the snapshot directory if it exists, `nil` otherwise.
     public func snapshotPath(repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL? {
+        let snapshotsDir = snapshotsDirectory(repo: repo, kind: kind)
+
         // First try direct commit hash
-        let directPath = snapshotsDirectory(repo: repo, kind: kind)
-            .appendingPathComponent(revision)
-        if FileManager.default.fileExists(atPath: directPath.path) {
+        let directPath = snapshotsDir.appendingPathComponent(revision)
+        if isContained(directPath, within: snapshotsDir),
+           FileManager.default.fileExists(atPath: directPath.path)
+        {
             return directPath
         }
 
         // Try resolving as a ref (branch/tag)
         if let resolvedCommit = resolveRevision(repo: repo, kind: kind, ref: revision) {
-            let resolvedPath = snapshotsDirectory(repo: repo, kind: kind)
-                .appendingPathComponent(resolvedCommit)
-            if FileManager.default.fileExists(atPath: resolvedPath.path) {
+            let resolvedPath = snapshotsDir.appendingPathComponent(resolvedCommit)
+            if isContained(resolvedPath, within: snapshotsDir),
+               FileManager.default.fileExists(atPath: resolvedPath.path)
+            {
                 return resolvedPath
             }
         }
@@ -210,8 +214,11 @@ public struct HubCache: Sendable {
     ///   - ref: The reference name (e.g., "main").
     /// - Returns: The commit hash if found, `nil` otherwise.
     public func resolveRevision(repo: Repo.ID, kind: Repo.Kind, ref: String) -> String? {
-        let refFile = refsDirectory(repo: repo, kind: kind).appendingPathComponent(ref)
-        guard let contents = try? String(contentsOf: refFile, encoding: .utf8) else {
+        let refsDir = refsDirectory(repo: repo, kind: kind)
+        let refFile = refsDir.appendingPathComponent(ref)
+        guard isContained(refFile, within: refsDir),
+              let contents = try? String(contentsOf: refFile, encoding: .utf8)
+        else {
             return nil
         }
         return contents.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -230,6 +237,10 @@ public struct HubCache: Sendable {
     public func updateRef(repo: Repo.ID, kind: Repo.Kind, ref: String, commit: String) throws {
         let refsDir = refsDirectory(repo: repo, kind: kind)
         let refFile = refsDir.appendingPathComponent(ref)
+
+        guard isContained(refFile, within: refsDir) else {
+            throw HubCacheError.invalidPathComponent(ref)
+        }
 
         // Create parent directories for nested refs (e.g., "refs/pr/5")
         try FileManager.default.createDirectory(
@@ -498,6 +509,14 @@ public struct HubCache: Sendable {
         // Remove surrounding quotes
         normalized = normalized.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
         return normalized
+    }
+
+    /// Returns true if `path` is contained within `parent` after resolving
+    /// relative components like `..`. Prevents path traversal attacks.
+    private func isContained(_ path: URL, within parent: URL) -> Bool {
+        let normalizedPath = path.standardizedFileURL.path
+        let normalizedParent = parent.standardizedFileURL.path + "/"
+        return normalizedPath.hasPrefix(normalizedParent)
     }
 
     /// Checks if a string looks like a commit hash (40 hex characters).

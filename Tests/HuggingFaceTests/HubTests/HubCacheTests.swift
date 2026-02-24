@@ -571,6 +571,71 @@ struct HubCacheTests {
         #expect(cache.cacheDirectory.path == tempDirectory.path)
     }
 
+    // MARK: - Path Traversal Containment Tests
+
+    @Test("snapshotPath rejects revision with path traversal")
+    func snapshotPathRejectsTraversalRevision() throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+
+        // Create a directory outside snapshots that the traversal would reach
+        let escapedDir = cache.repoDirectory(repo: repoID, kind: .model)
+        try FileManager.default.createDirectory(at: escapedDir, withIntermediateDirectories: true)
+
+        let result = cache.snapshotPath(repo: repoID, kind: .model, revision: "..")
+        #expect(result == nil)
+    }
+
+    @Test("snapshotPath rejects deep path traversal")
+    func snapshotPathRejectsDeepTraversal() throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+
+        // Create the directory that the traversal would resolve to,
+        // so fileExists would return true without the containment check
+        let snapshotsDir = cache.snapshotsDirectory(repo: repoID, kind: .model)
+        let escapedPath = snapshotsDir.appendingPathComponent("../../../escape")
+        try FileManager.default.createDirectory(
+            at: escapedPath.standardizedFileURL, withIntermediateDirectories: true
+        )
+
+        let result = cache.snapshotPath(repo: repoID, kind: .model, revision: "../../../escape")
+        #expect(result == nil)
+    }
+
+    @Test("resolveRevision rejects ref with path traversal")
+    func resolveRevisionRejectsTraversalRef() throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+
+        // Plant a file at the path the traversal would resolve to,
+        // so String(contentsOf:) would succeed without the containment check
+        let refsDir = cache.refsDirectory(repo: repoID, kind: .model)
+        let escapedPath = refsDir.appendingPathComponent("../../escape")
+        try FileManager.default.createDirectory(
+            at: escapedPath.standardizedFileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "fake-commit-hash".write(
+            to: escapedPath.standardizedFileURL, atomically: true, encoding: .utf8
+        )
+
+        let result = cache.resolveRevision(repo: repoID, kind: .model, ref: "../../escape")
+        #expect(result == nil)
+    }
+
+    @Test("updateRef rejects ref with path traversal")
+    func updateRefRejectsTraversalRef() throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+
+        #expect(throws: HubCacheError.self) {
+            try cache.updateRef(
+                repo: repoID, kind: .model, ref: "../../escape", commit: "abc123"
+            )
+        }
+    }
+
     // MARK: - Path Traversal Validation Tests
 
     @Test("Store file rejects etag with path traversal")
