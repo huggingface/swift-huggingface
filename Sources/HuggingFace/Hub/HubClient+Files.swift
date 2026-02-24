@@ -1062,6 +1062,79 @@ public extension HubClient {
     }
 }
 
+// MARK: - Snapshot Cache Lookup
+
+public extension HubClient {
+    /// Returns the cached snapshot path if all files matching the given globs
+    /// are already downloaded, without making any network calls.
+    ///
+    /// This method resolves the revision (commit hash or branch name) to a
+    /// local commit hash and checks cached snapshot metadata to verify that all
+    /// matching files have been downloaded. Returns `nil` if the snapshot is
+    /// missing, incomplete, or has no cached metadata.
+    ///
+    /// Use this method to avoid the latency of a network call when you only
+    /// need to check whether files are already available locally. Note that for
+    /// branch names (e.g. "main"), the returned snapshot may not reflect the
+    /// latest remote version — use ``downloadSnapshot(of:kind:revision:matching:localFilesOnly:maxConcurrentDownloads:progressHandler:)``
+    /// when freshness matters.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier.
+    ///   - kind: Kind of repository.
+    ///   - revision: Git revision (branch, tag, or commit hash).
+    ///   - globs: Glob patterns to filter files (empty array checks all files).
+    /// - Returns: Path to the verified snapshot directory, or `nil`.
+    func cachedSnapshotPath(
+        repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        matching globs: [String] = []
+    ) -> URL? {
+        guard let cache else { return nil }
+
+        // Resolve branch/tag names to commit hashes via the local refs file,
+        // which was written during a previous successful download. This avoids
+        // a network round-trip (100-200ms) at the cost of potentially returning
+        // a snapshot that doesn't reflect the latest remote version. Commit hashes
+        // are immutable, so a cache hit for a hash is always valid.
+        let commit: String
+        if isCommitHash(revision) {
+            commit = revision
+        } else if let resolved = cache.resolveRevision(
+            repo: repo, kind: kind, ref: revision
+        ) {
+            commit = resolved
+        } else {
+            return nil
+        }
+
+        guard
+            let metadata = loadCachedSnapshotMetadata(
+                cache: cache, repo: repo, kind: kind, commitHash: commit
+            )
+        else {
+            return nil
+        }
+
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commit)
+        let requiredEntries = metadata.entries.filter { entry in
+            guard !globs.isEmpty else { return true }
+            return globs.contains { glob in
+                fnmatch(glob, entry.path, 0) == 0
+            }
+        }
+
+        let isComplete = requiredEntries.allSatisfy { entry in
+            FileManager.default.fileExists(
+                atPath: snapshotPath.appendingPathComponent(entry.path).path
+            )
+        }
+        return isComplete ? snapshotPath : nil
+    }
+}
+
 // MARK: - Snapshot Download
 
 public extension HubClient {
@@ -1458,58 +1531,6 @@ private extension HubClient {
 
             for try await _ in group {}
         }
-    }
-
-    /// Returns the cached snapshot path if all files matching the given globs
-    /// are already downloaded, without making any network calls.
-    ///
-    /// Resolves branch/tag names to commit hashes via the local refs file,
-    /// which was written during a previous successful download. This avoids
-    /// a network round-trip (100-200ms) at the cost of potentially returning
-    /// a snapshot that is behind the remote. Commit hashes are immutable so
-    /// a cache hit for a hash is always valid.
-    func cachedSnapshotPath(
-        repo: Repo.ID,
-        kind: Repo.Kind = .model,
-        revision: String = "main",
-        matching globs: [String] = []
-    ) -> URL? {
-        guard let cache else { return nil }
-
-        let commit: String
-        if isCommitHash(revision) {
-            commit = revision
-        } else if let resolved = cache.resolveRevision(
-            repo: repo, kind: kind, ref: revision
-        ) {
-            commit = resolved
-        } else {
-            return nil
-        }
-
-        guard
-            let metadata = loadCachedSnapshotMetadata(
-                cache: cache, repo: repo, kind: kind, commitHash: commit
-            )
-        else {
-            return nil
-        }
-
-        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
-            .appendingPathComponent(commit)
-        let requiredEntries = metadata.entries.filter { entry in
-            guard !globs.isEmpty else { return true }
-            return globs.contains { glob in
-                fnmatch(glob, entry.path, 0) == 0
-            }
-        }
-
-        let isComplete = requiredEntries.allSatisfy { entry in
-            FileManager.default.fileExists(
-                atPath: snapshotPath.appendingPathComponent(entry.path).path
-            )
-        }
-        return isComplete ? snapshotPath : nil
     }
 
     /// Generates the URL for cached snapshot metadata.
