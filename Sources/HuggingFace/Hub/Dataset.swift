@@ -121,4 +121,48 @@ public struct ParquetFileInfo: Codable, Sendable {
 
     /// The file size in bytes.
     public let size: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case dataset
+        case config
+        case split
+        case url
+        case filename
+        case size
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let url = try? container.decode(String.self) {
+            self.url = url
+            self.filename =
+                URL(string: url)?.lastPathComponent
+                ?? url.split(separator: "/").last.map(String.init)
+                ?? ""
+            self.size = nil
+
+            let components = URL(string: url)?.pathComponents ?? []
+            if let datasetsIndex = components.firstIndex(of: "datasets") {
+                let datasetIndex = datasetsIndex + 2
+                self.dataset = components.indices.contains(datasetIndex) ? components[datasetIndex] : ""
+
+                let parquetIndex = datasetsIndex + 3
+                self.config = components.indices.contains(parquetIndex + 1) ? components[parquetIndex + 1] : ""
+                self.split = components.indices.contains(parquetIndex + 2) ? components[parquetIndex + 2] : ""
+            } else {
+                self.dataset = ""
+                self.config = ""
+                self.split = ""
+            }
+            return
+        }
+
+        let keyedContainer = try decoder.container(keyedBy: CodingKeys.self)
+        self.dataset = try keyedContainer.decode(String.self, forKey: .dataset)
+        self.config = try keyedContainer.decode(String.self, forKey: .config)
+        self.split = try keyedContainer.decode(String.self, forKey: .split)
+        self.url = try keyedContainer.decode(String.self, forKey: .url)
+        self.filename = try keyedContainer.decode(String.self, forKey: .filename)
+        self.size = try keyedContainer.decodeIfPresent(Int.self, forKey: .size)
+    }
 }
