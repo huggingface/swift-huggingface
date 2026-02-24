@@ -1165,12 +1165,18 @@ public extension HubClient {
         }
         let effectiveDestination: URL? = returnCachePath ? nil : destination
 
-        if let fastPath = cachedSnapshotPath(
-            repo: repo,
-            kind: kind,
-            revision: revision,
-            matching: globs
-        ) {
+        // Fast path: commit hashes are immutable, so cached files are always
+        // valid. Branch names must go through the network to check for new
+        // commits. Callers who want a cache-only lookup with ref resolution
+        // (no network) can use cachedSnapshotPath() directly.
+        if isCommitHash(revision),
+            let fastPath = cachedSnapshotPath(
+                repo: repo,
+                kind: kind,
+                revision: revision,
+                matching: globs
+            )
+        {
             let progress = Progress(totalUnitCount: 1)
             progress.completedUnitCount = 1
             if let progressHandler {
@@ -1454,26 +1460,43 @@ private extension HubClient {
         }
     }
 
-    /// Generates the path to a cached snapshot.
+    /// Returns the cached snapshot path if all files matching the given globs
+    /// are already downloaded, without making any network calls.
+    ///
+    /// Resolves branch/tag names to commit hashes via the local refs file,
+    /// which was written during a previous successful download. This avoids
+    /// a network round-trip (100-200ms) at the cost of potentially returning
+    /// a snapshot that is behind the remote. Commit hashes are immutable so
+    /// a cache hit for a hash is always valid.
     func cachedSnapshotPath(
         repo: Repo.ID,
-        kind: Repo.Kind,
-        revision: String,
-        matching globs: [String]
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        matching globs: [String] = []
     ) -> URL? {
-        guard let cache,
-            isCommitHash(revision),
+        guard let cache else { return nil }
+
+        let commit: String
+        if isCommitHash(revision) {
+            commit = revision
+        } else if let resolved = cache.resolveRevision(
+            repo: repo, kind: kind, ref: revision
+        ) {
+            commit = resolved
+        } else {
+            return nil
+        }
+
+        guard
             let metadata = loadCachedSnapshotMetadata(
-                cache: cache,
-                repo: repo,
-                kind: kind,
-                commitHash: revision
+                cache: cache, repo: repo, kind: kind, commitHash: commit
             )
         else {
             return nil
         }
 
-        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind).appendingPathComponent(revision)
+        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+            .appendingPathComponent(commit)
         let requiredEntries = metadata.entries.filter { entry in
             guard !globs.isEmpty else { return true }
             return globs.contains { glob in
