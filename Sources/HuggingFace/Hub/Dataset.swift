@@ -134,26 +134,49 @@ public struct ParquetFileInfo: Codable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if let url = try? container.decode(String.self) {
-            self.url = url
-            self.filename =
-                URL(string: url)?.lastPathComponent
-                ?? url.split(separator: "/").last.map(String.init)
-                ?? ""
-            self.size = nil
-
-            let components = URL(string: url)?.pathComponents ?? []
-            if let datasetsIndex = components.firstIndex(of: "datasets") {
-                let datasetIndex = datasetsIndex + 2
-                self.dataset = components.indices.contains(datasetIndex) ? components[datasetIndex] : ""
-
-                let parquetIndex = datasetsIndex + 3
-                self.config = components.indices.contains(parquetIndex + 1) ? components[parquetIndex + 1] : ""
-                self.split = components.indices.contains(parquetIndex + 2) ? components[parquetIndex + 2] : ""
-            } else {
-                self.dataset = ""
-                self.config = ""
-                self.split = ""
+            guard let urlObject = URL(string: url) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Invalid URL string for ParquetFileInfo: \(url)"
+                )
             }
+            let components = urlObject.pathComponents
+            guard let datasetsIndex = components.firstIndex(of: "datasets") else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription:
+                        "URL path for ParquetFileInfo does not contain 'datasets' segment: \(urlObject.path)"
+                )
+            }
+
+            // Expected layout:
+            // /api/datasets/{namespace}/{dataset}/parquet/{config}/{split}/{file}
+            let datasetIndex = datasetsIndex + 2
+            let parquetIndex = datasetsIndex + 3
+            let configIndex = datasetsIndex + 4
+            let splitIndex = datasetsIndex + 5
+            let fileIndex = datasetsIndex + 6
+            guard
+                components.indices.contains(datasetIndex),
+                components.indices.contains(parquetIndex),
+                components.indices.contains(configIndex),
+                components.indices.contains(splitIndex),
+                components.indices.contains(fileIndex),
+                components[parquetIndex] == "parquet"
+            else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription:
+                        "URL path for ParquetFileInfo does not match expected layout '/api/datasets/{namespace}/{dataset}/parquet/{config}/{split}/{file}': \(urlObject.path)"
+                )
+            }
+
+            self.url = url
+            self.filename = components[fileIndex]
+            self.size = nil
+            self.dataset = components[datasetIndex]
+            self.config = components[configIndex]
+            self.split = components[splitIndex]
             return
         }
 
