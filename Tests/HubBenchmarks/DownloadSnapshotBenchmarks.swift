@@ -5,8 +5,11 @@
 
     @testable import HuggingFace
 
-    /// Benchmarks run only when `HF_TOKEN` is available.
-    let benchmarksEnabled = ProcessInfo.processInfo.environment["HF_TOKEN"]?.isEmpty == false
+    /// Benchmarks run only when explicitly enabled.
+    ///
+    /// Run from command line:
+    ///   RUN_BENCHMARKS=1 swift test --filter HubBenchmarks
+    let benchmarksEnabled = ProcessInfo.processInfo.environment["RUN_BENCHMARKS"] == "1"
 
     @Suite("Hub Benchmarks", .serialized, .enabled(if: benchmarksEnabled))
     struct DownloadSnapshotBenchmarks {
@@ -23,6 +26,7 @@
             let cache = HubCache(cacheDirectory: Self.cacheDirectory)
             return HubClient(
                 host: URL(string: "https://huggingface.co")!,
+                tokenProvider: .environment,
                 cache: cache
             )
         }
