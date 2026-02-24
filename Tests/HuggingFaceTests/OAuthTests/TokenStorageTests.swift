@@ -108,7 +108,10 @@ import Testing
             #expect(token?.accessToken == "env-token")
         }
 
-        @Test("CompositeTokenStorage falls back to file token")
+        @Test(
+            "CompositeTokenStorage falls back to file token",
+            .disabled(if: ProcessInfo.processInfo.environment["HF_TOKEN"]?.isEmpty == false)
+        )
         func testCompositeStorageFallsBackToFile() throws {
             let previousHFToken = ProcessInfo.processInfo.environment["HF_TOKEN"]
             defer { restoreEnvironment(name: "HF_TOKEN", previousValue: previousHFToken) }
