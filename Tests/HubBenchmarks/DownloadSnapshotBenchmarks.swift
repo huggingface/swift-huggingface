@@ -1,4 +1,4 @@
-#if !canImport(FoundationNetworking)
+#if canImport(Darwin)
     import Foundation
 
     import Testing
@@ -444,4 +444,4 @@
             let standardDeviation: Double
         }
     }
-#endif  // !canImport(FoundationNetworking)
+#endif  // canImport(Darwin)
