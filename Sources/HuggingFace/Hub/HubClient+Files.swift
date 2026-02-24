@@ -445,9 +445,11 @@ public extension HubClient {
         guard let normalizedEtag = metadata?.etag else {
             throw HubCacheError.unexpectedAPIResponse("Server did not return an ETag header for '\(repoPath)'")
         }
+        guard let commitHash = metadata?.commitHash else {
+            throw HubCacheError.unexpectedAPIResponse("Server did not return a commit hash for '\(repoPath)'")
+        }
         let blobsDir = cache.blobsDirectory(repo: repo, kind: kind)
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let commitHash = metadata?.commitHash ?? revision
 
         // Check if blob already exists (skip download)
         if fileManager.fileExists(atPath: blobPath.path) {
@@ -1309,9 +1311,11 @@ private extension HubClient {
         }
 
         let fileManager = FileManager.default
+        guard let commitHash = xetInfo.commitHash else {
+            throw HubCacheError.unexpectedAPIResponse("Server did not return a commit hash for '\(repoPath)'")
+        }
         let blobsDir = cache.blobsDirectory(repo: repo, kind: kind)
         let blobPath = blobsDir.appendingPathComponent(normalizedEtag)
-        let commitHash = xetInfo.commitHash ?? revision
 
         if !fileManager.fileExists(atPath: blobPath.path) {
             let locksDir = cache.locksDirectory(repo: repo, kind: kind)
