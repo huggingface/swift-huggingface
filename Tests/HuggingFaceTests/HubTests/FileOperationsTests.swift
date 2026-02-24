@@ -1649,6 +1649,171 @@ import Testing
             #expect(treeCalls.count == 2)
         }
 
+        // MARK: - Resolve Cached Snapshot Tests
+
+        /// Sets up the on-disk cache structure that `resolveCachedSnapshot` reads:
+        /// refs file, metadata JSON, snapshot directory, and (optionally) snapshot files.
+        private func setUpCacheForResolve(
+            cacheDirectory: URL,
+            repo: Repo.ID = "user/model",
+            kind: Repo.Kind = .model,
+            ref: String? = "main",
+            commit: String,
+            entries: [(path: String, createFile: Bool)]
+        ) throws {
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+
+            // Write refs/<ref> → commit hash
+            if let ref {
+                let refsDir = cache.refsDirectory(repo: repo, kind: kind)
+                try FileManager.default.createDirectory(
+                    at: refsDir, withIntermediateDirectories: true)
+                try commit.write(
+                    to: refsDir.appendingPathComponent(ref),
+                    atomically: true, encoding: .utf8)
+            }
+
+            // Write metadata JSON (same format as CachedSnapshotMetadata, which is private)
+            let metadataDir = cache.metadataDirectory(repo: repo, kind: kind)
+            try FileManager.default.createDirectory(
+                at: metadataDir, withIntermediateDirectories: true)
+            let entriesJSON = entries.map { entry in
+                """
+                {"path":"\(entry.path)","type":"file","oid":"sha-\(entry.path)","size":10}
+                """
+            }.joined(separator: ",")
+            let metadataJSON = Data("""
+                {"entries":[\(entriesJSON)]}
+                """.utf8)
+            try metadataJSON.write(
+                to: metadataDir.appendingPathComponent("\(commit).json"))
+
+            // Create snapshot directory and files
+            let snapshotDir = cache.snapshotsDirectory(repo: repo, kind: kind)
+                .appendingPathComponent(commit)
+            try FileManager.default.createDirectory(
+                at: snapshotDir, withIntermediateDirectories: true)
+            for entry in entries where entry.createFile {
+                let filePath = snapshotDir.appendingPathComponent(entry.path)
+                try FileManager.default.createDirectory(
+                    at: filePath.deletingLastPathComponent(),
+                    withIntermediateDirectories: true)
+                try Data("content".utf8).write(to: filePath)
+            }
+        }
+
+        @Test("resolveCachedSnapshot resolves branch name via refs file")
+        func testResolveCachedSnapshotResolvesBranchViaRefs() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: true),
+                ]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main", matching: ["*.json", "*.safetensors"])
+
+            #expect(result != nil)
+            #expect(result?.lastPathComponent == commit)
+            #expect(FileManager.default.fileExists(
+                atPath: result!.appendingPathComponent("config.json").path))
+        }
+
+        @Test("resolveCachedSnapshot returns nil for unresolved branch")
+        func testResolveCachedSnapshotReturnsNilForUnresolvedBranch() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            // Set up cache for "main" but query "develop"
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                ref: "main",
+                commit: commit,
+                entries: [("config.json", createFile: true)]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "develop")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot returns nil when metadata is missing")
+        func testResolveCachedSnapshotReturnsNilWithoutMetadata() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+
+            // Only write the refs file, no metadata
+            let refsDir = cache.refsDirectory(repo: "user/model", kind: .model)
+            try FileManager.default.createDirectory(
+                at: refsDir, withIntermediateDirectories: true)
+            try commit.write(
+                to: refsDir.appendingPathComponent("main"),
+                atomically: true, encoding: .utf8)
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot returns nil when snapshot files are incomplete")
+        func testResolveCachedSnapshotReturnsNilWhenFilesIncomplete() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: false),  // missing from disk
+                ]
+            )
+
+            let result = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(result == nil)
+        }
+
+        @Test("resolveCachedSnapshot with glob ignores non-matching missing files")
+        func testResolveCachedSnapshotGlobIgnoresNonMatchingMissingFiles() throws {
+            let commit = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            // model.safetensors is missing but shouldn't matter when glob only asks for *.json
+            try setUpCacheForResolve(
+                cacheDirectory: cacheDirectory,
+                commit: commit,
+                entries: [
+                    ("config.json", createFile: true),
+                    ("model.safetensors", createFile: false),
+                ]
+            )
+
+            let withGlob = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main", matching: ["*.json"])
+            let withoutGlob = client.resolveCachedSnapshot(
+                repo: "user/model", revision: "main")
+
+            #expect(withGlob != nil)
+            #expect(withoutGlob == nil)
+        }
+
         // MARK: - Delete Tests
 
         @Test("Delete single file", .mockURLSession)
