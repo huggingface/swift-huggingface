@@ -372,6 +372,74 @@ import Testing
             #expect(files[0].split == "train")
         }
 
+        @Test("List parquet files from URL-only response", .mockURLSession)
+        func testListParquetFilesWithURLOnlyResponse() async throws {
+            let mockResponse = """
+                [
+                    "https://huggingface.co/api/datasets/ankislyakov/titanic/parquet/default/train/0.parquet"
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/datasets/ankislyakov/titanic/parquet")
+                #expect(request.httpMethod == "GET")
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let repoID: Repo.ID = "ankislyakov/titanic"
+            let files = try await client.listParquetFiles(repoID)
+
+            #expect(files.count == 1)
+            #expect(files[0].dataset == "titanic")
+            #expect(files[0].config == "default")
+            #expect(files[0].split == "train")
+            #expect(files[0].filename == "0.parquet")
+            #expect(
+                files[0].url
+                    == "https://huggingface.co/api/datasets/ankislyakov/titanic/parquet/default/train/0.parquet"
+            )
+            #expect(files[0].size == nil)
+        }
+
+        @Test("Reject malformed URL-only parquet response", .mockURLSession)
+        func testListParquetFilesWithMalformedURLOnlyResponse() async throws {
+            let mockResponse = """
+                [
+                    "https://huggingface.co/api/datasets/ankislyakov/titanic/default/train/0.parquet"
+                ]
+                """
+
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == "/api/datasets/ankislyakov/titanic/parquet")
+                #expect(request.httpMethod == "GET")
+
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+
+                return (response, Data(mockResponse.utf8))
+            }
+
+            let client = createMockClient()
+            let repoID: Repo.ID = "ankislyakov/titanic"
+
+            await #expect(throws: HTTPClientError.self) {
+                _ = try await client.listParquetFiles(repoID)
+            }
+        }
+
         @Test("Handle 404 error for dataset", .mockURLSession)
         func testGetDatasetNotFound() async throws {
             let errorResponse = """
