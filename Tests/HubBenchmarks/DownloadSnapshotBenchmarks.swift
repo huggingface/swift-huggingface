@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+    import FoundationNetworking
+#endif
 import Testing
 
 @testable import HuggingFace
@@ -357,6 +360,15 @@ struct DownloadSnapshotBenchmarks {
     private func latencyStats(for values: [Double]) -> LatencyStats {
         let sorted = values.sorted()
         let count = sorted.count
+        guard count > 0 else {
+            return LatencyStats(
+                minimum: 0,
+                maximum: 0,
+                average: 0,
+                median: 0,
+                standardDeviation: 0
+            )
+        }
         let average = sorted.reduce(0, +) / Double(count)
         let median: Double
         if count % 2 == 0 {
