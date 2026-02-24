@@ -56,19 +56,21 @@ struct MultipartBuilderTests {
         #expect(inMemory == streamed)
     }
 
-    @Test("buildToTempFile throws for non-file URL input")
-    func testBuildToTempFileInvalidStreamURL() throws {
-        let builder = MultipartBuilder(boundary: "test-boundary")
-            .addFileStreamed(
-                name: "file",
-                fileURL: URL(string: "https://example.com/file.txt")!,
-                mimeType: "text/plain"
-            )
+    #if !canImport(FoundationNetworking)
+        @Test("buildToTempFile throws for non-file URL input")
+        func testBuildToTempFileInvalidStreamURL() throws {
+            let builder = MultipartBuilder(boundary: "test-boundary")
+                .addFileStreamed(
+                    name: "file",
+                    fileURL: URL(string: "https://example.com/file.txt")!,
+                    mimeType: "text/plain"
+                )
 
-        #expect(throws: MultipartBuilderError.self) {
-            _ = try builder.buildToTempFile()
+            #expect(throws: MultipartBuilderError.self) {
+                _ = try builder.buildToTempFile()
+            }
         }
-    }
+    #endif  // !canImport(FoundationNetworking)
 
     private func makeTempFile(named: String, contents: String) throws -> (URL, URL) {
         let directory = FileManager.default.temporaryDirectory
