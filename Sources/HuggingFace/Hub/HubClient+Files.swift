@@ -510,6 +510,34 @@ public extension HubClient {
                     )
                 }
                 if FileManager.default.fileExists(atPath: blobPath.path) {
+                    if let commitHash = preflightMetadata?.commitHash {
+                        // Ensure every repo path gets a snapshot entry, even when the blob already exists.
+                        // Multiple files can legitimately share an ETag/blob.
+                        try? await cache.storeFile(
+                            at: blobPath,
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath,
+                            etag: etag,
+                            ref: revision != commitHash ? revision : nil
+                        )
+                        if let cachedPath = cache.cachedFilePath(
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath
+                        ) {
+                            if let progress {
+                                progress.completedUnitCount = progress.totalUnitCount
+                            }
+                            return try copyFileToLocalDirectoryIfNeeded(
+                                cachedPath,
+                                repoPath: repoPath,
+                                destination: destination
+                            )
+                        }
+                    }
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
@@ -1534,21 +1562,20 @@ private extension HubClient {
     /// Copies a file to a local directory if needed.
     func copyFileToLocalDirectoryIfNeeded(
         _ source: URL,
-        repoPath: String,
+        repoPath _: String,
         destination: URL?
     ) throws -> URL {
         guard let destination else {
             return source
         }
-        let target = destination.appendingPathComponent(repoPath)
         try FileManager.default.createDirectory(
-            at: target.deletingLastPathComponent(),
+            at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? FileManager.default.removeItem(at: target)
+        try? FileManager.default.removeItem(at: destination)
         let resolvedSource = source.resolvingSymlinksInPath()
-        try FileManager.default.copyItem(at: resolvedSource, to: target)
-        return target
+        try FileManager.default.copyItem(at: resolvedSource, to: destination)
+        return destination
     }
 
     /// Copies a snapshot to a local directory if needed.
