@@ -509,6 +509,33 @@ public extension HubClient {
                     )
                 }
                 if FileManager.default.fileExists(atPath: blobPath.path) {
+                    if let commitHash = preflightMetadata?.commitHash {
+                        // Ensure every repo path gets a snapshot entry, even when the blob already exists.
+                        // Multiple files can legitimately share an ETag/blob.
+                        try? await cache.storeFile(
+                            at: blobPath,
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath,
+                            etag: etag,
+                            ref: revision != commitHash ? revision : nil
+                        )
+                        if let cachedPath = cache.cachedFilePath(
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath
+                        ) {
+                            if let progress {
+                                progress.completedUnitCount = progress.totalUnitCount
+                            }
+                            return try copyFileToDestinationIfNeeded(
+                                cachedPath,
+                                destination: destination
+                            )
+                        }
+                    }
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
