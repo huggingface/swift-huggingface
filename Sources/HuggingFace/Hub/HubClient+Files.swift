@@ -443,7 +443,7 @@ public extension HubClient {
             if let progress {
                 progress.completedUnitCount = progress.totalUnitCount
             }
-            return try copyFileToLocalFileIfNeeded(cachedPath, destination: destination)
+            return try copyFileToDestinationIfNeeded(cachedPath, destination: destination)
         }
         if localFilesOnly {
             throw HubCacheError.cachedPathResolutionFailed(repoPath)
@@ -503,7 +503,7 @@ public extension HubClient {
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
-                    return try copyFileToLocalFileIfNeeded(
+                    return try copyFileToDestinationIfNeeded(
                         cachedPath,
                         destination: destination
                     )
@@ -512,7 +512,7 @@ public extension HubClient {
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
-                    return try copyFileToLocalFileIfNeeded(
+                    return try copyFileToDestinationIfNeeded(
                         blobPath,
                         destination: destination
                     )
@@ -548,7 +548,7 @@ public extension HubClient {
                             revision: revision,
                             filename: repoPath
                         ) {
-                            return try copyFileToLocalFileIfNeeded(
+                            return try copyFileToDestinationIfNeeded(
                                 fallback,
                                 destination: destination
                             )
@@ -635,7 +635,7 @@ public extension HubClient {
                             revision: commitHash,
                             filename: repoPath
                         ) {
-                            return try copyFileToLocalFileIfNeeded(
+                            return try copyFileToDestinationIfNeeded(
                                 cachedPath,
                                 destination: destination
                             )
@@ -684,7 +684,7 @@ public extension HubClient {
                     filename: repoPath
                 )
             {
-                return try copyFileToLocalFileIfNeeded(fallback, destination: destination)
+                return try copyFileToDestinationIfNeeded(fallback, destination: destination)
             }
             throw error
         }
@@ -720,7 +720,7 @@ public extension HubClient {
                 revision: commitHash,
                 filename: repoPath
             ) {
-                return try copyFileToLocalFileIfNeeded(
+                return try copyFileToDestinationIfNeeded(
                     cachedPath,
                     destination: destination
                 )
@@ -1527,7 +1527,7 @@ private extension HubClient {
     }
 
     /// Copies a file to a local destination path if needed.
-    func copyFileToLocalFileIfNeeded(
+    func copyFileToDestinationIfNeeded(
         _ source: URL,
         destination: URL?
     ) throws -> URL {
