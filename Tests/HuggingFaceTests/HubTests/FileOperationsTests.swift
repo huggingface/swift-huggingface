@@ -748,7 +748,10 @@ import Testing
             let repoID: Repo.ID = "user/model"
 
             let blobPath = try cache.blobPath(repo: repoID, kind: .model, etag: "shared-etag")
-            try FileManager.default.createDirectory(at: blobPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: blobPath.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
             try blobBody.write(to: blobPath, options: .atomic)
 
             do {
