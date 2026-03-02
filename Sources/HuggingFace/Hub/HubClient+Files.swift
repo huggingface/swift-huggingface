@@ -1547,7 +1547,7 @@ private extension HubClient {
         if resolvedSource == resolvedDestination {
             return destination
         }
-        try FileManager.default.createDirectory(
+        try fileManager.createDirectory(
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
