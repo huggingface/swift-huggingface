@@ -719,6 +719,55 @@ import Testing
             #expect(try Data(contentsOf: cachedPath) == fileBody)
         }
 
+        @Test("downloadFile cache-only blob hit without mapping throws", .mockURLSession)
+        func testDownloadFileCacheOnlyBlobHitWithoutMappingThrows() async throws {
+            let blobBody = Data("blob-only".utf8)
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt", request.httpMethod == "HEAD" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["ETag": "\"shared-etag\""]
+                    )!
+                    return (response, Data())
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let repoID: Repo.ID = "user/model"
+
+            let blobPath = try cache.blobPath(repo: repoID, kind: .model, etag: "shared-etag")
+            try FileManager.default.createDirectory(at: blobPath.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try blobBody.write(to: blobPath, options: .atomic)
+
+            do {
+                _ = try await client.downloadContentsOfFile(
+                    at: "test.txt",
+                    from: repoID,
+                    to: nil,
+                    revision: "main"
+                )
+                Issue.record("Expected cache-only blob hit without mapping to throw")
+            } catch {
+                guard case HubCacheError.cachedPathResolutionFailed(let value) = error else {
+                    Issue.record("Expected HubCacheError.cachedPathResolutionFailed, got \(error)")
+                    return
+                }
+                #expect(value == "test.txt")
+            }
+        }
+
         @Test("downloadFile resumes from incomplete blob with range request", .mockURLSession)
         func testDownloadFileResumesFromIncompleteBlob() async throws {
             let commit = "1234567890123456789012345678901234567890"

@@ -552,6 +552,9 @@ public extension HubClient {
                     if let progress {
                         progress.completedUnitCount = progress.totalUnitCount
                     }
+                    if destination == nil {
+                        throw HubCacheError.cachedPathResolutionFailed(repoPath)
+                    }
                     return try copyFileToDestinationIfNeeded(
                         blobPath,
                         destination: destination
