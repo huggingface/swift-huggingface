@@ -607,6 +607,8 @@ public struct HubCache: Sendable {
 public enum HubCacheError: Error, LocalizedError {
     /// A path component contains unsafe characters that could enable path traversal attacks.
     case invalidPathComponent(String)
+    /// A file destination is invalid for a single-file download operation.
+    case invalidFileDestination(String)
     /// A file was cached successfully, but its snapshot path could not be resolved.
     case cachedPathResolutionFailed(String)
     /// Snapshot download needs either a cache directory or an explicit destination.
@@ -617,6 +619,8 @@ public enum HubCacheError: Error, LocalizedError {
         case .invalidPathComponent(let component):
             return
                 "Invalid path component '\(component)': contains path traversal characters or is empty"
+        case .invalidFileDestination(let path):
+            return "Invalid file destination '\(path)': expected a file path, not a directory"
         case .cachedPathResolutionFailed(let path):
             return "Unable to resolve cached file path for '\(path)'"
         case .snapshotRequiresCacheOrDestination(let repo):

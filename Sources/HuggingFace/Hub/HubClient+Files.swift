@@ -1534,13 +1534,25 @@ private extension HubClient {
         guard let destination else {
             return source
         }
+        let fileManager = FileManager.default
+        if destination.hasDirectoryPath {
+            throw HubCacheError.invalidFileDestination(destination.path)
+        }
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: destination.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            throw HubCacheError.invalidFileDestination(destination.path)
+        }
+        let resolvedSource = source.resolvingSymlinksInPath().standardizedFileURL
+        let resolvedDestination = destination.resolvingSymlinksInPath().standardizedFileURL
+        if resolvedSource == resolvedDestination {
+            return destination
+        }
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? FileManager.default.removeItem(at: destination)
-        let resolvedSource = source.resolvingSymlinksInPath()
-        try FileManager.default.copyItem(at: resolvedSource, to: destination)
+        try? fileManager.removeItem(at: destination)
+        try fileManager.copyItem(at: resolvedSource, to: destination)
         return destination
     }
 
