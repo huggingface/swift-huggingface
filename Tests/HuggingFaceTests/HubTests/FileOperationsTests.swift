@@ -1622,6 +1622,103 @@ import Testing
             #expect(FileManager.default.fileExists(atPath: result.appendingPathComponent("config.json").path))
         }
 
+        @Test("downloadSnapshot shared blob creates both snapshot entries", .mockURLSession)
+        func testDownloadSnapshotSharedBlobCreatesBothSnapshotEntries() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let listResponse = """
+                [
+                    {"path": "prompts/conversational_a.txt", "type": "file", "oid": "a1", "size": 3},
+                    {"path": "prompts/conversational_b.txt", "type": "file", "oid": "b1", "size": 3}
+                ]
+                """
+            // Shared blob/ETag means both repo paths resolve to identical bytes.
+            let sharedBody = Data("one".utf8)
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/main") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                if path == "/user/model/resolve/main/prompts/conversational_a.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"shared-etag\"", "X-Repo-Commit": commit]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : sharedBody)
+                }
+                if path == "/user/model/resolve/main/prompts/conversational_b.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            // Intentionally omit X-Repo-Commit to exercise fallback commit resolution.
+                            ["ETag": "\"shared-etag\""]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : sharedBody)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let cache = HubCache(cacheDirectory: cacheDirectory)
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-shared-blob-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                to: destination,
+                revision: "main",
+                matching: ["prompts/*.txt"],
+                maxConcurrentDownloads: 1
+            )
+
+            let outputA = destination.appendingPathComponent("prompts/conversational_a.txt")
+            let outputB = destination.appendingPathComponent("prompts/conversational_b.txt")
+            let nestedA = outputA.appendingPathComponent("prompts/conversational_a.txt")
+            let nestedB = outputB.appendingPathComponent("prompts/conversational_b.txt")
+            let snapshotRoot = cache.snapshotsDirectory(repo: "user/model", kind: .model)
+                .appendingPathComponent(commit)
+            let snapshotA = snapshotRoot.appendingPathComponent("prompts/conversational_a.txt")
+            let snapshotB = snapshotRoot.appendingPathComponent("prompts/conversational_b.txt")
+
+            #expect(FileManager.default.fileExists(atPath: outputA.path))
+            #expect(FileManager.default.fileExists(atPath: outputB.path))
+            #expect(FileManager.default.fileExists(atPath: nestedA.path) == false)
+            #expect(FileManager.default.fileExists(atPath: nestedB.path) == false)
+            #expect(FileManager.default.fileExists(atPath: snapshotA.path))
+            #expect(FileManager.default.fileExists(atPath: snapshotB.path))
+            #expect(try Data(contentsOf: outputA) == sharedBody)
+            #expect(try Data(contentsOf: outputB) == sharedBody)
+        }
+
         @Test("downloadSnapshot falls back to cache when tree request fails", .mockURLSession)
         func testDownloadSnapshotFallsBackToCacheOnTreeFailure() async throws {
             let commit = "1234567890123456789012345678901234567890"

@@ -509,7 +509,12 @@ public extension HubClient {
                     )
                 }
                 if FileManager.default.fileExists(atPath: blobPath.path) {
-                    if let commitHash = preflightMetadata?.commitHash {
+                    let commitHash =
+                        preflightMetadata?.commitHash
+                        ?? (isCommitHash(revision)
+                            ? revision
+                            : cache.resolveRevision(repo: repo, kind: kind, ref: revision))
+                    if let commitHash {
                         // Ensure every repo path gets a snapshot entry, even when the blob already exists.
                         // Multiple files can legitimately share an ETag/blob.
                         try? await cache.storeFile(
