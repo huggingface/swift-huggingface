@@ -514,6 +514,74 @@ import Testing
             #expect(cachedData == fileBody)
         }
 
+        @Test("downloadFile destination is treated as a file path", .mockURLSession)
+        func testDownloadFileDestinationIsFilePath() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let fileBody = Data("cached-file".utf8)
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path == "/user/model/resolve/main/test.txt" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            [
+                                "ETag": "\"etag-123\"",
+                                "X-Repo-Commit": commit,
+                            ]
+                        } else {
+                            ["Content-Type": "text/plain"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : fileBody)
+                }
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            let repoID: Repo.ID = "user/model"
+
+            _ = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                revision: "main"
+            )
+
+            await MockURLProtocol.setHandler { _ in
+                throw NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+            }
+
+            let destinationRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
+            let destination = destinationRoot.appendingPathComponent("custom-name.bin")
+            defer { try? FileManager.default.removeItem(at: destinationRoot) }
+
+            let resolvedPath = try await client.downloadContentsOfFile(
+                at: "test.txt",
+                from: repoID,
+                to: destination,
+                revision: "main",
+                localFilesOnly: true
+            )
+
+            #expect(resolvedPath == destination)
+            #expect(FileManager.default.fileExists(atPath: destination.path))
+            #expect(
+                FileManager.default.fileExists(atPath: destination.appendingPathComponent("test.txt").path) == false
+            )
+            #expect(try Data(contentsOf: destination) == fileBody)
+        }
+
         @Test("downloadFile resumes from incomplete blob with range request", .mockURLSession)
         func testDownloadFileResumesFromIncompleteBlob() async throws {
             let commit = "1234567890123456789012345678901234567890"
