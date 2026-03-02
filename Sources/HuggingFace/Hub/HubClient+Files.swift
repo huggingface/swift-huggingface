@@ -431,7 +431,7 @@ public extension HubClient {
         transport: FileDownloadTransport = .automatic,
         localFilesOnly: Bool = false
     ) async throws -> URL {
-        // Check cache first
+        // Fast path for exact cached revision + file mapping
         if let cache = cache,
             let cachedPath = cache.cachedFilePath(
                 repo: repo,
@@ -445,9 +445,13 @@ public extension HubClient {
             }
             return try copyFileToDestinationIfNeeded(cachedPath, destination: destination)
         }
+
+        // Local-only mode cannot proceed without a cache hit
         if localFilesOnly {
             throw HubCacheError.cachedPathResolutionFailed(repoPath)
         }
+
+        // Try Xet transport first when requested and destination is explicit
         if endpoint == .resolve, transport.shouldAttemptXet, let xetDestination = destination {
             do {
                 if let downloaded = try await downloadFileWithXet(
@@ -468,7 +472,7 @@ public extension HubClient {
             }
         }
 
-        // Fallback to existing LFS download method
+        // Build URL and gather optional preflight metadata for cache-aware flows
         let url = httpClient.host
             .appending(path: repo.namespace)
             .appending(path: repo.name)
@@ -489,11 +493,13 @@ public extension HubClient {
         var baseRequest = try await httpClient.createRequest(.get, url: url)
         baseRequest.cachePolicy = cachePolicy
 
+        // ETag-aware cache flow guarded by a file lock to serialize blob writes
         if let cache, let etag = preflightMetadata?.normalizedEtag {
             let blobPath = try cache.blobPath(repo: repo, kind: kind, etag: etag)
             let incompleteBlobPath = try cache.incompleteBlobPath(repo: repo, kind: kind, etag: etag)
             let lock = FileLock(path: cache.lockPath(for: blobPath), maxRetries: nil)
             return try await lock.withLock {
+                // Re-check repo-path mapping after lock acquisition
                 if let cachedPath = cache.cachedFilePath(
                     repo: repo,
                     kind: kind,
@@ -508,6 +514,8 @@ public extension HubClient {
                         destination: destination
                     )
                 }
+
+                // Blob exists but repo-path mapping may be missing
                 if FileManager.default.fileExists(atPath: blobPath.path) {
                     let commitHash =
                         preflightMetadata?.commitHash
@@ -550,6 +558,7 @@ public extension HubClient {
                     )
                 }
 
+                // Download or resume into incomplete blob until success
                 while true {
                     var request = baseRequest
                     let resumeOffset = fileSizeIfExists(at: incompleteBlobPath)
@@ -588,6 +597,7 @@ public extension HubClient {
                         throw error
                     }
 
+                    // Validate response and normalize resume edge cases
                     guard let httpResponse = response as? HTTPURLResponse else {
                         throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
                     }
@@ -615,6 +625,7 @@ public extension HubClient {
                         try? FileManager.default.removeItem(at: incompleteBlobPath)
                     }
 
+                    // Persist into cache and resolve via repo-path mapping when possible
                     // Store in cache before moving to destination.
                     // This fallback parses metadata from the existing GET response object (no extra request).
                     let responseMetadata = FileMetadata(response: response)
@@ -674,6 +685,7 @@ public extension HubClient {
                         }
                     }
 
+                    // Last-resort path when cache mapping cannot be resolved
                     guard let destination else {
                         throw HubCacheError.cachedPathResolutionFailed(repoPath)
                     }
@@ -692,6 +704,7 @@ public extension HubClient {
             }
         }
 
+        // Generic non-ETag fallback path
         let resumeOffset: Int64 = 0
         let tempURL: URL
         let response: URLResponse
@@ -730,6 +743,7 @@ public extension HubClient {
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
         }
 
+        // Best-effort cache write from response metadata
         // Store in cache before moving to destination
         // This fallback parses metadata from the existing GET response object (no extra request).
         let responseMetadata = FileMetadata(response: response)
@@ -759,6 +773,7 @@ public extension HubClient {
             }
         }
 
+        // Final move to explicit destination when cache lookup still misses
         guard let destination else {
             throw HubCacheError.cachedPathResolutionFailed(repoPath)
         }
