@@ -432,7 +432,7 @@ import Foundation
 
 // MARK: -
 
-#if canImport(AppKit) && canImport(AuthenticationServices)
+#if canImport(AppKit) && !targetEnvironment(macCatalyst) && canImport(AuthenticationServices)
     import AppKit
 
     @MainActor
@@ -448,7 +448,7 @@ import Foundation
             NSApp.keyWindow ?? NSApp.windows.first ?? ASPresentationAnchor()
         }
     }
-#endif  // canImport(AppKit) && canImport(AuthenticationServices)
+#endif  // canImport(AppKit) && !targetEnvironment(macCatalyst) && canImport(AuthenticationServices)
 
 #if canImport(UIKit) && canImport(AuthenticationServices)
     import UIKit
