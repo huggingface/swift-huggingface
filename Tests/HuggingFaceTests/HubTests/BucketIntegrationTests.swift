@@ -51,6 +51,49 @@
             }
         }
 
+        // MARK: - Download from a public bucket (no token)
+
+        @Test(
+            "Download a file from a public bucket without a token",
+            .enabled(if: runE2E)
+        )
+        func downloadFromPublicBucket() async throws {
+            let client = HubClient(
+                host: URL(string: "https://huggingface.co")!,
+                bearerToken: nil
+            )
+
+            let id = Bucket.ID(namespace: "huggingface", name: "skills")
+
+            // Find any file via the tree listing; pick a small one if there's a
+            // choice to keep the test fast.
+            let page = try await client.listBucketTree(id, recursive: true)
+            let files: [Bucket.File] = page.items.compactMap { entry in
+                if case .file(let file) = entry { return file } else { return nil }
+            }
+            guard let pick = files.min(by: { $0.size < $1.size }) else {
+                Issue.record("Public bucket returned no files")
+                return
+            }
+
+            // Download to a unique temp file and verify size matches the
+            // listing's `size` field.
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("bucket-e2e-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+
+            let result = try await client.downloadBucketFile(
+                pick,
+                in: id,
+                to: tempURL
+            )
+            #expect(result == tempURL)
+
+            let attrs = try FileManager.default.attributesOfItem(atPath: tempURL.path)
+            let actualSize = (attrs[.size] as? Int64) ?? -1
+            #expect(actualSize == pick.size)
+        }
+
         @Test(
             "Create and delete a bucket under the default namespace",
             .enabled(if: runE2E && hasToken)

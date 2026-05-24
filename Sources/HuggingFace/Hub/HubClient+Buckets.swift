@@ -1,6 +1,7 @@
 #if HUGGINGFACE_ENABLE_XET
 
     import Foundation
+    import Xet
 
     // MARK: - Buckets API
 
@@ -185,6 +186,123 @@
                 "/api/buckets/\(id.rawValue)/paths-info",
                 params: params
             )
+        }
+
+        // MARK: - Download
+
+        /// Downloads a single file from a bucket to a local destination.
+        ///
+        /// Issues a HEAD against the resolve endpoint to retrieve the file's
+        /// Xet hash, then streams the content via the Xet downloader. If you
+        /// already have a `Bucket.File` from `listBucketTree` /
+        /// `getBucketPathsInfo`, the variant that takes one directly skips the
+        /// HEAD round-trip.
+        ///
+        /// - Parameters:
+        ///   - remotePath: Path of the file within the bucket.
+        ///   - bucketID: The bucket identifier (`namespace/name`).
+        ///   - destination: Local file URL to write the downloaded content to.
+        ///   - progress: Optional progress object. Currently reports completion
+        ///     as a single 0 → 100 step at the end of the download — fine-
+        ///     grained progress is a follow-up tied to swift-xet's API.
+        /// - Returns: The destination URL.
+        /// - Throws: An error if the HEAD fails, the response lacks Xet
+        ///   metadata, or the Xet download fails.
+        @discardableResult
+        public func downloadBucketFile(
+            at remotePath: String,
+            in bucketID: Bucket.ID,
+            to destination: URL,
+            progress: Progress? = nil
+        ) async throws -> URL {
+            let resolveURL = httpClient.host
+                .appending(path: "buckets")
+                .appending(path: bucketID.namespace)
+                .appending(path: bucketID.name)
+                .appending(path: "resolve")
+                .appending(path: remotePath)
+
+            var request = try await httpClient.createRequest(.head, url: resolveURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+
+            let response: URLResponse
+            #if canImport(FoundationNetworking)
+                (_, response) = try await metadataSession.data(for: request)
+            #else
+                (_, response) = try await session.data(
+                    for: request,
+                    delegate: SameHostRedirectDelegate.shared
+                )
+            #endif
+
+            guard let metadata = XetFileMetadata(response: response) else {
+                throw HTTPClientError.requestError(
+                    "Bucket file '\(remotePath)' did not return Xet metadata; bucket downloads require Xet."
+                )
+            }
+
+            return try await downloadBucketContent(
+                xetHash: metadata.fileID,
+                in: bucketID,
+                to: destination,
+                progress: progress
+            )
+        }
+
+        /// Downloads a pre-resolved bucket file (returned by `listBucketTree`
+        /// or `getBucketPathsInfo`) directly via Xet, skipping the metadata HEAD.
+        ///
+        /// - Parameters:
+        ///   - file: The bucket file to download.
+        ///   - bucketID: The bucket identifier the file lives in.
+        ///   - destination: Local file URL to write the downloaded content to.
+        ///   - progress: Optional progress object (see ``downloadBucketFile(at:in:to:progress:)``).
+        /// - Returns: The destination URL.
+        @discardableResult
+        public func downloadBucketFile(
+            _ file: Bucket.File,
+            in bucketID: Bucket.ID,
+            to destination: URL,
+            progress: Progress? = nil
+        ) async throws -> URL {
+            try await downloadBucketContent(
+                xetHash: file.xetHash,
+                in: bucketID,
+                to: destination,
+                progress: progress
+            )
+        }
+
+        /// Shared Xet download body for the two public overloads.
+        private func downloadBucketContent(
+            xetHash: String,
+            in bucketID: Bucket.ID,
+            to destination: URL,
+            progress: Progress?
+        ) async throws -> URL {
+            // Mirrors `xetRefreshURL(for:kind:revision:)` in `HubClient+Files.swift`
+            // for repos. Buckets follow the same `xet-read-token` pattern with no
+            // revision segment.
+            let refreshURL = httpClient.host
+                .appending(path: "api")
+                .appending(path: "buckets")
+                .appending(path: bucketID.namespace)
+                .appending(path: bucketID.name)
+                .appending(path: "xet-read-token")
+
+            _ = try await Xet.withDownloader(
+                refreshURL: refreshURL,
+                hubToken: try? await httpClient.tokenProvider.getToken()
+            ) { downloader in
+                try await downloader.download(xetHash, to: destination)
+            }
+
+            // Mirrors `downloadFileWithXet` — swift-xet doesn't expose per-byte
+            // progress today, so we surface a single completion step.
+            progress?.totalUnitCount = 100
+            progress?.completedUnitCount = 100
+
+            return destination
         }
     }
 

@@ -1811,7 +1811,7 @@ public extension HubClient {
 // MARK: - Xet Operations
 
 /// Metadata associated with a Xet-enabled Hub file response.
-private struct XetFileMetadata: Sendable {
+struct XetFileMetadata: Sendable {
     /// The content-addressed Xet object ID from `X-Xet-Hash`.
     let fileID: String
 
