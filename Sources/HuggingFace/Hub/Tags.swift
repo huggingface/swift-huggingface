@@ -26,16 +26,16 @@ public struct Tags: Sendable {
 // MARK: - Codable
 
 extension Tags: Codable {
-    private enum CodingKeys: String, CodingKey { case tags }
-
+    /// The Hub answers `/api/models-tags-by-type` and `/api/datasets-tags-by-type`
+    /// with the groups at the top level, keyed by type, with no wrapper.
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.storage = try container.decode([String: [Entry]].self, forKey: .tags)
+        let container = try decoder.singleValueContainer()
+        self.storage = try container.decode([String: [Entry]].self)
     }
 
     public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(storage, forKey: .tags)
+        var container = encoder.singleValueContainer()
+        try container.encode(storage)
     }
 }
 
