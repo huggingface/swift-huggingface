@@ -212,16 +212,14 @@ import Testing
         func testGetDatasetTags() async throws {
             let mockResponse = """
                 {
-                    "tags": {
-                        "task_categories": [
-                            {"id": "question-answering", "label": "Question Answering"},
-                            {"id": "text-classification", "label": "Text Classification"}
-                        ],
-                        "languages": [
-                            {"id": "en", "label": "English"},
-                            {"id": "fr", "label": "French"}
-                        ]
-                    }
+                    "task_categories": [
+                        {"id": "task_categories:question-answering", "label": "question-answering", "type": "task_categories", "subType": "nlp"},
+                        {"id": "task_categories:text-classification", "label": "text-classification", "type": "task_categories", "subType": "nlp"}
+                    ],
+                    "language": [
+                        {"id": "language:en", "label": "en", "type": "language"},
+                        {"id": "language:fr", "label": "fr", "type": "language"}
+                    ]
                 }
                 """
 
@@ -243,7 +241,7 @@ import Testing
             let tags = try await client.getDatasetTags()
 
             #expect(tags["task_categories"]?.count == 2)
-            #expect(tags["languages"]?.count == 2)
+            #expect(tags["language"]?.count == 2)
         }
 
         @Test("List parquet files", .mockURLSession)
