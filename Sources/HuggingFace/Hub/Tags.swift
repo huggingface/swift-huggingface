@@ -26,16 +26,29 @@ public struct Tags: Sendable {
 // MARK: - Codable
 
 extension Tags: Codable {
-    private enum CodingKeys: String, CodingKey { case tags }
+    private enum LegacyCodingKeys: String, CodingKey { case tags }
 
+    // The Hub returns the groups at the top level,
+    // keyed by tag type, without a wrapper object.
+    // Earlier releases encoded the groups inside a `tags` wrapper,
+    // so fall back to that shape for previously persisted data.
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.storage = try container.decode([String: [Entry]].self, forKey: .tags)
+        do {
+            let container = try decoder.singleValueContainer()
+            self.storage = try container.decode([String: [Entry]].self)
+        } catch {
+            guard let container = try? decoder.container(keyedBy: LegacyCodingKeys.self),
+                container.contains(.tags)
+            else {
+                throw error
+            }
+            self.storage = try container.decode([String: [Entry]].self, forKey: .tags)
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
-        var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(storage, forKey: .tags)
+        var container = encoder.singleValueContainer()
+        try container.encode(storage)
     }
 }
 

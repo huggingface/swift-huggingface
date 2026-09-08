@@ -222,16 +222,14 @@ import Testing
         func testGetModelTags() async throws {
             let mockResponse = """
                 {
-                    "tags": {
-                        "pipeline_tag": [
-                            {"id": "text-classification", "label": "Text Classification"},
-                            {"id": "text-generation", "label": "Text Generation"}
-                        ],
-                        "library": [
-                            {"id": "pytorch", "label": "PyTorch"},
-                            {"id": "transformers", "label": "Transformers"}
-                        ]
-                    }
+                    "pipeline_tag": [
+                        {"id": "text-classification", "label": "Text Classification", "type": "pipeline_tag", "subType": "nlp"},
+                        {"id": "text-generation", "label": "Text Generation", "type": "pipeline_tag", "subType": "nlp"}
+                    ],
+                    "library": [
+                        {"id": "pytorch", "label": "PyTorch", "type": "library"},
+                        {"id": "transformers", "label": "Transformers", "type": "library"}
+                    ]
                 }
                 """
 

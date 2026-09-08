@@ -1,0 +1,91 @@
+import Foundation
+import Testing
+
+@testable import HuggingFace
+
+@Suite("Tags")
+struct TagsTests {
+    /// The Hub answers `/api/models-tags-by-type` and `/api/datasets-tags-by-type`
+    /// with the groups at the top level, keyed by type, and no wrapper.
+    @Test("Decodes the Hub's tags-by-type shape")
+    func decodesHubShape() throws {
+        let json = """
+            {
+                "region": [
+                    {"type": "region", "label": "Region: US", "id": "region:us"}
+                ],
+                "library": [
+                    {"type": "library", "label": "PyTorch", "id": "pytorch"},
+                    {"type": "library", "label": "Transformers", "id": "transformers"}
+                ]
+            }
+            """
+
+        let tags = try JSONDecoder().decode(Tags.self, from: Data(json.utf8))
+
+        #expect(tags.count == 2)
+        #expect(tags["region"]?.map(\.id) == ["region:us"])
+        #expect(tags["library"]?.map(\.label) == ["PyTorch", "Transformers"])
+    }
+
+    /// Earlier releases encoded `Tags` inside a `tags` wrapper object.
+    /// Keep decoding that shape so previously persisted data still loads.
+    @Test("Decodes the legacy wrapped shape")
+    func decodesLegacyWrappedShape() throws {
+        let json = """
+            {
+                "tags": {
+                    "library": [
+                        {"id": "pytorch", "label": "PyTorch", "modelCount": 42}
+                    ]
+                }
+            }
+            """
+
+        let tags = try JSONDecoder().decode(Tags.self, from: Data(json.utf8))
+
+        #expect(tags.count == 1)
+        #expect(tags["library"]?.first?.id == "pytorch")
+        #expect(tags["library"]?.first?.count == 42)
+    }
+
+    @Test("Reports errors inside a legacy wrapper against the wrapped path")
+    func reportsLegacyErrors() throws {
+        let json = """
+            {
+                "tags": {
+                    "library": [
+                        {"id": "pytorch"}
+                    ]
+                }
+            }
+            """
+
+        #expect {
+            try JSONDecoder().decode(Tags.self, from: Data(json.utf8))
+        } throws: { error in
+            guard let error = error as? DecodingError,
+                case .keyNotFound(let key, let context) = error
+            else {
+                return false
+            }
+            return key.stringValue == "label"
+                && context.codingPath.first?.stringValue == "tags"
+        }
+    }
+
+    @Test("Round-trips through JSON without a wrapper")
+    func roundTrips() throws {
+        let tags: Tags = [
+            "library": [.init(id: "pytorch", label: "PyTorch", count: 42)]
+        ]
+
+        let data = try JSONEncoder().encode(tags)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?.keys.sorted() == ["library"])
+
+        let decoded = try JSONDecoder().decode(Tags.self, from: data)
+        #expect(decoded["library"]?.first?.id == "pytorch")
+        #expect(decoded["library"]?.first?.count == 42)
+    }
+}
