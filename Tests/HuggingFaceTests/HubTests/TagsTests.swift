@@ -49,6 +49,29 @@ struct TagsTests {
         #expect(tags["library"]?.first?.count == 42)
     }
 
+    @Test("Reports errors inside a legacy wrapper against the wrapped path")
+    func reportsLegacyErrors() throws {
+        let json = """
+            {
+                "tags": {
+                    "library": [
+                        {"id": "pytorch"}
+                    ]
+                }
+            }
+            """
+
+        #expect {
+            try JSONDecoder().decode(Tags.self, from: Data(json.utf8))
+        } throws: { error in
+            guard case .keyNotFound(let key, let context) = error as? DecodingError else {
+                return false
+            }
+            return key.stringValue == "label"
+                && context.codingPath.first?.stringValue == "tags"
+        }
+    }
+
     @Test("Round-trips through JSON without a wrapper")
     func roundTrips() throws {
         let tags: Tags = [

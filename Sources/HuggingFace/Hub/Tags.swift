@@ -36,13 +36,13 @@ extension Tags: Codable {
         do {
             let container = try decoder.singleValueContainer()
             self.storage = try container.decode([String: [Entry]].self)
-        } catch let error {
+        } catch {
             guard let container = try? decoder.container(keyedBy: LegacyCodingKeys.self),
-                let storage = try? container.decode([String: [Entry]].self, forKey: .tags)
+                container.contains(.tags)
             else {
                 throw error
             }
-            self.storage = storage
+            self.storage = try container.decode([String: [Entry]].self, forKey: .tags)
         }
     }
 
