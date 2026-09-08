@@ -28,6 +28,27 @@ struct TagsTests {
         #expect(tags["library"]?.map(\.label) == ["PyTorch", "Transformers"])
     }
 
+    /// Earlier releases encoded `Tags` inside a `tags` wrapper object.
+    /// Keep decoding that shape so previously persisted data still loads.
+    @Test("Decodes the legacy wrapped shape")
+    func decodesLegacyWrappedShape() throws {
+        let json = """
+            {
+                "tags": {
+                    "library": [
+                        {"id": "pytorch", "label": "PyTorch", "modelCount": 42}
+                    ]
+                }
+            }
+            """
+
+        let tags = try JSONDecoder().decode(Tags.self, from: Data(json.utf8))
+
+        #expect(tags.count == 1)
+        #expect(tags["library"]?.first?.id == "pytorch")
+        #expect(tags["library"]?.first?.count == 42)
+    }
+
     @Test("Round-trips through JSON without a wrapper")
     func roundTrips() throws {
         let tags: Tags = [
