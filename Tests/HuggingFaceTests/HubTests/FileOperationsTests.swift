@@ -413,6 +413,56 @@ import Testing
 
         // MARK: - Download Tests
 
+        @Test("File downloads honor repository kind", .mockURLSession, arguments: [
+            (Repo.Kind.model, "/user/repo"),
+            (Repo.Kind.dataset, "/datasets/user/repo"),
+            (Repo.Kind.space, "/spaces/user/repo"),
+        ], [FileDownloadEndpoint.resolve, .raw])
+        func testDownloadRepositoryKind(location: (Repo.Kind, String), endpoint: FileDownloadEndpoint) async throws {
+            let (kind, prefix) = location
+            let expectedPath = "\(prefix)/\(endpoint.rawValue)/main/nested/test.txt"
+            let payload = Data("repository fixture".utf8)
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == expectedPath)
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Length": String(payload.count)]
+                )!
+                return (response, payload)
+            }
+            let client = createMockClientWithoutCache()
+            let contents = try await client.downloadContentsOfFile(
+                at: "nested/test.txt", from: "user/repo", kind: kind, endpoint: endpoint
+            )
+            #expect(contents == payload)
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            let file = try await client.downloadFile(
+                at: "nested/test.txt", from: "user/repo", to: destination, kind: kind, endpoint: endpoint
+            )
+            #expect(try Data(contentsOf: file) == payload)
+        }
+
+        @Test("File metadata honors repository kind", .mockURLSession, arguments: [
+            (Repo.Kind.model, "/user/repo/resolve/main/test.txt"),
+            (Repo.Kind.dataset, "/datasets/user/repo/resolve/main/test.txt"),
+            (Repo.Kind.space, "/spaces/user/repo/resolve/main/test.txt"),
+        ])
+        func testFileMetadataRepositoryKind(location: (Repo.Kind, String)) async throws {
+            let (kind, expectedPath) = location
+            await MockURLProtocol.setHandler { request in
+                #expect(request.url?.path == expectedPath)
+                #expect(request.httpMethod == "HEAD")
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Length": "3"]
+                )!
+                return (response, Data())
+            }
+            let info = try await createMockClientWithoutCache().getFile(at: "test.txt", in: "user/repo", kind: kind)
+            #expect(info.exists)
+        }
+
         @Test("Download file data", .mockURLSession)
         func testDownloadData() async throws {
             let expectedData = "Hello, World!".data(using: .utf8)!

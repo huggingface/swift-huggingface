@@ -376,9 +376,7 @@ public extension HubClient {
         #endif
 
         // Fallback to existing LFS download method
-        let url = httpClient.host
-            .appending(path: repo.namespace)
-            .appending(path: repo.name)
+        let url = repositoryURL(repo, kind: kind)
             .appending(path: endpoint.rawValue)
             .appending(component: revision)
             .appending(path: repoPath)
@@ -495,9 +493,7 @@ public extension HubClient {
         #endif
 
         // Build URL and gather optional preflight metadata for cache-aware flows
-        let url = httpClient.host
-            .appending(path: repo.namespace)
-            .appending(path: repo.name)
+        let url = repositoryURL(repo, kind: kind)
             .appending(path: endpoint.rawValue)
             .appending(component: revision)
             .appending(path: repoPath)
@@ -1208,12 +1204,10 @@ public extension HubClient {
     func getFile(
         at repoPath: String,
         in repo: Repo.ID,
-        kind _: Repo.Kind = .model,
+        kind: Repo.Kind = .model,
         revision: String = "main"
     ) async throws -> File {
-        let url = httpClient.host
-            .appending(path: repo.namespace)
-            .appending(path: repo.name)
+        let url = repositoryURL(repo, kind: kind)
             .appending(path: "resolve")
             .appending(component: revision)
             .appending(path: repoPath)
@@ -1555,6 +1549,11 @@ private struct XetFileMetadata: Sendable {
 }
 
 private extension HubClient {
+    func repositoryURL(_ repo: Repo.ID, kind: Repo.Kind) -> URL {
+        let base = kind == .model ? httpClient.host : httpClient.host.appending(path: kind.pluralized)
+        return base.appending(path: repo.namespace).appending(path: repo.name)
+    }
+
     func snapshotWeight(for entry: Git.TreeEntry) -> Int64 {
         guard let size = entry.size else {
             return snapshotUnknownFileWeight
