@@ -1912,6 +1912,7 @@ private extension HubClient {
                 let fileID = try await fetchXetFileID(
                     repoPath: repoPath,
                     repo: repo,
+                    kind: kind,
                     revision: revision,
                     transport: transport
                 )
@@ -1947,6 +1948,7 @@ private extension HubClient {
                 let fileID = try await fetchXetFileID(
                     repoPath: repoPath,
                     repo: repo,
+                    kind: kind,
                     revision: revision,
                     transport: transport
                 )
@@ -1975,6 +1977,7 @@ private extension HubClient {
     /// - Parameters:
     ///   - repoPath: Path to file
     ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - transport: Transport to use
     /// - Returns: Xet file ID
@@ -1982,11 +1985,15 @@ private extension HubClient {
     func fetchXetFileID(
         repoPath: String,
         repo: Repo.ID,
+        kind: Repo.Kind,
         revision: String,
         transport: FileDownloadTransport
     ) async throws -> String? {
-        let urlPath = "/\(repo)/resolve/\(revision)/\(repoPath)"
-        var request = try await httpClient.createRequest(.head, urlPath)
+        let url = repositoryURL(repo, kind: kind)
+            .appending(path: "resolve")
+            .appending(component: revision)
+            .appending(path: repoPath)
+        var request = try await httpClient.createRequest(.head, url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
         #if canImport(FoundationNetworking)
