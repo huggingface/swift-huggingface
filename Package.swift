@@ -29,6 +29,13 @@ let package = Package(
         .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
         .package(url: "https://github.com/huggingface/swift-xet.git", from: "0.2.0"),
+        .package(
+            url: "https://github.com/mattt/Replay.git",
+            from: "0.6.0",
+            // Replay uses canImport(AsyncHTTPClient), which Xet or cached modules can satisfy.
+            // Enable its dependency so SwiftPM always supplies the required C modules.
+            traits: ["AsyncHTTPClient"]
+        ),
     ],
     targets: [
         .target(
@@ -49,6 +56,15 @@ let package = Package(
             swiftSettings: [
                 .define("HUGGINGFACE_ENABLE_XET", .when(traits: ["Xet"]))
             ]
+        ),
+        .testTarget(
+            name: "HubReplayTests",
+            dependencies: [
+                "HuggingFace",
+                .product(name: "Replay", package: "Replay"),
+            ],
+            exclude: ["README.md"],
+            resources: [.copy("Replays")]
         ),
         .testTarget(
             name: "HubBenchmarks",

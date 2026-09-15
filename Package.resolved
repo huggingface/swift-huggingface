@@ -1,5 +1,5 @@
 {
-  "originHash" : "c7f732e5c408c445c4e0d9c503acb87be50e7424796c376516364891a526df4f",
+  "originHash" : "f1663afafe375255b130abaf7cb992f2728dfc2c6018f8d9848cc6597cef6f87",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -20,12 +20,30 @@
       }
     },
     {
+      "identity" : "replay",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mattt/Replay.git",
+      "state" : {
+        "revision" : "80605d41b4dbc568202d799d3b3d9bbb86f29e1e",
+        "version" : "0.6.0"
+      }
+    },
+    {
       "identity" : "swift-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-algorithms.git",
       "state" : {
         "revision" : "87e50f483c54e6efd60e885f7f5aa946cee68023",
         "version" : "1.2.1"
+      }
+    },
+    {
+      "identity" : "swift-argument-parser",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-argument-parser.git",
+      "state" : {
+        "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
+        "version" : "1.8.2"
       }
     },
     {
@@ -71,6 +89,15 @@
       "state" : {
         "revision" : "8d9834a6189db730f6264db7556a7ffb751e99ee",
         "version" : "1.4.0"
+      }
+    },
+    {
+      "identity" : "swift-configuration",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-configuration.git",
+      "state" : {
+        "revision" : "be76c4ad929eb6c4bcaf3351799f2adf9e6848a9",
+        "version" : "1.2.0"
       }
     },
     {
