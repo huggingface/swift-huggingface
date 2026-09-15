@@ -16,6 +16,89 @@ import Foundation
 private let xetMinimumFileSizeBytes = 16 * 1024 * 1024  // 16MiB
 private let snapshotUnknownFileWeight: Int64 = 1
 
+/// Per-file progress for a snapshot download, delivered alongside the
+/// aggregate `Progress`. The downloader already tracks a child `Progress` per
+/// file to weight the aggregate; this exposes it so a caller can render one row
+/// per file instead of a single aggregate bar.
+///
+/// Sampled by the same 100 ms task that drives `progressHandler`, plus a final
+/// emission once the download succeeds. A snapshot served entirely from cache
+/// emits one complete set of rows and nothing else; a download that throws or
+/// is cancelled emits no terminal set, matching `progressHandler`.
+///
+/// Additive and opt-in (default `fileProgressHandler: nil` ⇒ no behavior change).
+public struct SnapshotFileProgress: Sendable {
+    /// Repo-relative file path (e.g. `model-00001-of-00006.safetensors`).
+    public let path: String
+    /// Size in bytes as declared by the repo's tree listing, or `nil` when the
+    /// listing does not declare one.
+    ///
+    /// This is the tree entry's own value, not a running count: it is stable
+    /// for the whole download and is the figure to render a row's total from.
+    /// The per-file byte counters the transports maintain internally are not
+    /// published, because they are not uniformly bytes — Xet reports a file as
+    /// `100/100` on completion regardless of its size.
+    public let sizeBytes: Int64?
+    /// Fraction of this file transferred, in `0.0...1.0`.
+    ///
+    /// Read from the file's `Progress` in one access, so it is never a torn
+    /// pair of counters. Transports differ in how often they revise it: an LFS
+    /// download advances it per delegate callback, while a Xet download reports
+    /// nothing until the file completes.
+    public let fractionCompleted: Double
+}
+
+private func snapshotFileProgress(
+    _ rows: [(path: String, size: Int64?, progress: SnapshotProgressBox)]
+) -> [SnapshotFileProgress] {
+    rows.map { row in
+        SnapshotFileProgress(
+            path: row.path,
+            sizeBytes: row.size,
+            fractionCompleted: row.progress.value.fractionCompleted
+        )
+    }
+}
+
+/// Complete rows synthesized for a snapshot that was served from cache without
+/// downloading anything, so a caller that renders rows sees the same terminal
+/// state it would get from a real download.
+private func cachedSnapshotFileProgress(at root: URL, matching globs: [String]) -> [SnapshotFileProgress] {
+    let base = root.standardizedFileURL
+    guard
+        let enumerator = FileManager.default.enumerator(
+            at: base,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        )
+    else { return [] }
+    let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"
+    return enumerator.compactMap { element in
+        guard let url = element as? URL else { return nil }
+        // Cache snapshots are trees of symlinks into the blob store, so resolve
+        // before asking whether this is a file and how big it is.
+        let target = url.resolvingSymlinksInPath()
+        var isDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue
+        else { return nil }
+        let fullPath = url.standardizedFileURL.path
+        let path =
+            fullPath.hasPrefix(prefix)
+            ? String(fullPath.dropFirst(prefix.count))
+            : url.lastPathComponent
+        guard globs.isEmpty || globs.contains(where: { fnmatch($0, path, 0) == 0 }) else {
+            return nil
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.size] as? NSNumber
+        return SnapshotFileProgress(
+            path: path,
+            sizeBytes: size.map { Int64(truncating: $0) },
+            fractionCompleted: 1.0
+        )
+    }
+}
+
 private final class SnapshotProgressBox: @unchecked Sendable {
     let value: Progress
 
@@ -1264,6 +1347,10 @@ public extension HubClient {
     ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
+    ///   - fileProgressHandler: Optional closure called with one
+    ///     ``SnapshotFileProgress`` per file, sampled on the same schedule as
+    ///     `progressHandler`. Delivered on the main actor. A snapshot served
+    ///     from cache emits a single complete set of rows.
     /// - Returns: URL to `destination`.
     func downloadSnapshot(
         of repo: Repo.ID,
@@ -1273,7 +1360,8 @@ public extension HubClient {
         matching globs: [String] = [],
         localFilesOnly: Bool = false,
         maxConcurrentDownloads: Int = 8,
-        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil,
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)? = nil
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
@@ -1284,7 +1372,8 @@ public extension HubClient {
             returnCachePath: false,
             localFilesOnly: localFilesOnly,
             maxConcurrentDownloads: maxConcurrentDownloads,
-            progressHandler: progressHandler
+            progressHandler: progressHandler,
+            fileProgressHandler: fileProgressHandler
         )
     }
 
@@ -1305,6 +1394,10 @@ public extension HubClient {
     ///                             The default value is 8. Values less than 1 are treated as 1.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
+    ///   - fileProgressHandler: Optional closure called with one
+    ///     ``SnapshotFileProgress`` per file, sampled on the same schedule as
+    ///     `progressHandler`. Delivered on the main actor. A snapshot served
+    ///     from cache emits a single complete set of rows.
     /// - Returns: URL to the cache snapshot directory.
     func downloadSnapshot(
         of repo: Repo.ID,
@@ -1313,7 +1406,8 @@ public extension HubClient {
         matching globs: [String] = [],
         localFilesOnly: Bool = false,
         maxConcurrentDownloads: Int = 8,
-        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil,
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)? = nil
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
@@ -1324,7 +1418,8 @@ public extension HubClient {
             returnCachePath: true,
             localFilesOnly: localFilesOnly,
             maxConcurrentDownloads: maxConcurrentDownloads,
-            progressHandler: progressHandler
+            progressHandler: progressHandler,
+            fileProgressHandler: fileProgressHandler
         )
     }
 
@@ -1337,7 +1432,8 @@ public extension HubClient {
         returnCachePath: Bool,
         localFilesOnly: Bool,
         maxConcurrentDownloads: Int,
-        progressHandler: (@MainActor @Sendable (Progress) -> Void)?
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)?,
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)?
     ) async throws -> URL {
         let maxConcurrentDownloads = max(1, maxConcurrentDownloads)
         guard cache != nil || destination != nil else {
@@ -1359,11 +1455,17 @@ public extension HubClient {
             if let progressHandler {
                 await progressHandler(progress)
             }
-            return try copySnapshotToLocalDirectoryIfNeeded(
+            let resolved = try copySnapshotToLocalDirectoryIfNeeded(
                 from: fastPath,
                 destination: effectiveDestination,
                 returnCachePath: returnCachePath
             )
+            if let fileProgressHandler {
+                await fileProgressHandler(
+                    cachedSnapshotFileProgress(at: resolved, matching: globs)
+                )
+            }
+            return resolved
         }
 
         if localFilesOnly {
@@ -1377,11 +1479,17 @@ public extension HubClient {
             else {
                 throw HubCacheError.cachedPathResolutionFailed(repo.description)
             }
-            return try copySnapshotToLocalDirectoryIfNeeded(
+            let resolved = try copySnapshotToLocalDirectoryIfNeeded(
                 from: cachedPath,
                 destination: effectiveDestination,
                 returnCachePath: returnCachePath
             )
+            if let fileProgressHandler {
+                await fileProgressHandler(
+                    cachedSnapshotFileProgress(at: resolved, matching: globs)
+                )
+            }
+            return resolved
         }
 
         let allEntries: [Git.TreeEntry]
@@ -1394,11 +1502,17 @@ public extension HubClient {
                 revision: revision,
                 matching: globs
             ) {
-                return try copySnapshotToLocalDirectoryIfNeeded(
+                let resolved = try copySnapshotToLocalDirectoryIfNeeded(
                     from: cachedPath,
                     destination: effectiveDestination,
                     returnCachePath: returnCachePath
                 )
+                if let fileProgressHandler {
+                    await fileProgressHandler(
+                        cachedSnapshotFileProgress(at: resolved, matching: globs)
+                    )
+                }
+                return resolved
             }
             throw error
         }
@@ -1452,9 +1566,17 @@ public extension HubClient {
             }
         let xetEntries = workItems.filter { $0.transport != .lfs }
 
+        // Per-file rows (path + child Progress) for the optional per-file
+        // handler; sampled by the same 100 ms task as the aggregate.
+        let fileRows: [(path: String, size: Int64?, progress: SnapshotProgressBox)] =
+            fileProgressHandler == nil
+            ? []
+            : workItems.map { ($0.entry.path, $0.entry.size.map(Int64.init), $0.progress) }
         let samplingTask = makeSnapshotProgressSamplingTask(
             progress: progress,
-            progressHandler: progressHandler
+            progressHandler: progressHandler,
+            fileRows: fileRows,
+            fileProgressHandler: fileProgressHandler
         )
 
         do {
@@ -1490,6 +1612,13 @@ public extension HubClient {
 
         if let progressHandler {
             await progressHandler(progress)
+        }
+        // Emitted after the sampler is cancelled, for the same reason the
+        // aggregate handler is: the last 100 ms sample can land before the
+        // final bytes, so without this a caller never observes the terminal
+        // per-file state and a fast download leaves rows short of complete.
+        if let fileProgressHandler {
+            await fileProgressHandler(snapshotFileProgress(fileRows))
         }
 
         guard let cache else {
@@ -1575,15 +1704,26 @@ private extension HubClient {
 
     func makeSnapshotProgressSamplingTask(
         progress: Progress,
-        progressHandler: (@MainActor @Sendable (Progress) -> Void)?
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)?,
+        fileRows: [(path: String, size: Int64?, progress: SnapshotProgressBox)],
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)?
     ) -> Task<Void, Never>? {
-        guard let progressHandler else {
+        guard progressHandler != nil || fileProgressHandler != nil else {
             return nil
         }
         let boxedProgress = SnapshotProgressBox(progress)
         return Task(priority: Task.currentPriority) {
             while !Task.isCancelled {
-                await progressHandler(boxedProgress.value)
+                // Sampled before the aggregate handler is awaited: the two
+                // describe the same tick, so a slow aggregate handler must not
+                // age the file rows it is delivered beside.
+                let files = fileProgressHandler == nil ? [] : snapshotFileProgress(fileRows)
+                if let progressHandler {
+                    await progressHandler(boxedProgress.value)
+                }
+                if let fileProgressHandler {
+                    await fileProgressHandler(files)
+                }
                 try? await Task.sleep(for: .milliseconds(100))
             }
         }
