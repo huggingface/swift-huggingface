@@ -3,7 +3,15 @@
 `HubReplayTests` checks public `HubClient` methods against recorded HTTP responses
 on Swift 6.1 or later.
 The current tests cover `getModelTags()` and `getDatasetTags()`.
-They use separate Replay sessions, an explicit host, no token, and no Hub cache.
+They use an explicit host, no token, and no Hub cache.
+The suite runs tests serially with Replay's global scope and playback lock.
+This avoids per-test routing through session headers,
+which Linux does not pass to the custom URL protocol.
+
+The package explicitly enables Replay's `AsyncHTTPClient` trait.
+Replay 0.6.0 checks `canImport(AsyncHTTPClient)`, and Xet makes that module visible.
+Cached modules can also satisfy this check after Xet is disabled.
+The Replay trait supplies the C module dependencies needed to compile the import.
 
 Playback matches the method and full URL without Hub access.
 Missing fixtures and unmatched requests fail.

@@ -3,8 +3,10 @@ import HuggingFace
 import Replay
 import Testing
 
-@Suite("Hub tags replay", .playbackIsolated(replaysFrom: Bundle.module))
+@Suite("Hub tags replay", .serialized, .playbackIsolated(replaysFrom: Bundle.module))
 struct TagsReplayTests {
+    // Global replay scope requires serial tests within the suite's playback lock.
+    // Linux URLProtocol does not receive the session header used by test scope.
     private var client: HubClient {
         HubClient(
             session: Replay.session,
@@ -64,7 +66,7 @@ struct TagsReplayTests {
             "model-tags",
             matching: [.method, .url],
             filters: filters(keeping: ["library": ["pytorch", "transformers"], "pipeline_tag": ["text-generation"]]),
-            scope: .test
+            scope: .global
         )
     )
     func modelTags() async throws {
@@ -80,7 +82,7 @@ struct TagsReplayTests {
             "dataset-tags",
             matching: [.method, .url],
             filters: filters(keeping: ["library": ["library:datasets"], "language": ["language:en"]]),
-            scope: .test
+            scope: .global
         )
     )
     func datasetTags() async throws {
