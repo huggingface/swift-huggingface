@@ -2017,10 +2017,9 @@ private extension HubClient {
 
     /// Generate the Xet refresh URL for a given repository, kind, and revision.
     func xetRefreshURL(for repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL {
-        let url = httpClient.host.appendingPathComponent(
-            "api/\(kind.pluralized)/\(repo)/xet-read-token/\(revision)"
-        )
-        return url
+        httpClient.host
+            .appending(path: "api/\(kind.pluralized)/\(repo)/xet-read-token")
+            .appending(component: revision)
     }
 
     /// Fetch metadata without following cross-host redirects.
