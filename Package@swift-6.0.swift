@@ -22,7 +22,12 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
-        .package(url: "https://github.com/huggingface/swift-xet.git", from: "0.2.0"),
+        // Output progress requires https://github.com/huggingface/swift-xet/pull/13.
+        // Replace this revision with a release requirement when available.
+        .package(
+            url: "https://github.com/huggingface/swift-xet.git",
+            revision: "3d4e837d555cb8425b31921d2b753eb779c7dc4c"
+        ),
     ],
     targets: [
         .target(
