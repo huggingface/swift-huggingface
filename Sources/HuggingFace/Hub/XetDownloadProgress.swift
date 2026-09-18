@@ -17,7 +17,9 @@ enum XetDownloadProgress {
             }
         }
         try Task.checkCancellation()
-        progress?.totalUnitCount = written
-        progress?.completedUnitCount = written
+        // Foundation needs a positive total to finish empty files and their parents.
+        let total = max(written, 1)
+        progress?.totalUnitCount = total
+        progress?.completedUnitCount = total
     }
 }

@@ -428,6 +428,7 @@ public extension HubClient {
     ///   - cachePolicy: Cache policy for the request
     ///   - progress: Optional progress object that tracks output bytes.
     ///     Xet counts reconstructed bytes written to the file.
+    ///     A successful empty Xet download uses one completed unit.
     ///     Intermediate updates occur at most once per 100 milliseconds,
     ///     except for the first update.
     ///     Completion follows successful download and cleanup.

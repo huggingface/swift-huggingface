@@ -27,13 +27,20 @@ struct XetDownloadProgressTests {
 
     @Test(arguments: [Int64(0), 3])
     func completesShortFiles(size: Int64) async throws {
-        let progress = Progress(totalUnitCount: 100)
+        let parent = Progress(totalUnitCount: 1)
+        let progress = Progress(totalUnitCount: 100, parent: parent, pendingUnitCount: 1)
         try await XetDownloadProgress.track(progress) { report in
             report(size, size)
+            #expect(!progress.isFinished)
+            #expect(!parent.isFinished)
             return size
         }
-        #expect(progress.totalUnitCount == size)
-        #expect(progress.completedUnitCount == size)
+        #expect(progress.totalUnitCount == max(size, 1))
+        #expect(progress.completedUnitCount == max(size, 1))
+        #expect(progress.isFinished)
+        #expect(progress.fractionCompleted == 1)
+        #expect(parent.isFinished)
+        #expect(parent.fractionCompleted == 1)
     }
 
     @Test(arguments: [Failure.transfer, .shutdown])
