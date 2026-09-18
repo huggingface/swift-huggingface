@@ -16,6 +16,26 @@ public enum Git {
         /// The size of the entry in bytes, if available.
         public let size: Int?
 
+        /// The Git LFS metadata, if available.
+        public let lfs: LFSInfo?
+
+        /// The LFS file size in bytes, or the entry size when LFS metadata is absent.
+        public var effectiveSize: Int? {
+            lfs?.size ?? size
+        }
+
+        /// Metadata for a file stored with Git Large File Storage.
+        public struct LFSInfo: Hashable, Codable, Sendable {
+            /// The SHA-256 object ID, if available.
+            public let oid: String?
+
+            /// The file size in bytes.
+            public let size: Int
+
+            /// The size of the Git LFS pointer in bytes, if available.
+            public let pointerSize: Int?
+        }
+
         /// The last commit information for this entry, if available.
         public let lastCommit: LastCommitInfo?
 

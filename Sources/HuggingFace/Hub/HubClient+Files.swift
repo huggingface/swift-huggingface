@@ -1175,7 +1175,8 @@ public extension HubClient {
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - recursive: List files recursively
-    /// - Returns: Array of tree entries
+    /// - Returns: The first page of tree entries.
+    ///   Use ``listAllTree(in:kind:revision:path:recursive:)`` for the complete listing.
     func listFiles(
         in repo: Repo.ID,
         kind: Repo.Kind = .model,
