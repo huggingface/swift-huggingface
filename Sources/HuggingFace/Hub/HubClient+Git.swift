@@ -5,13 +5,92 @@ import Foundation
 extension HubClient {
     // MARK: - Tree Operations
 
+    /// Lists one page of files and directories in a repository tree.
+    ///
+    /// Use ``nextPage(after:)`` to fetch subsequent pages.
+    /// A failed page request can be retried with the same preceding page.
+    /// Pagination keeps the endpoint prefix, revision, subtree, and recursion setting.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The repository kind.
+    ///   - revision: The Git branch, tag, or commit hash.
+    ///   - path: The subtree path relative to the repository root, or `nil` for the root.
+    ///   - recursive: Whether to include entries in nested directories.
+    /// - Returns: A page of tree entries with a link to the next page, if available.
+    /// - Throws: An error if the request fails or the response cannot be decoded.
+    public func listTree(
+        in repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        path: String? = nil,
+        recursive: Bool = false
+    ) async throws -> PaginatedResponse<Git.TreeEntry> {
+        try Task.checkCancellation()
+        var url =
+            host
+            .appending(path: "api")
+            .appending(component: kind.pluralized)
+            .appending(component: repo.namespace)
+            .appending(component: repo.name)
+            .appending(path: "tree")
+            .appending(component: revision)
+        if let path, !path.isEmpty {
+            url = url.appending(path: path)
+        }
+        var page: PaginatedResponse<Git.TreeEntry> = try await httpClient.fetchPaginated(
+            .get,
+            url: url,
+            params: ["recursive": .bool(recursive)]
+        )
+        page.treeRequestURL = page.requestURL
+        return page
+    }
+
+    /// Lists all pages of files and directories in a repository tree.
+    ///
+    /// The first page is fetched immediately.
+    /// Subsequent pages are fetched as iteration advances.
+    /// Use ``listTree(in:kind:revision:path:recursive:)`` and ``nextPage(after:)``
+    /// when you need to retry individual page requests.
+    ///
+    /// - Parameters:
+    ///   - repo: The repository identifier.
+    ///   - kind: The repository kind.
+    ///   - revision: The Git branch, tag, or commit hash.
+    ///   - path: The subtree path relative to the repository root, or `nil` for the root.
+    ///   - recursive: Whether to include entries in nested directories.
+    /// - Returns: A sequence of tree pages.
+    /// - Throws: An error if the first page cannot be fetched or decoded.
+    ///   Iteration throws if a later request fails, is canceled,
+    ///   or contains an unsafe or repeated pagination link.
+    public func listAllTree(
+        in repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        path: String? = nil,
+        recursive: Bool = false
+    ) async throws -> Pages<Git.TreeEntry> {
+        let firstPage = try await listTree(
+            in: repo,
+            kind: kind,
+            revision: revision,
+            path: path,
+            recursive: recursive
+        )
+        return Pages(firstPage: firstPage) { [self] page in
+            try await nextPage(after: page)
+        }
+    }
+
     /// Lists files and directories in a model repository tree.
     ///
     /// - Parameters:
     ///   - id: The repository identifier.
     ///   - revision: The git revision (branch, tag, or commit hash). Defaults to "main".
     ///   - path: The path within the repository. Defaults to root.
-    /// - Returns: An array of tree entries.
+    /// - Returns: The first page of tree entries.
+    ///   Use ``listAllTree(in:kind:revision:path:recursive:)`` for the complete listing.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func modelTree(
         _ id: Repo.ID,
@@ -27,7 +106,8 @@ extension HubClient {
     ///   - id: The repository identifier.
     ///   - revision: The git revision (branch, tag, or commit hash). Defaults to "main".
     ///   - path: The path within the repository. Defaults to root.
-    /// - Returns: An array of tree entries.
+    /// - Returns: The first page of tree entries.
+    ///   Use ``listAllTree(in:kind:revision:path:recursive:)`` for the complete listing.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func datasetTree(
         _ id: Repo.ID,
@@ -43,7 +123,8 @@ extension HubClient {
     ///   - id: The repository identifier.
     ///   - revision: The git revision (branch, tag, or commit hash). Defaults to "main".
     ///   - path: The path within the repository. Defaults to root.
-    /// - Returns: An array of tree entries.
+    /// - Returns: The first page of tree entries.
+    ///   Use ``listAllTree(in:kind:revision:path:recursive:)`` for the complete listing.
     /// - Throws: An error if the request fails or the response cannot be decoded.
     public func spaceTree(
         _ id: Repo.ID,
@@ -59,9 +140,7 @@ extension HubClient {
         revision: String,
         path: String?
     ) async throws -> [Git.TreeEntry] {
-        let pathComponent = path.map { "/\($0)" } ?? ""
-        let apiPath = "/api/\(repoKind.pluralized)/\(id.namespace)/\(id.name)/tree/\(revision)\(pathComponent)"
-        return try await httpClient.fetch(.get, apiPath)
+        try await listTree(in: id, kind: repoKind, revision: revision, path: path).items
     }
 
     // MARK: - Refs Operations

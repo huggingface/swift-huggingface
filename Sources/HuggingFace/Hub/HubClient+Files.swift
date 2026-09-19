@@ -418,6 +418,15 @@ public extension HubClient {
     }
 
     /// Download file to a destination URL using URLSession.downloadTask
+    ///
+    /// On Apple platforms, HTTP downloads report received bytes, including bytes
+    /// retained for a resumed transfer when the server honors the range request.
+    /// Successful transfers set both progress counts to the file size,
+    /// even when the response has no content length.
+    /// Cache hits also report the file size.
+    /// Empty files use one completed unit so their progress can finish.
+    /// Use a separate progress object for each concurrent download.
+    ///
     /// - Parameters:
     ///   - repoPath: Path to file in repository
     ///   - repo: Repository identifier
@@ -456,10 +465,7 @@ public extension HubClient {
                 filename: repoPath
             )
         {
-            if let progress {
-                progress.completedUnitCount = progress.totalUnitCount
-            }
-            return try copyFileToDestinationIfNeeded(cachedPath, destination: destination)
+            return try copyFileToDestinationIfNeeded(cachedPath, destination: destination, progress: progress)
         }
 
         // Local-only mode cannot proceed without a cache hit
@@ -532,12 +538,10 @@ public extension HubClient {
                     revision: revision,
                     filename: repoPath
                 ) {
-                    if let progress {
-                        progress.completedUnitCount = progress.totalUnitCount
-                    }
                     return try copyFileToDestinationIfNeeded(
                         cachedPath,
-                        destination: destination
+                        destination: destination,
+                        progress: progress
                     )
                 }
 
@@ -566,24 +570,20 @@ public extension HubClient {
                             revision: commitHash,
                             filename: repoPath
                         ) {
-                            if let progress {
-                                progress.completedUnitCount = progress.totalUnitCount
-                            }
                             return try copyFileToDestinationIfNeeded(
                                 cachedPath,
-                                destination: destination
+                                destination: destination,
+                                progress: progress
                             )
                         }
-                    }
-                    if let progress {
-                        progress.completedUnitCount = progress.totalUnitCount
                     }
                     if destination == nil {
                         throw HubCacheError.cachedPathResolutionFailed(repoPath)
                     }
                     return try copyFileToDestinationIfNeeded(
                         blobPath,
-                        destination: destination
+                        destination: destination,
+                        progress: progress
                     )
                 }
 
@@ -619,7 +619,8 @@ public extension HubClient {
                         ) {
                             return try copyFileToDestinationIfNeeded(
                                 fallback,
-                                destination: destination
+                                destination: destination,
+                                progress: progress
                             )
                         }
                         throw error
@@ -710,7 +711,8 @@ public extension HubClient {
                             try? FileManager.default.removeItem(at: tempURL)
                             return try copyFileToDestinationIfNeeded(
                                 cachedPath,
-                                destination: destination
+                                destination: destination,
+                                progress: progress
                             )
                         }
                     }
@@ -760,7 +762,7 @@ public extension HubClient {
                     filename: repoPath
                 )
             {
-                return try copyFileToDestinationIfNeeded(fallback, destination: destination)
+                return try copyFileToDestinationIfNeeded(fallback, destination: destination, progress: progress)
             }
             throw error
         }
@@ -801,7 +803,8 @@ public extension HubClient {
                 try? FileManager.default.removeItem(at: tempURL)
                 return try copyFileToDestinationIfNeeded(
                     cachedPath,
-                    destination: destination
+                    destination: destination,
+                    progress: progress
                 )
             }
         }
@@ -949,7 +952,29 @@ public extension HubClient {
 
 #if !canImport(FoundationNetworking)
     private final class DownloadTaskBox: @unchecked Sendable {
-        var task: URLSessionDownloadTask?
+        private let lock = NSLock()
+        private var task: URLSessionDownloadTask?
+        private var isCancelled = false
+
+        func start(_ task: URLSessionDownloadTask) {
+            lock.lock()
+            self.task = task
+            let isCancelled = isCancelled
+            lock.unlock()
+            if isCancelled {
+                task.cancel()
+            } else {
+                task.resume()
+            }
+        }
+
+        func cancel() {
+            lock.lock()
+            isCancelled = true
+            let task = task
+            lock.unlock()
+            task?.cancel()
+        }
     }
 
     extension URLSession {
@@ -966,6 +991,8 @@ public extension HubClient {
                         resumeOffset: resumeOffset,
                         continuation: continuation
                     )
+                    // A session-level delegate reports intermediate bytes on SDKs
+                    // where download(for:delegate:) omits download progress callbacks.
                     let session = URLSession(
                         configuration: configuration,
                         delegate: delegate,
@@ -973,11 +1000,10 @@ public extension HubClient {
                     )
                     delegate.session = session
                     let task = session.downloadTask(with: request)
-                    box.task = task
-                    task.resume()
+                    box.start(task)
                 }
             } onCancel: {
-                box.task?.cancel()
+                box.cancel()
             }
         }
 
@@ -1000,16 +1026,16 @@ public extension HubClient {
                     )
                     delegate.session = session
                     let task = session.downloadTask(withResumeData: resumeData)
-                    box.task = task
-                    task.resume()
+                    box.start(task)
                 }
             } onCancel: {
-                box.task?.cancel()
+                box.cancel()
             }
         }
     }
 
     private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        // Mutable state is confined to the session's serial delegate queue.
         private let progress: Progress
         private let appliesResumeOffsetToAllResponses: Bool
         private let continuation: CheckedContinuation<(URL, URLResponse), Error>?
@@ -1036,10 +1062,13 @@ public extension HubClient {
             totalBytesWritten: Int64,
             totalBytesExpectedToWrite: Int64
         ) {
-            let responseStatus = (downloadTask.response as? HTTPURLResponse)?.statusCode
+            guard !hasResumed,
+                let response = downloadTask.response as? HTTPURLResponse,
+                (200 ..< 300).contains(response.statusCode)
+            else { return }
             let appliesOffset =
                 currentResumeOffset > 0
-                && (responseStatus == 206 || appliesResumeOffsetToAllResponses)
+                && (response.statusCode == 206 || appliesResumeOffsetToAllResponses)
             let appliedOffset = appliesOffset ? currentResumeOffset : 0
             if totalBytesExpectedToWrite > 0 {
                 progress.totalUnitCount = totalBytesExpectedToWrite + appliedOffset
@@ -1053,6 +1082,7 @@ public extension HubClient {
             didResumeAtOffset fileOffset: Int64,
             expectedTotalBytes: Int64
         ) {
+            guard !hasResumed else { return }
             currentResumeOffset = fileOffset
             progress.completedUnitCount = fileOffset
             if expectedTotalBytes > 0 {
@@ -1080,12 +1110,24 @@ public extension HubClient {
             do {
                 try? FileManager.default.removeItem(at: persistedURL)
                 try FileManager.default.moveItem(at: location, to: persistedURL)
-                if progress.totalUnitCount > 0 {
+                if let response = response as? HTTPURLResponse,
+                    (200 ..< 300).contains(response.statusCode)
+                {
+                    let attributes = try FileManager.default.attributesOfItem(atPath: persistedURL.path)
+                    let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+                    // Native resume data already produces a complete file.
+                    // An explicit Range request produces only the remaining bytes.
+                    let offset =
+                        response.statusCode == 206 && !appliesResumeOffsetToAllResponses
+                        ? currentResumeOffset : 0
+                    // Foundation treats 0/0 as unfinished, including for child progress.
+                    progress.totalUnitCount = max(size + offset, 1)
                     progress.completedUnitCount = progress.totalUnitCount
                 }
                 session?.finishTasksAndInvalidate()
                 continuation.resume(returning: (persistedURL, response))
             } catch {
+                try? FileManager.default.removeItem(at: persistedURL)
                 session?.invalidateAndCancel()
                 continuation.resume(throwing: error)
             }
@@ -1183,7 +1225,8 @@ public extension HubClient {
     ///   - kind: Kind of repository
     ///   - revision: Git revision
     ///   - recursive: List files recursively
-    /// - Returns: Array of tree entries
+    /// - Returns: The first page of tree entries.
+    ///   Use ``listAllTree(in:kind:revision:path:recursive:)`` for the complete listing.
     func listFiles(
         in repo: Repo.ID,
         kind: Repo.Kind = .model,
@@ -1734,9 +1777,21 @@ private extension HubClient {
     /// Copies a file to a local destination path if needed.
     func copyFileToDestinationIfNeeded(
         _ source: URL,
-        destination: URL?
+        destination: URL?,
+        progress: Progress? = nil
     ) throws -> URL {
+        // Publish completion only after a requested destination copy succeeds.
+        var succeeded = false
+        defer {
+            if succeeded, let progress {
+                let size = fileSizeIfExists(at: source.resolvingSymlinksInPath())
+                // An empty file must still complete its parent's pending units.
+                progress.totalUnitCount = max(size, 1)
+                progress.completedUnitCount = progress.totalUnitCount
+            }
+        }
         guard let destination else {
+            succeeded = true
             return source
         }
         let fileManager = FileManager.default
@@ -1750,6 +1805,7 @@ private extension HubClient {
         let resolvedSource = source.resolvingSymlinksInPath().standardizedFileURL
         let resolvedDestination = destination.resolvingSymlinksInPath().standardizedFileURL
         if resolvedSource == resolvedDestination {
+            succeeded = true
             return destination
         }
         try fileManager.createDirectory(
@@ -1758,6 +1814,7 @@ private extension HubClient {
         )
         try? fileManager.removeItem(at: destination)
         try fileManager.copyItem(at: resolvedSource, to: destination)
+        succeeded = true
         return destination
     }
 
@@ -2024,10 +2081,9 @@ private extension HubClient {
 
     /// Generate the Xet refresh URL for a given repository, kind, and revision.
     func xetRefreshURL(for repo: Repo.ID, kind: Repo.Kind, revision: String) -> URL {
-        let url = httpClient.host.appendingPathComponent(
-            "api/\(kind.pluralized)/\(repo)/xet-read-token/\(revision)"
-        )
-        return url
+        httpClient.host
+            .appending(path: "api/\(kind.pluralized)/\(repo)/xet-read-token")
+            .appending(component: revision)
     }
 
     /// Fetch metadata without following cross-host redirects.
