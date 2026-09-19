@@ -4,9 +4,11 @@
 on Swift 6.1 or later.
 The current tests cover `getModelTags()` and `getDatasetTags()`.
 They use an explicit host, no token, and no Hub cache.
-The suite runs tests serially with Replay's global scope and playback lock.
-This avoids per-test routing through session headers,
-which Linux does not pass to the custom URL protocol.
+The suite runs tests serially with Replay's playback lock.
+Apple platforms use a separate replay scope for each test,
+so Replay does not intercept concurrent Xet requests through `URLSession.shared`.
+Linux uses global scope because it does not pass the session headers
+needed for per-test routing to the custom URL protocol.
 
 The package explicitly enables Replay's `AsyncHTTPClient` trait.
 Replay 0.6.0 checks `canImport(AsyncHTTPClient)`, and Xet makes that module visible.

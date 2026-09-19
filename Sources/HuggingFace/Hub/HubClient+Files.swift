@@ -435,7 +435,13 @@ public extension HubClient {
     ///   - revision: Git revision
     ///   - endpoint: Select resolve or raw endpoint
     ///   - cachePolicy: Cache policy for the request
-    ///   - progress: Optional Progress object to track download progress
+    ///   - progress: Optional progress object that tracks output bytes.
+    ///     Xet counts reconstructed bytes written to the file.
+    ///     A successful empty Xet download uses one completed unit.
+    ///     Intermediate updates occur at most once per 100 milliseconds,
+    ///     except for the first update.
+    ///     Completion follows successful download and cleanup.
+    ///     A failed or canceled Xet attempt does not report completion.
     ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     /// - Returns: Cached file path, or destination path when provided.
     func downloadFile(
@@ -491,6 +497,8 @@ public extension HubClient {
                         return downloaded
                     }
                 } catch {
+                    try Task.checkCancellation()
+                    if error is CancellationError { throw error }
                     if transport == .xet {
                         throw error
                     }
@@ -2013,15 +2021,14 @@ private extension HubClient {
                 return nil
             }
 
-            _ = try await Xet.withDownloader(
-                refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
-                hubToken: try? await httpClient.tokenProvider.getToken()
-            ) { downloader in
-                try await downloader.download(fileID, to: destination)
+            try await XetDownloadProgress.track(progress) { report in
+                try await Xet.withDownloader(
+                    refreshURL: xetRefreshURL(for: repo, kind: kind, revision: revision),
+                    hubToken: try? await httpClient.tokenProvider.getToken()
+                ) { downloader in
+                    try await downloader.download(fileID, to: destination, progress: report)
+                }
             }
-
-            progress?.totalUnitCount = 100
-            progress?.completedUnitCount = 100
 
             return destination
         #else
