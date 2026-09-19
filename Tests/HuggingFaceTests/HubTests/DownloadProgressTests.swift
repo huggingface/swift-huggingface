@@ -81,9 +81,9 @@
             #expect(samples.values.contains { $0 > 0 && $0 < 512 * 1024 })
         }
 
-        @Test("Short responses report the actual file size", arguments: [true, false])
-        func shortDownload(includesLength: Bool) async throws {
-            let body = Data("hello".utf8)
+        @Test("Short and empty responses report completion", arguments: [true, false], [0, 5])
+        func shortDownload(includesLength: Bool, size: Int) async throws {
+            let body = Data(repeating: 0xAB, count: size)
             let server = try SlowDownloadServer { _ in
                 .init(body: body, delay: 0, includesLength: includesLength)
             }
@@ -100,16 +100,18 @@
                 transport: .lfs
             )
             #expect(try Data(contentsOf: file) == body)
-            #expect(progress.completedUnitCount == Int64(body.count))
-            #expect(progress.totalUnitCount == Int64(body.count))
+            #expect(progress.completedUnitCount == Int64(max(body.count, 1)))
+            #expect(progress.totalUnitCount == Int64(max(body.count, 1)))
+            #expect(progress.fractionCompleted == 1)
+            #expect(progress.isFinished)
         }
 
-        @Test("Cache hits report bytes with an initially unknown total", arguments: [false, true])
-        func cacheHit(copy: Bool) async throws {
+        @Test("Cache hits report completion with an initially unknown total", arguments: [false, true], [0, 11])
+        func cacheHit(copy: Bool, size: Int) async throws {
             let directory = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
             let cache = HubCache(cacheDirectory: directory)
-            let body = Data("cached file".utf8)
+            let body = Data(repeating: 0xAB, count: size)
             try await cache.storeData(
                 body,
                 repo: "test/model",
@@ -129,8 +131,69 @@
                 localFilesOnly: true
             )
             #expect(try Data(contentsOf: file) == body)
-            #expect(progress.completedUnitCount == Int64(body.count))
-            #expect(progress.totalUnitCount == Int64(body.count))
+            #expect(progress.completedUnitCount == Int64(max(body.count, 1)))
+            #expect(progress.totalUnitCount == Int64(max(body.count, 1)))
+            #expect(progress.fractionCompleted == 1)
+            #expect(progress.isFinished)
+        }
+
+        @Test("Snapshots with empty files reach completion", arguments: [false, true])
+        @MainActor
+        func snapshotWithEmptyFile(cached: Bool) async throws {
+            let listing = Data(
+                """
+                [
+                    {"path": "__init__.py", "type": "file", "oid": "empty", "size": 0},
+                    {"path": "config.txt", "type": "file", "oid": "config", "size": 1}
+                ]
+                """.utf8
+            )
+            let server = try SlowDownloadServer { [commit] request in
+                if request.contains("/api/models/test/model/tree/") {
+                    return .init(body: listing, delay: 0)
+                }
+                #expect(!cached, "Cached files should not need a download")
+                let empty = request.contains("__init__.py")
+                return .init(
+                    headers: ["ETag": empty ? "empty" : "config", "X-Repo-Commit": commit],
+                    body: empty ? Data() : Data([0xAB]),
+                    delay: 0
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            if cached {
+                for (filename, body, etag) in [
+                    ("__init__.py", Data(), "empty"), ("config.txt", Data([0xAB]), "config"),
+                ] {
+                    try await cache.storeData(
+                        body,
+                        repo: "test/model",
+                        kind: .model,
+                        revision: commit,
+                        filename: filename,
+                        etag: etag,
+                        ref: "main"
+                    )
+                }
+            }
+            var fractionCompleted = 0.0
+            var isFinished = false
+            let snapshot = try await client(host: host, cache: cache).downloadSnapshot(
+                of: "test/model",
+                to: directory.appendingPathComponent("snapshot"),
+                progressHandler: { progress in
+                    fractionCompleted = progress.fractionCompleted
+                    isFinished = progress.isFinished
+                }
+            )
+            #expect(try Data(contentsOf: snapshot.appendingPathComponent("__init__.py")).isEmpty)
+            #expect(try Data(contentsOf: snapshot.appendingPathComponent("config.txt")) == Data([0xAB]))
+            #expect(fractionCompleted == 1)
+            #expect(isFinished)
         }
 
         @Test("Ranged downloads count the offset only for HTTP 206", arguments: [200, 206])

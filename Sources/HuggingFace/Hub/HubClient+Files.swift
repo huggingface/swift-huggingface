@@ -424,6 +424,7 @@ public extension HubClient {
     /// Successful transfers set both progress counts to the file size,
     /// even when the response has no content length.
     /// Cache hits also report the file size.
+    /// Empty files use one completed unit so their progress can finish.
     /// Use a separate progress object for each concurrent download.
     ///
     /// - Parameters:
@@ -1111,8 +1112,9 @@ public extension HubClient {
                     let offset =
                         response.statusCode == 206 && !appliesResumeOffsetToAllResponses
                         ? currentResumeOffset : 0
-                    progress.totalUnitCount = size + offset
-                    progress.completedUnitCount = size + offset
+                    // Foundation treats 0/0 as unfinished, including for child progress.
+                    progress.totalUnitCount = max(size + offset, 1)
+                    progress.completedUnitCount = progress.totalUnitCount
                 }
                 session?.finishTasksAndInvalidate()
                 continuation.resume(returning: (persistedURL, response))
@@ -1774,8 +1776,9 @@ private extension HubClient {
         defer {
             if succeeded, let progress {
                 let size = fileSizeIfExists(at: source.resolvingSymlinksInPath())
-                progress.totalUnitCount = size
-                progress.completedUnitCount = size
+                // An empty file must still complete its parent's pending units.
+                progress.totalUnitCount = max(size, 1)
+                progress.completedUnitCount = progress.totalUnitCount
             }
         }
         guard let destination else {
