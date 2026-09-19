@@ -5,8 +5,14 @@ import Testing
 
 @Suite("Hub tags replay", .serialized, .playbackIsolated(replaysFrom: Bundle.module))
 struct TagsReplayTests {
-    // Global replay scope requires serial tests within the suite's playback lock.
-    // Linux URLProtocol does not receive the session header used by test scope.
+    #if canImport(FoundationNetworking)
+        // Linux URLProtocol does not receive the session header used by test scope.
+        private static let replayScope: ReplayScope = .global
+    #else
+        // Global registration can intercept concurrent Xet requests through URLSession.shared.
+        private static let replayScope: ReplayScope = .test
+    #endif
+
     private var client: HubClient {
         HubClient(
             session: Replay.session,
@@ -66,7 +72,7 @@ struct TagsReplayTests {
             "model-tags",
             matching: [.method, .url],
             filters: filters(keeping: ["library": ["pytorch", "transformers"], "pipeline_tag": ["text-generation"]]),
-            scope: .global
+            scope: replayScope
         )
     )
     func modelTags() async throws {
@@ -82,7 +88,7 @@ struct TagsReplayTests {
             "dataset-tags",
             matching: [.method, .url],
             filters: filters(keeping: ["library": ["library:datasets"], "language": ["language:en"]]),
-            scope: .global
+            scope: replayScope
         )
     )
     func datasetTags() async throws {
