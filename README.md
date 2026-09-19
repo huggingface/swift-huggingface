@@ -433,7 +433,7 @@ _ = try await client.updateDiscussionStatus(
 #### File Operations
 
 ```swift
-// List files in a repository
+// List the first page of files in a repository
 let files = try await client.listFiles(
     in: "facebook/bart-large",
     kind: .model,
@@ -692,6 +692,37 @@ while page.nextURL != nil {
     print("Page: \(page.items.count) models")
 }
 ```
+
+For a complete subtree listing, use `listAllTree` with `recursive: true`.
+Set `revision` to a commit hash to keep all pages at the same revision.
+
+```swift
+let pages = try await client.listAllTree(
+    in: "org/model",
+    kind: .model,
+    revision: "COMMIT_SHA",
+    path: "macos",
+    recursive: true
+)
+for try await page in pages {
+    for entry in page.items where entry.type == .file {
+        print("\(entry.path): \(entry.effectiveSize ?? 0) bytes")
+    }
+}
+```
+
+`listTree` returns a single `PaginatedResponse<Git.TreeEntry>`.
+Pass that page to `nextPage(after:)` to fetch the next page.
+If a request fails, retry it with the same preceding page;
+successful pages do not need to be fetched again.
+Tree pagination preserves the endpoint prefix, revision, path, and recursion setting.
+Pagination rejects links to another origin and throws on repeated page URLs.
+Task cancellation stops page iteration.
+
+The array methods `modelTree`, `datasetTree`, `spaceTree`, and `listFiles`
+return only the first page.
+Tree entries expose optional `lfs` metadata.
+Their `effectiveSize` property uses `lfs.size` when present and otherwise uses `size`.
 
 #### Error Handling
 

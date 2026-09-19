@@ -34,6 +34,8 @@ struct GitTests {
         #expect(entry.type == .file)
         #expect(entry.oid == "abc123def456")
         #expect(entry.size == 1234)
+        #expect(entry.lfs == nil)
+        #expect(entry.effectiveSize == 1234)
         #expect(entry.lastCommit != nil)
         #expect(entry.lastCommit?.id == "commit123")
         #expect(entry.lastCommit?.title == "Update README")
@@ -60,6 +62,36 @@ struct GitTests {
         #expect(entry.type == .directory)
         #expect(entry.oid == nil)
         #expect(entry.size == nil)
+        #expect(entry.effectiveSize == nil)
+    }
+
+    @Test("TreeEntry decodes LFS metadata and prefers its size")
+    func testTreeEntryLFSDecoding() throws {
+        let data = Data(
+            #"{"path":"weights.bin","type":"file","size":128,"lfs":{"oid":"sha256","size":524288,"pointerSize":128}}"#
+                .utf8
+        )
+        let entry = try JSONDecoder().decode(Git.TreeEntry.self, from: data)
+
+        #expect(entry.size == 128)
+        #expect(entry.lfs?.oid == "sha256")
+        #expect(entry.lfs?.size == 524288)
+        #expect(entry.lfs?.pointerSize == 128)
+        #expect(entry.effectiveSize == 524288)
+        let encoded = try JSONEncoder().encode(entry)
+        #expect(try JSONDecoder().decode(Git.TreeEntry.self, from: encoded) == entry)
+    }
+
+    @Test("TreeEntry supports minimal and null LFS metadata")
+    func testTreeEntryOptionalLFSMetadata() throws {
+        let minimal = Data(#"{"path":"empty.bin","type":"file","lfs":{"size":0}}"#.utf8)
+        let entry = try JSONDecoder().decode(Git.TreeEntry.self, from: minimal)
+        #expect(entry.lfs?.oid == nil)
+        #expect(entry.lfs?.pointerSize == nil)
+        #expect(entry.effectiveSize == 0)
+
+        let null = Data(#"{"path":"file.txt","type":"file","size":10,"lfs":null}"#.utf8)
+        #expect(try JSONDecoder().decode(Git.TreeEntry.self, from: null).effectiveSize == 10)
     }
 
     @Test("Ref decoding")

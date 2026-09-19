@@ -3,15 +3,54 @@ import Foundation
 extension HubClient {
     /// Fetches the next page of results for a paginated response.
     ///
+    /// Retry a failed request by passing the same page again.
+    /// Links must use the client's origin (scheme, host, and port).
+    ///
     /// - Parameter page: The current paginated response.
     /// - Returns: The next page of results,
     ///   or `nil` if there are no more pages.
+    /// - Throws: An error if the request fails or is canceled.
+    ///   Throws `HTTPClientError.requestError` for an unsafe or repeated link.
     public func nextPage<T: Decodable & Sendable>(
         after page: PaginatedResponse<T>
     ) async throws -> PaginatedResponse<T>? {
+        try Task.checkCancellation()
         guard let next = page.nextURL else { return nil }
-        let resolvedNextURL = resolveNextPageURL(next, requestURL: page.requestURL)
-        return try await httpClient.fetchPaginated(.get, url: resolvedNextURL)
+        let resolvedNextURL = resolveNextPageURL(next, requestURL: page.requestURL ?? host)
+        guard hasSameOrigin(resolvedNextURL, host),
+            var components = URLComponents(url: resolvedNextURL, resolvingAgainstBaseURL: true),
+            components.user == nil, components.password == nil
+        else {
+            throw HTTPClientError.requestError("Pagination link must use the client's origin")
+        }
+
+        if let treeURL = page.treeRequestURL,
+            let treeComponents = URLComponents(url: treeURL, resolvingAgainstBaseURL: true)
+        {
+            // Tree links supply the cursor; the original request defines the scope.
+            components.percentEncodedPath = treeComponents.percentEncodedPath
+            let originalItems = treeComponents.queryItems ?? []
+            let originalNames = Set(originalItems.map(\.name))
+            components.queryItems =
+                (components.queryItems ?? []).filter {
+                    !originalNames.contains($0.name)
+                } + originalItems
+        }
+        components.fragment = nil
+        guard let url = components.url else {
+            throw HTTPClientError.requestError("Invalid pagination link")
+        }
+        var visitedURLs = page.visitedURLs
+        if let requestURL = page.requestURL {
+            visitedURLs.insert(paginationURLIdentity(requestURL))
+        }
+        guard visitedURLs.insert(paginationURLIdentity(url)).inserted else {
+            throw HTTPClientError.requestError("Repeated pagination link")
+        }
+        var nextPage: PaginatedResponse<T> = try await httpClient.fetchPaginated(.get, url: url)
+        nextPage.treeRequestURL = page.treeRequestURL
+        nextPage.visitedURLs = visitedURLs
+        return nextPage
     }
 }
 
@@ -218,4 +257,24 @@ extension HubClient {
             try await nextPage(after: page)
         }
     }
+}
+
+// Compare origins before the HTTP client obtains or attaches credentials.
+private func hasSameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+    func port(_ url: URL) -> Int? {
+        url.port ?? (url.scheme?.lowercased() == "https" ? 443 : 80)
+    }
+    return lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+        && lhs.host?.lowercased() == rhs.host?.lowercased()
+        && port(lhs) == port(rhs)
+}
+
+// Query ordering and fragments do not identify a new page.
+private func paginationURLIdentity(_ url: URL) -> URL {
+    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
+    components.fragment = nil
+    components.queryItems = components.queryItems?.sorted {
+        ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "")
+    }
+    return components.url ?? url
 }

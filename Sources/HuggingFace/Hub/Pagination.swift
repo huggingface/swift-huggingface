@@ -26,6 +26,10 @@ public struct PaginatedResponse<T: Decodable & Sendable>: Sendable {
     /// query parameters when the server's `next` URL omits them.
     public let requestURL: URL?
 
+    // Keep tree scope and successful requests across explicit next-page calls.
+    var treeRequestURL: URL?
+    var visitedURLs: Set<URL> = []
+
     /// Creates a paginated response.
     ///
     /// - Parameters:
@@ -85,6 +89,7 @@ public struct Pages<T: Decodable & Sendable>: AsyncSequence, Sendable {
         }
 
         public mutating func next() async throws -> PaginatedResponse<T>? {
+            try Task.checkCancellation()
             if !hasYieldedFirstPage {
                 hasYieldedFirstPage = true
                 return current
@@ -161,7 +166,7 @@ func resolveNextPageURL(_ nextURL: URL, requestURL: URL?) -> URL {
 
     if let requestURL,
         let nextComponents = URLComponents(url: nextURL, resolvingAgainstBaseURL: true),
-        nextComponents.host == nil
+        nextComponents.scheme == nil
     {
         resolvedNextURL = URL(string: nextURL.relativeString, relativeTo: requestURL)?.absoluteURL ?? nextURL
     }
