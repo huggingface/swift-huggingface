@@ -6,8 +6,12 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions: {}
+
 jobs:
   test-macos:
+    permissions:
+      contents: read
     name: Swift ${{ matrix.swift }} on macOS ${{ matrix.macos }} with Xcode ${{ matrix.xcode }}${{ matrix.traits != '' && format(' and --traits {0}', matrix.traits) || '' }}
     runs-on: macos-${{ matrix.macos }}
     env:
@@ -64,6 +68,8 @@ jobs:
         run: swift test${{ matrix.traits != '' && format(' --traits {0}', matrix.traits) || '' }}
 
   test-linux:
+    permissions:
+      contents: read
     name: Swift ${{ matrix.swift }} on Linux${{ matrix.traits != '' && format(' and --traits {0}', matrix.traits) || '' }}
     runs-on: ubuntu-latest
     container: "swift:${{ matrix.swift }}"
