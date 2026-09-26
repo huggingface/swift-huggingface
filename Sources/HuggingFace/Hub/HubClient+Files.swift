@@ -63,7 +63,14 @@ private func snapshotFileProgress(
 /// Complete rows synthesized for a snapshot that was served from cache without
 /// downloading anything, so a caller that renders rows sees the same terminal
 /// state it would get from a real download.
-private func cachedSnapshotFileProgress(at root: URL, matching globs: [String]) -> [SnapshotFileProgress] {
+///
+/// `root` must be the cache snapshot directory: a caller-supplied destination
+/// isn't cleared before the copy and may hold unrelated files.
+private func cachedSnapshotFileProgress(
+    at root: URL,
+    matching globs: [String],
+    sizesByPath: [String: Int64]
+) -> [SnapshotFileProgress] {
     let base = root.standardizedFileURL
     guard
         let enumerator = FileManager.default.enumerator(
@@ -75,7 +82,7 @@ private func cachedSnapshotFileProgress(at root: URL, matching globs: [String]) 
     return enumerator.compactMap { element in
         guard let url = element as? URL else { return nil }
         // Cache snapshots are trees of symlinks into the blob store, so resolve
-        // before asking whether this is a file and how big it is.
+        // before asking whether this is a file.
         let target = url.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
         guard
@@ -90,12 +97,23 @@ private func cachedSnapshotFileProgress(at root: URL, matching globs: [String]) 
         guard globs.isEmpty || globs.contains(where: { fnmatch($0, path, 0) == 0 }) else {
             return nil
         }
-        let size = (try? FileManager.default.attributesOfItem(atPath: target.path))?[.size] as? NSNumber
         return SnapshotFileProgress(
             path: path,
-            sizeBytes: size.map { Int64(truncating: $0) },
+            sizeBytes: sizesByPath[path],
             fractionCompleted: 1.0
         )
+    }
+}
+
+/// Declared file sizes from a cached snapshot's tree-listing metadata, keyed
+/// by repo-relative path; empty when there is no metadata or an entry has no
+/// declared size.
+private func snapshotSizesByPath(_ metadata: CachedSnapshotMetadata?) -> [String: Int64] {
+    guard let metadata else { return [:] }
+    return metadata.entries.reduce(into: [:]) { partial, entry in
+        if let size = entry.size {
+            partial[entry.path] = Int64(size)
+        }
     }
 }
 
@@ -1467,8 +1485,9 @@ public extension HubClient {
                 returnCachePath: returnCachePath
             )
             if let fileProgressHandler {
+                let sizesByPath = snapshotSizesByPath(cachedSnapshotMetadata(at: fastPath, repo: repo, kind: kind))
                 await fileProgressHandler(
-                    cachedSnapshotFileProgress(at: resolved, matching: globs)
+                    cachedSnapshotFileProgress(at: fastPath, matching: globs, sizesByPath: sizesByPath)
                 )
             }
             return resolved
@@ -1491,8 +1510,9 @@ public extension HubClient {
                 returnCachePath: returnCachePath
             )
             if let fileProgressHandler {
+                let sizesByPath = snapshotSizesByPath(cachedSnapshotMetadata(at: cachedPath, repo: repo, kind: kind))
                 await fileProgressHandler(
-                    cachedSnapshotFileProgress(at: resolved, matching: globs)
+                    cachedSnapshotFileProgress(at: cachedPath, matching: globs, sizesByPath: sizesByPath)
                 )
             }
             return resolved
@@ -1514,8 +1534,11 @@ public extension HubClient {
                     returnCachePath: returnCachePath
                 )
                 if let fileProgressHandler {
+                    let sizesByPath = snapshotSizesByPath(
+                        cachedSnapshotMetadata(at: cachedPath, repo: repo, kind: kind)
+                    )
                     await fileProgressHandler(
-                        cachedSnapshotFileProgress(at: resolved, matching: globs)
+                        cachedSnapshotFileProgress(at: cachedPath, matching: globs, sizesByPath: sizesByPath)
                     )
                 }
                 return resolved
@@ -1619,13 +1642,6 @@ public extension HubClient {
         if let progressHandler {
             await progressHandler(progress)
         }
-        // Emitted after the sampler is cancelled, for the same reason the
-        // aggregate handler is: the last 100 ms sample can land before the
-        // final bytes, so without this a caller never observes the terminal
-        // per-file state and a fast download leaves rows short of complete.
-        if let fileProgressHandler {
-            await fileProgressHandler(snapshotFileProgress(fileRows))
-        }
 
         guard let cache else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
@@ -1636,11 +1652,19 @@ public extension HubClient {
             : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
         let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
             .appendingPathComponent(resolvedCommitHash)
-        return try copySnapshotToLocalDirectoryIfNeeded(
+        let resolved = try copySnapshotToLocalDirectoryIfNeeded(
             from: snapshotPath,
             destination: effectiveDestination,
             returnCachePath: returnCachePath
         )
+        // Emitted after the sampler is cancelled and the final copy succeeds:
+        // the last 100 ms sample can land before the final bytes, and a copy
+        // that throws must leave the terminal per-file state unobserved, same
+        // as a download that throws.
+        if let fileProgressHandler {
+            await fileProgressHandler(snapshotFileProgress(fileRows))
+        }
+        return resolved
     }
 }
 
@@ -1722,7 +1746,7 @@ private extension HubClient {
                 if let progressHandler {
                     await progressHandler(boxedProgress.value)
                 }
-                if let fileProgressHandler {
+                if let fileProgressHandler, files.contains(where: { $0.fractionCompleted < 1.0 }) {
                     await fileProgressHandler(files)
                 }
                 try? await Task.sleep(for: .milliseconds(100))
@@ -1820,6 +1844,16 @@ private extension HubClient {
             )
         }
         return isComplete ? snapshotPath : nil
+    }
+
+    /// Cached snapshot metadata for the commit backing `snapshotPath`
+    /// (`.../snapshots/<commitHash>`), or `nil` when there is no cache, the
+    /// directory name isn't a commit hash, or nothing was ever saved for it.
+    func cachedSnapshotMetadata(at snapshotPath: URL, repo: Repo.ID, kind: Repo.Kind) -> CachedSnapshotMetadata? {
+        guard let cache else { return nil }
+        let commitHash = snapshotPath.lastPathComponent
+        guard isCommitHash(commitHash) else { return nil }
+        return loadCachedSnapshotMetadata(cache: cache, repo: repo, kind: kind, commitHash: commitHash)
     }
 
     /// Generates the URL for cached snapshot metadata.
