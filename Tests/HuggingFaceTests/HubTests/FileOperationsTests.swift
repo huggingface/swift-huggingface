@@ -120,6 +120,23 @@ import Testing
         }
     }
 
+    private final class PerFileProgressRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _emissions: [[SnapshotFileProgress]] = []
+
+        func record(files: [SnapshotFileProgress]) {
+            lock.lock()
+            _emissions.append(files)
+            lock.unlock()
+        }
+
+        var emissions: [[SnapshotFileProgress]] {
+            lock.lock()
+            defer { lock.unlock() }
+            return _emissions
+        }
+    }
+
     private final class ProgressUnitRecorder: @unchecked Sendable {
         private let lock = NSLock()
         private var _totals: [Int64] = []
@@ -1737,6 +1754,308 @@ import Testing
             #expect(progressRecorder.lastCompleted == 1000)
         }
 
+        /// Serves two files, holding the first response long enough that the
+        /// 100 ms sampler is guaranteed to publish at least one mid-flight
+        /// emission before the terminal one.
+        private func perFileProgressHandler(
+            commit: String,
+            holdFirstRequestFor delay: TimeInterval
+        ) -> @Sendable (URLRequest) throws -> (HTTPURLResponse, Data) {
+            let listResponse = """
+                [
+                    {"path": "large.bin", "type": "file", "oid": "a", "size": 900},
+                    {"path": "small.bin", "type": "file", "oid": "b", "size": 100}
+                ]
+                """
+            let held = NSLock()
+            nonisolated(unsafe) var alreadyHeld = false
+            return { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+
+                guard path.hasPrefix("/user/model/resolve/") else {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 404,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [:]
+                    )!
+                    return (response, Data())
+                }
+
+                let filename = String(path.split(separator: "/").dropFirst(4).joined(separator: "/"))
+                if request.httpMethod == "HEAD" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["ETag": "\"etag-\(filename)\"", "X-Repo-Commit": commit]
+                    )!
+                    return (response, Data())
+                }
+
+                if delay > 0 {
+                    held.lock()
+                    let shouldHold = !alreadyHeld
+                    alreadyHeld = true
+                    held.unlock()
+                    if shouldHold { Thread.sleep(forTimeInterval: delay) }
+                }
+
+                let bodySize = filename == "small.bin" ? 100 : 900
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/octet-stream"]
+                )!
+                return (response, Data(repeating: 0x3, count: bodySize))
+            }
+        }
+
+        @Test("downloadSnapshot reports per-file progress", .mockURLSession)
+        func testDownloadSnapshotReportsPerFileProgress() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler(
+                perFileProgressHandler(commit: commit, holdFirstRequestFor: 0.25)
+            )
+
+            let recorder = PerFileProgressRecorder()
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: "main",
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
+            )
+
+            let emissions = recorder.emissions
+            // The sampler must contribute: a terminal emission alone cannot
+            // produce more than one.
+            #expect(emissions.count >= 2)
+
+            let mid = try #require(emissions.first)
+            #expect(mid.count == 2)
+            #expect(mid.contains { $0.fractionCompleted < 1.0 })
+
+            let last = try #require(emissions.last)
+            #expect(last.count == 2)
+            #expect(last.allSatisfy { $0.fractionCompleted == 1.0 })
+            // Sizes come from the tree listing, so they are stable across every
+            // emission rather than tracking transferred bytes.
+            #expect(last.first { $0.path == "large.bin" }?.sizeBytes == 900)
+            #expect(last.first { $0.path == "small.bin" }?.sizeBytes == 100)
+            #expect(mid.first { $0.path == "large.bin" }?.sizeBytes == 900)
+        }
+
+        @Test("downloadSnapshot reports per-file progress from cache", .mockURLSession)
+        func testDownloadSnapshotReportsPerFileProgressFromCache() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler(
+                perFileProgressHandler(commit: commit, holdFirstRequestFor: 0)
+            )
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            // Seed the cache under the commit hash itself. Snapshot metadata is
+            // only written when the revision IS a commit hash, and the fast path
+            // refuses to look without it, so a "main" seed is never reused.
+            _ = try await client.downloadSnapshot(of: "user/model", kind: .model, revision: commit)
+
+            // Second call is served entirely from cache: nothing downloads, so
+            // the sampler never runs and the caller would otherwise see no rows
+            // at all while the aggregate handler reports 100%.
+            let recorder = PerFileProgressRecorder()
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: commit,
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
+            )
+
+            let emissions = recorder.emissions
+            #expect(emissions.count == 1)
+            let rows = try #require(emissions.first)
+            #expect(Set(rows.map(\.path)) == ["large.bin", "small.bin"])
+            #expect(rows.allSatisfy { $0.fractionCompleted == 1.0 })
+            #expect(rows.first { $0.path == "large.bin" }?.sizeBytes == 900)
+            #expect(rows.first { $0.path == "small.bin" }?.sizeBytes == 100)
+        }
+
+        @Test(
+            "downloadSnapshot per-file progress from cache ignores pre-existing destination files",
+            .mockURLSession
+        )
+        func testDownloadSnapshotReportsPerFileProgressFromCacheIgnoresPreexistingDestinationFiles() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler(
+                perFileProgressHandler(commit: commit, holdFirstRequestFor: 0)
+            )
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            // Seed the cache under the commit hash so the fast path applies.
+            _ = try await client.downloadSnapshot(of: "user/model", kind: .model, revision: commit)
+
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-preexisting-dest-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+            let unrelatedFile = destination.appendingPathComponent("leftover.txt")
+            try Data("leftover".utf8).write(to: unrelatedFile)
+
+            let recorder = PerFileProgressRecorder()
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                to: destination,
+                revision: commit,
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
+            )
+
+            let emissions = recorder.emissions
+            #expect(emissions.count == 1)
+            let rows = try #require(emissions.first)
+            #expect(Set(rows.map(\.path)) == ["large.bin", "small.bin"])
+            #expect(FileManager.default.fileExists(atPath: unrelatedFile.path))
+        }
+
+        @Test(
+            "downloadSnapshot per-file progress never shows all-complete when the final copy throws",
+            .mockURLSession
+        )
+        func testDownloadSnapshotPerFileProgressExcludesTerminalStateWhenCopyThrows() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler(
+                perFileProgressHandler(commit: commit, holdFirstRequestFor: 0.25)
+            )
+
+            let recorder = PerFileProgressRecorder()
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+
+            // A destination that already exists as a regular file makes the
+            // final `copySnapshotToLocalDirectoryIfNeeded` throw.
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-file-\(UUID().uuidString)")
+            defer { try? FileManager.default.removeItem(at: destination) }
+            try Data("not a directory".utf8).write(to: destination)
+
+            await #expect(throws: (any Error).self) {
+                _ = try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    to: destination,
+                    revision: commit,
+                    fileProgressHandler: { files in
+                        recorder.record(files: files)
+                    }
+                )
+            }
+
+            let emissions = recorder.emissions
+            #expect(
+                emissions.allSatisfy { rows in
+                    rows.isEmpty || rows.contains { $0.fractionCompleted < 1.0 }
+                }
+            )
+        }
+
+        @Test(
+            "downloadSnapshot per-file progress from cache filters nested paths by glob",
+            .mockURLSession
+        )
+        func testDownloadSnapshotReportsPerFileProgressFromCacheFiltersNestedGlob() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            let listResponse = """
+                [
+                    {"path": "top.bin", "type": "file", "oid": "a", "size": 10},
+                    {"path": "sub/nested.bin", "type": "file", "oid": "b", "size": 20}
+                ]
+                """
+            await MockURLProtocol.setHandler { request in
+                let path = request.url?.path ?? ""
+                if path.contains("/api/models/user/model/tree/") {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data(listResponse.utf8))
+                }
+                guard path.hasPrefix("/user/model/resolve/") else {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 404,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [:]
+                    )!
+                    return (response, Data())
+                }
+                let filename = String(path.split(separator: "/").dropFirst(4).joined(separator: "/"))
+                if request.httpMethod == "HEAD" {
+                    let response = HTTPURLResponse(
+                        url: request.url!,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "ETag": "\"etag-\(filename.replacingOccurrences(of: "/", with: "-"))\"",
+                            "X-Repo-Commit": commit,
+                        ]
+                    )!
+                    return (response, Data())
+                }
+                let bodySize = filename == "top.bin" ? 10 : 20
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/octet-stream"]
+                )!
+                return (response, Data(repeating: 0x1, count: bodySize))
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            // Seed the cache under the commit hash with both a top-level and a
+            // nested file.
+            _ = try await client.downloadSnapshot(of: "user/model", kind: .model, revision: commit)
+
+            let recorder = PerFileProgressRecorder()
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                revision: commit,
+                matching: ["sub/*"],
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
+            )
+
+            let emissions = recorder.emissions
+            #expect(emissions.count == 1)
+            let rows = try #require(emissions.first)
+            #expect(Set(rows.map(\.path)) == ["sub/nested.bin"])
+            #expect(rows.allSatisfy { $0.fractionCompleted == 1.0 })
+            #expect(rows.first?.sizeBytes == 20)
+        }
+
         @Test("downloadSnapshot copies to destination when provided", .mockURLSession)
         func testDownloadSnapshotCopiesToDestinationWhenProvided() async throws {
             let commit = "1234567890123456789012345678901234567890"
@@ -1915,13 +2234,23 @@ import Testing
             await MockURLProtocol.setHandler { _ in
                 throw NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
             }
+            let recorder = PerFileProgressRecorder()
             let result = try await client.downloadSnapshot(
                 of: "user/model",
                 kind: .model,
                 revision: "main",
-                localFilesOnly: true
+                localFilesOnly: true,
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
             )
             #expect(FileManager.default.fileExists(atPath: result.appendingPathComponent("config.json").path))
+
+            let emissions = recorder.emissions
+            #expect(emissions.count == 1)
+            let rows = try #require(emissions.first)
+            #expect(Set(rows.map(\.path)) == ["config.json"])
+            #expect(rows.allSatisfy { $0.fractionCompleted == 1.0 })
         }
 
         @Test("downloadSnapshot shared blob creates both snapshot entries", .mockURLSession)
@@ -2086,12 +2415,26 @@ import Testing
                 )!
                 return (response, Data())
             }
+            let recorder = PerFileProgressRecorder()
             let result = try await client.downloadSnapshot(
                 of: "user/model",
                 kind: .model,
-                revision: "main"
+                revision: "main",
+                fileProgressHandler: { files in
+                    recorder.record(files: files)
+                }
             )
             #expect(FileManager.default.fileExists(atPath: result.appendingPathComponent("config.json").path))
+
+            let emissions = recorder.emissions
+            #expect(emissions.count == 1)
+            let rows = try #require(emissions.first)
+            #expect(Set(rows.map(\.path)) == ["config.json"])
+            #expect(rows.allSatisfy { $0.fractionCompleted == 1.0 })
+            // Reached via a "main" revision, which never gets snapshot
+            // metadata saved (only a resolved commit hash does), so there is
+            // no declared size to report here.
+            #expect(rows.first?.sizeBytes == nil)
         }
 
         @Test("downloadSnapshot commit fast path skips API when metadata complete", .mockURLSession)
