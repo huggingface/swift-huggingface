@@ -26,7 +26,8 @@ private let snapshotUnknownFileWeight: Int64 = 1
 /// emits one complete set of rows and nothing else; a download that throws or
 /// is cancelled emits no terminal set, matching `progressHandler`.
 ///
-/// Additive and opt-in (default `fileProgressHandler: nil` ⇒ no behavior change).
+/// Opt-in: only the `downloadSnapshot` overloads that take a
+/// `fileProgressHandler` report it.
 public struct SnapshotFileProgress: Sendable {
     /// Repo-relative file path (e.g. `model-00001-of-00006.safetensors`).
     public let path: String
@@ -1418,7 +1419,52 @@ public extension HubClient {
     ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
-    ///   - fileProgressHandler: Optional closure called with one
+    /// - Returns: URL to `destination`.
+    func downloadSnapshot(
+        of repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        to destination: URL,
+        revision: String = "main",
+        matching globs: [String] = [],
+        localFilesOnly: Bool = false,
+        maxConcurrentDownloads: Int = 8,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
+    ) async throws -> URL {
+        try await downloadSnapshot(
+            of: repo,
+            kind: kind,
+            to: destination,
+            revision: revision,
+            matching: globs,
+            returnCachePath: false,
+            localFilesOnly: localFilesOnly,
+            maxConcurrentDownloads: maxConcurrentDownloads,
+            progressHandler: progressHandler,
+            fileProgressHandler: nil
+        )
+    }
+
+    /// Download a repository snapshot to a destination directory, reporting progress for each file.
+    ///
+    /// This is a separate overload, rather than a defaulted parameter on the
+    /// method above, so that an unlabeled trailing closure in an existing call
+    /// still binds to `progressHandler` in Swift 5 language mode.
+    ///
+    /// This method downloads all files from a repository to the cache and then
+    /// copies them to `destination`.
+    /// Files are automatically cached in the Python-compatible cache directory,
+    /// allowing cache reuse between Swift and Python Hugging Face clients.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
+    ///   - destination: Local destination directory
+    ///   - revision: Git revision (branch, tag, or commit)
+    ///   - matching: Glob patterns to filter files (empty array downloads all files)
+    ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
+    ///   - progressHandler: Optional closure called with progress updates.
+    ///     Updates are delivered on the main actor.
+    ///   - fileProgressHandler: Closure called with one
     ///     ``SnapshotFileProgress`` per file, sampled on the same schedule as
     ///     `progressHandler`. Delivered on the main actor. A snapshot served
     ///     from cache emits a single complete set of rows.
@@ -1432,7 +1478,7 @@ public extension HubClient {
         localFilesOnly: Bool = false,
         maxConcurrentDownloads: Int = 8,
         progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil,
-        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)? = nil
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)?
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
@@ -1465,7 +1511,52 @@ public extension HubClient {
     ///                             The default value is 8. Values less than 1 are treated as 1.
     ///   - progressHandler: Optional closure called with progress updates.
     ///     Updates are delivered on the main actor.
-    ///   - fileProgressHandler: Optional closure called with one
+    /// - Returns: URL to the cache snapshot directory.
+    func downloadSnapshot(
+        of repo: Repo.ID,
+        kind: Repo.Kind = .model,
+        revision: String = "main",
+        matching globs: [String] = [],
+        localFilesOnly: Bool = false,
+        maxConcurrentDownloads: Int = 8,
+        progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil
+    ) async throws -> URL {
+        try await downloadSnapshot(
+            of: repo,
+            kind: kind,
+            to: nil,
+            revision: revision,
+            matching: globs,
+            returnCachePath: true,
+            localFilesOnly: localFilesOnly,
+            maxConcurrentDownloads: maxConcurrentDownloads,
+            progressHandler: progressHandler,
+            fileProgressHandler: nil
+        )
+    }
+
+    /// Download a repository snapshot, reporting progress for each file.
+    ///
+    /// This is a separate overload, rather than a defaulted parameter on the
+    /// method above, so that an unlabeled trailing closure in an existing call
+    /// still binds to `progressHandler` in Swift 5 language mode.
+    ///
+    /// This method downloads all files from a repository to the cache by default.
+    /// Files are automatically cached in the Python-compatible cache directory,
+    /// allowing cache reuse between Swift and Python Hugging Face clients.
+    ///
+    /// - Parameters:
+    ///   - repo: Repository identifier
+    ///   - kind: Kind of repository
+    ///   - revision: Git revision (branch, tag, or commit)
+    ///   - matching: Glob patterns to filter files (empty array downloads all files)
+    ///   - localFilesOnly: When `true`, resolve only from local cache and throw if missing.
+    ///   - maxConcurrentDownloads: Maximum number of concurrent downloads for LFS files.
+    ///                             This value is ignored for non-LFS files.
+    ///                             The default value is 8. Values less than 1 are treated as 1.
+    ///   - progressHandler: Optional closure called with progress updates.
+    ///     Updates are delivered on the main actor.
+    ///   - fileProgressHandler: Closure called with one
     ///     ``SnapshotFileProgress`` per file, sampled on the same schedule as
     ///     `progressHandler`. Delivered on the main actor. A snapshot served
     ///     from cache emits a single complete set of rows.
@@ -1478,7 +1569,7 @@ public extension HubClient {
         localFilesOnly: Bool = false,
         maxConcurrentDownloads: Int = 8,
         progressHandler: (@MainActor @Sendable (Progress) -> Void)? = nil,
-        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)? = nil
+        fileProgressHandler: (@MainActor @Sendable ([SnapshotFileProgress]) -> Void)?
     ) async throws -> URL {
         try await downloadSnapshot(
             of: repo,
