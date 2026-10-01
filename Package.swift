@@ -58,6 +58,14 @@ let package = Package(
             ]
         ),
         .testTarget(
+            name: "HuggingFaceSwift5Tests",
+            dependencies: ["HuggingFace"],
+            swiftSettings: [
+                // Checks how existing call sites resolve in Swift 5 language mode.
+                .swiftLanguageMode(.v5)
+            ]
+        ),
+        .testTarget(
             name: "HubReplayTests",
             dependencies: [
                 "HuggingFace",
