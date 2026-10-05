@@ -17,7 +17,11 @@ let package = Package(
         .library(
             name: "HuggingFace",
             targets: ["HuggingFace"]
-        )
+        ),
+        .library(
+            name: "HuggingFaceOAuth",
+            targets: ["HuggingFaceOAuth"]
+        ),
     ],
     traits: [
         .trait(
@@ -50,12 +54,21 @@ let package = Package(
                 .define("HUGGINGFACE_ENABLE_XET", .when(traits: ["Xet"]))
             ]
         ),
+        .target(
+            name: "HuggingFaceOAuth",
+            dependencies: ["HuggingFace"],
+            path: "Sources/HuggingFaceOAuth"
+        ),
         .testTarget(
             name: "HuggingFaceTests",
             dependencies: ["HuggingFace"],
             swiftSettings: [
                 .define("HUGGINGFACE_ENABLE_XET", .when(traits: ["Xet"]))
             ]
+        ),
+        .testTarget(
+            name: "HuggingFaceOAuthTests",
+            dependencies: ["HuggingFace", "HuggingFaceOAuth"]
         ),
         .testTarget(
             name: "HuggingFaceSwift5Tests",
