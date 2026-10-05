@@ -72,10 +72,25 @@ let client = HubClient.default
 let userInfo = try await client.whoami()
 ```
 
-For user-facing applications that need to authenticate users:
+For user-facing applications that need to authenticate users,
+add the `HuggingFaceOAuth` product to your target
+and use `HuggingFaceAuthenticationManager`.
+OAuth is a separate product because it links AuthenticationServices,
+which apps that don't sign users in shouldn't need to load.
+
+```swift
+.target(
+    name: "MyApp",
+    dependencies: [
+        .product(name: "HuggingFace", package: "swift-huggingface"),
+        .product(name: "HuggingFaceOAuth", package: "swift-huggingface"),
+    ]
+)
+```
 
 ```swift
 import HuggingFace
+import HuggingFaceOAuth
 
 // Create authentication manager
 let authManager = try HuggingFaceAuthenticationManager(

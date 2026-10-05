@@ -17,7 +17,11 @@ let package = Package(
         .library(
             name: "HuggingFace",
             targets: ["HuggingFace"]
-        )
+        ),
+        .library(
+            name: "HuggingFaceOAuth",
+            targets: ["HuggingFaceOAuth"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
@@ -37,12 +41,21 @@ let package = Package(
                 .define("HUGGINGFACE_ENABLE_XET")
             ]
         ),
+        .target(
+            name: "HuggingFaceOAuth",
+            dependencies: ["HuggingFace"],
+            path: "Sources/HuggingFaceOAuth"
+        ),
         .testTarget(
             name: "HuggingFaceTests",
             dependencies: ["HuggingFace"],
             swiftSettings: [
                 .define("HUGGINGFACE_ENABLE_XET")
             ]
+        ),
+        .testTarget(
+            name: "HuggingFaceOAuthTests",
+            dependencies: ["HuggingFace", "HuggingFaceOAuth"]
         ),
         .testTarget(
             name: "HuggingFaceSwift5Tests",

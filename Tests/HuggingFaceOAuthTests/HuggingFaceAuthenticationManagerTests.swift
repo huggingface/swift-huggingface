@@ -5,7 +5,8 @@ import Foundation
 #endif
 import Testing
 
-@testable import HuggingFace
+import HuggingFace
+@testable import HuggingFaceOAuth
 
 #if swift(>=6.1) && canImport(AuthenticationServices)
     @Suite("HuggingFace Authentication Manager Tests")

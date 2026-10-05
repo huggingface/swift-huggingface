@@ -1,4 +1,5 @@
 import Foundation
+import HuggingFace
 
 #if canImport(AuthenticationServices)
     import AuthenticationServices
