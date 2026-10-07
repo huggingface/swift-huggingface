@@ -469,19 +469,35 @@ public struct HTTPClientError: Error, Hashable, Sendable, CustomStringConvertibl
         self.response = response
     }
 
-    static func requestError(_ detail: String) -> Self {
+    /// Creates an error encountered while constructing the request.
+    ///
+    /// - Parameter detail: A description of what went wrong.
+    public static func requestError(_ detail: String) -> Self {
         Self(code: .requestError, detail: detail)
     }
 
-    static func responseError(response: HTTPURLResponse, detail: String) -> Self {
+    /// Creates an error returned by the HTTP API.
+    ///
+    /// - Parameters:
+    ///   - response: The HTTP response.
+    ///   - detail: A description of what went wrong.
+    public static func responseError(response: HTTPURLResponse, detail: String) -> Self {
         Self(code: .responseError, detail: detail, response: response)
     }
 
-    static func decodingError(response: HTTPURLResponse, detail: String) -> Self {
+    /// Creates an error encountered while decoding the response.
+    ///
+    /// - Parameters:
+    ///   - response: The HTTP response.
+    ///   - detail: A description of what went wrong.
+    public static func decodingError(response: HTTPURLResponse, detail: String) -> Self {
         Self(code: .decodingError, detail: detail, response: response)
     }
 
-    static func unexpectedError(_ detail: String) -> Self {
+    /// Creates an unexpected error.
+    ///
+    /// - Parameter detail: A description of what went wrong.
+    public static func unexpectedError(_ detail: String) -> Self {
         Self(code: .unexpectedError, detail: detail)
     }
 
