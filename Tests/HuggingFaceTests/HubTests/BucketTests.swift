@@ -33,6 +33,7 @@
             #expect(Bucket.Region.eu.rawValue == "eu")
             #expect(Bucket.Region(rawValue: "us") == .us)
             #expect(Bucket.Region(rawValue: "ap").rawValue == "ap")
+            #expect(Bucket.Region.allCases == [.us, .eu])
         }
 
         @Test("Bucket.Region encodes and decodes as its identifier")

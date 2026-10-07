@@ -110,7 +110,7 @@
         /// Use ``us`` or ``eu``,
         /// or create a region from its identifier
         /// to use one this package doesn't list yet.
-        public struct Region: RawRepresentable, Codable, Hashable, Sendable {
+        public struct Region: RawRepresentable, Codable, Hashable, CaseIterable, Sendable {
             /// The region's identifier, such as `"us"`.
             public let rawValue: String
 
@@ -124,6 +124,9 @@
 
             /// The European Union region.
             public static let eu = Region(rawValue: "eu")
+
+            /// The regions this package lists.
+            public static let allCases: [Region] = [.us, .eu]
         }
     }
 
