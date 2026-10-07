@@ -10,7 +10,8 @@ extension HubClient {
     /// - Returns: The next page of results,
     ///   or `nil` if there are no more pages.
     /// - Throws: An error if the request fails or is canceled.
-    ///   Throws `HTTPClientError.requestError` for an unsafe or repeated link.
+    ///   Throws an ``HTTPClientError`` with the code ``HTTPClientError/Code/requestError``
+    ///   for an unsafe or repeated link.
     public func nextPage<T: Decodable & Sendable>(
         after page: PaginatedResponse<T>
     ) async throws -> PaginatedResponse<T>? {

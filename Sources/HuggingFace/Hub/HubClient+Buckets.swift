@@ -41,7 +41,9 @@
             do {
                 let response: CreateBucketResponse = try await httpClient.fetch(.post, path, params: params)
                 return (url: response.url, bucketId: Self.parseCanonicalBucketID(fromURL: response.url))
-            } catch let HTTPClientError.responseError(response, _) where existOk && response.statusCode == 409 {
+            } catch let error as HTTPClientError
+                where existOk && error.code == .responseError && error.statusCode == 409
+            {
                 var url = httpClient.host.appending(path: "buckets")
                 if let organization {
                     url = url.appending(path: organization)
@@ -105,7 +107,9 @@
             do {
                 let _: Bool = try await httpClient.fetch(.delete, "/api/buckets/\(id.rawValue)")
                 return true
-            } catch let HTTPClientError.responseError(response, _) where missingOk && response.statusCode == 404 {
+            } catch let error as HTTPClientError
+                where missingOk && error.code == .responseError && error.statusCode == 404
+            {
                 return true
             }
         }

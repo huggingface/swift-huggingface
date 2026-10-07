@@ -409,28 +409,91 @@ final class HTTPClient: @unchecked Sendable {
 }
 
 /// Represents errors that can occur during API operations.
-public enum HTTPClientError: Error, Hashable, Sendable, CustomStringConvertible {
-    /// An error encountered while constructing the request.
-    case requestError(String)
+///
+/// Check ``code`` to find out what kind of error occurred.
+/// New codes may be added in minor releases.
+public struct HTTPClientError: Error, Hashable, Sendable, CustomStringConvertible {
+    /// A code that identifies the kind of error.
+    public struct Code: Hashable, Sendable, CustomStringConvertible {
+        enum Base: String, Hashable, Sendable {
+            case requestError
+            case responseError
+            case decodingError
+            case unexpectedError
+        }
 
-    /// An error returned by the HTTP API.
-    case responseError(response: HTTPURLResponse, detail: String)
+        let base: Base
 
-    /// An error encountered while decoding the response.
-    case decodingError(response: HTTPURLResponse, detail: String)
+        private init(_ base: Base) {
+            self.base = base
+        }
 
-    /// An unexpected error.
-    case unexpectedError(String)
+        /// An error encountered while constructing the request.
+        public static let requestError = Code(.requestError)
+
+        /// An error returned by the HTTP API.
+        ///
+        /// ``HTTPClientError/response`` holds the response.
+        public static let responseError = Code(.responseError)
+
+        /// An error encountered while decoding the response.
+        ///
+        /// ``HTTPClientError/response`` holds the response.
+        public static let decodingError = Code(.decodingError)
+
+        /// An unexpected error.
+        public static let unexpectedError = Code(.unexpectedError)
+
+        public var description: String {
+            base.rawValue
+        }
+    }
+
+    /// The kind of error.
+    public let code: Code
+
+    /// A description of what went wrong.
+    public let detail: String
+
+    /// The HTTP response, for a response or decoding error.
+    public let response: HTTPURLResponse?
+
+    /// The HTTP status code of the response, if there is one.
+    public var statusCode: Int? {
+        response?.statusCode
+    }
+
+    init(code: Code, detail: String, response: HTTPURLResponse? = nil) {
+        self.code = code
+        self.detail = detail
+        self.response = response
+    }
+
+    static func requestError(_ detail: String) -> Self {
+        Self(code: .requestError, detail: detail)
+    }
+
+    static func responseError(response: HTTPURLResponse, detail: String) -> Self {
+        Self(code: .responseError, detail: detail, response: response)
+    }
+
+    static func decodingError(response: HTTPURLResponse, detail: String) -> Self {
+        Self(code: .decodingError, detail: detail, response: response)
+    }
+
+    static func unexpectedError(_ detail: String) -> Self {
+        Self(code: .unexpectedError, detail: detail)
+    }
 
     public var description: String {
-        switch self {
-        case .requestError(let detail):
+        switch code.base {
+        case .requestError:
             return "Request error: \(detail)"
-        case .responseError(let response, let detail):
-            return "Response error (Status \(response.statusCode)): \(detail)"
-        case .decodingError(let response, let detail):
-            return "Decoding error (Status \(response.statusCode)): \(detail)"
-        case .unexpectedError(let detail):
+        case .responseError:
+            return "Response error (Status \(statusCode ?? 0)): \(detail)"
+        case .decodingError:
+            return "Decoding error (Status \(statusCode ?? 0)): \(detail)"
+        case .unexpectedError:
             return "Unexpected error: \(detail)"
         }
     }

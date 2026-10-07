@@ -745,15 +745,13 @@ Their `effectiveSize` property uses `lfs.size` when present and otherwise uses `
 do {
     let modelInfo = try await client.getModel("nonexistent/model")
 } catch let error as HTTPClientError {
-    switch error {
-    case .requestError(let detail):
-        print("Request error: \(detail)")
-    case .responseError(let response, let detail):
-        print("Response error (\(response.statusCode)): \(detail)")
-    case .decodingError(let response, let detail):
-        print("Decoding error (\(response.statusCode)): \(detail)")
-    case .unexpectedError(let detail):
-        print("Unexpected error: \(detail)")
+    switch error.code {
+    case .responseError:
+        print("Response error (\(error.statusCode ?? 0)): \(error.detail)")
+    case .decodingError:
+        print("Decoding error (\(error.statusCode ?? 0)): \(error.detail)")
+    default:
+        print(error)
     }
 }
 ```
