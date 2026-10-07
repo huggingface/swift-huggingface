@@ -1862,13 +1862,13 @@ private extension HubClient {
 
     func snapshotTransport(for entry: Git.TreeEntry) -> FileDownloadTransport {
         #if HUGGINGFACE_ENABLE_XET
-        let useXet = FileDownloadTransport.automatic.shouldUseXet(
-            fileSizeBytes: entry.size,
-            minimumFileSizeBytes: xetMinimumFileSizeBytes
-        )
-        return useXet ? .automatic : .lfs
+            let useXet = FileDownloadTransport.automatic.shouldUseXet(
+                fileSizeBytes: entry.size,
+                minimumFileSizeBytes: xetMinimumFileSizeBytes
+            )
+            return useXet ? .automatic : .lfs
         #else
-        return .lfs
+            return .lfs
         #endif
     }
 

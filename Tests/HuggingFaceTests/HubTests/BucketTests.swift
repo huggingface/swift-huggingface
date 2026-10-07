@@ -17,10 +17,13 @@
             #expect(id?.rawValue == "user/my-bucket")
         }
 
-        @Test("Bucket.ID rejects malformed input", arguments: [
-            "no-slash",
-            "",
-        ])
+        @Test(
+            "Bucket.ID rejects malformed input",
+            arguments: [
+                "no-slash",
+                "",
+            ]
+        )
         func parseInvalidID(_ raw: String) {
             #expect(Bucket.ID(rawValue: raw) == nil)
         }
@@ -57,7 +60,8 @@
                   "size": 551879671,
                   "totalFiles": 12
                 }
-                """.utf8)
+                """.utf8
+            )
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
@@ -83,7 +87,8 @@
                   "mtime": "2024-09-25T15:31:02.346Z",
                   "uploadedAt": "2024-09-25T15:31:05.000Z"
                 }
-                """.utf8)
+                """.utf8
+            )
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
@@ -108,7 +113,8 @@
                   "path": "checkpoints",
                   "uploadedAt": "2024-09-25T15:31:05.000Z"
                 }
-                """.utf8)
+                """.utf8
+            )
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds

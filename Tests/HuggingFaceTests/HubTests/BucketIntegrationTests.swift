@@ -15,7 +15,7 @@
     /// in the environment.
     @Suite("Bucket Integration Tests")
     struct BucketIntegrationTests {
-        private static let runE2E: Bool = 
+        private static let runE2E: Bool =
             ProcessInfo.processInfo.environment["RUN_HUB_E2E_TESTS"] == "1"
 
         private static let hasToken: Bool =
