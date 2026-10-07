@@ -210,72 +210,108 @@ public struct Provider: Hashable, Sendable {
 // MARK: - Capability
 
 /// Represents the capabilities supported by inference providers.
-public enum Capability: String, Hashable, CaseIterable, Codable, Sendable {
+///
+/// New capabilities may be added in minor releases.
+public struct Capability: RawRepresentable, Hashable, CaseIterable, Codable, Sendable {
+    /// The capability's identifier, such as `"chat_completion"`.
+    public let rawValue: String
+
+    /// Creates a capability from its identifier.
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
     /// Chat completion with language models.
-    case chatCompletion = "chat_completion"
+    public static let chatCompletion = Capability(rawValue: "chat_completion")
 
     /// Chat completion with vision-language models.
-    case chatCompletionVLM = "chat_completion_vlm"
+    public static let chatCompletionVLM = Capability(rawValue: "chat_completion_vlm")
 
     /// Feature extraction and embeddings.
-    case featureExtraction = "feature_extraction"
+    public static let featureExtraction = Capability(rawValue: "feature_extraction")
 
     /// Text-to-image generation.
-    case textToImage = "text_to_image"
+    public static let textToImage = Capability(rawValue: "text_to_image")
 
     /// Text-to-video generation.
-    case textToVideo = "text_to_video"
+    public static let textToVideo = Capability(rawValue: "text_to_video")
 
     /// Speech-to-text transcription.
-    case speechToText = "speech_to_text"
+    public static let speechToText = Capability(rawValue: "speech_to_text")
 
     /// Text-to-speech synthesis.
-    case textToSpeech = "text_to_speech"
+    public static let textToSpeech = Capability(rawValue: "text_to_speech")
 
     /// Image-to-text generation.
-    case imageToText = "image_to_text"
+    public static let imageToText = Capability(rawValue: "image_to_text")
 
     /// Image classification.
-    case imageClassification = "image_classification"
+    public static let imageClassification = Capability(rawValue: "image_classification")
 
     /// Text classification.
-    case textClassification = "text_classification"
+    public static let textClassification = Capability(rawValue: "text_classification")
 
     /// Summarization.
-    case summarization = "summarization"
+    public static let summarization = Capability(rawValue: "summarization")
 
     /// Translation.
-    case translation = "translation"
+    public static let translation = Capability(rawValue: "translation")
 
     /// Question answering.
-    case questionAnswering = "question_answering"
+    public static let questionAnswering = Capability(rawValue: "question_answering")
 
     /// Zero-shot classification.
-    case zeroShotClassification = "zero_shot_classification"
+    public static let zeroShotClassification = Capability(rawValue: "zero_shot_classification")
 
     /// Conversational AI.
-    case conversational = "conversational"
+    public static let conversational = Capability(rawValue: "conversational")
 
     /// Fill mask tasks.
-    case fillMask = "fill_mask"
+    public static let fillMask = Capability(rawValue: "fill_mask")
 
     /// Token classification (NER).
-    case tokenClassification = "token_classification"
+    public static let tokenClassification = Capability(rawValue: "token_classification")
 
     /// Table question answering.
-    case tableQuestionAnswering = "table_question_answering"
+    public static let tableQuestionAnswering = Capability(rawValue: "table_question_answering")
 
     /// Text generation.
-    case textGeneration = "text_generation"
+    public static let textGeneration = Capability(rawValue: "text_generation")
 
     /// Multiple choice.
-    case multipleChoice = "multiple_choice"
+    public static let multipleChoice = Capability(rawValue: "multiple_choice")
 
     /// Sentence similarity.
-    case sentenceSimilarity = "sentence_similarity"
+    public static let sentenceSimilarity = Capability(rawValue: "sentence_similarity")
 
     /// Text-to-audio generation.
-    case textToAudio = "text_to_audio"
+    public static let textToAudio = Capability(rawValue: "text_to_audio")
+
+    /// The capabilities this package lists.
+    public static let allCases: [Capability] = [
+        .chatCompletion,
+        .chatCompletionVLM,
+        .featureExtraction,
+        .textToImage,
+        .textToVideo,
+        .speechToText,
+        .textToSpeech,
+        .imageToText,
+        .imageClassification,
+        .textClassification,
+        .summarization,
+        .translation,
+        .questionAnswering,
+        .zeroShotClassification,
+        .conversational,
+        .fillMask,
+        .tokenClassification,
+        .tableQuestionAnswering,
+        .textGeneration,
+        .multipleChoice,
+        .sentenceSimilarity,
+        .textToAudio,
+    ]
 }
 
 // MARK: - Codable
