@@ -10,7 +10,7 @@ extension JSONDecoder.DateDecodingStrategy {
     /// If both parsing attempts fail, it throws a `DecodingError.dataCorruptedError`.
     ///
     /// - Returns: A `DateDecodingStrategy` that can be used with a `JSONDecoder`.
-    public static let iso8601WithFractionalSeconds = custom { decoder in
+    static let iso8601WithFractionalSeconds = custom { decoder in
         let container = try decoder.singleValueContainer()
         let string = try container.decode(String.self)
 

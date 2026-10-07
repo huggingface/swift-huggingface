@@ -190,13 +190,13 @@ struct MultipartBuilder {
 // MARK: - Errors
 
 /// Errors that can occur during multipart building operations.
-public enum MultipartBuilderError: LocalizedError {
+enum MultipartBuilderError: LocalizedError {
     case createTempFileFailed
     case openTempFileFailed
     case openInputStreamFailed
     case readInputStreamFailed(underlying: Error?)
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .createTempFileFailed:
             return "Failed to create temp file"
