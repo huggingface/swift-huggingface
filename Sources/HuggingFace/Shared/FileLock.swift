@@ -13,7 +13,7 @@ import Foundation
 ///
 /// This is a thin wrapper around the C `mode_t` type
 /// used by `open(2)` and `fchmod(2)`.
-public typealias FilePermissions = mode_t
+typealias FilePermissions = mode_t
 
 /// A file-based lock for coordinating access to shared resources
 /// across concurrent tasks and processes.
@@ -22,23 +22,23 @@ public typealias FilePermissions = mode_t
 /// and uses `flock(2)` for mutual exclusion.
 /// Nested ``withLock(blocking:_:)`` calls within the same task
 /// are reentrant and do not deadlock.
-public struct FileLock: Sendable {
+struct FileLock: Sendable {
     /// The path to the `.lock` file.
-    public let lockPath: URL
+    let lockPath: URL
 
     /// Maximum number of acquisition attempts after the initial try,
     /// or `nil` to retry indefinitely.
-    public let maxRetries: Int?
+    let maxRetries: Int?
 
     /// Seconds to wait between retry attempts.
-    public let retryDelay: TimeInterval
+    let retryDelay: TimeInterval
 
     /// POSIX permissions applied when creating the lock file.
-    public let mode: FilePermissions
+    let mode: FilePermissions
 
     /// When `true`, acquisition retries up to ``maxRetries`` times;
     /// when `false`, a single failed attempt throws immediately.
-    public let blocking: Bool
+    let blocking: Bool
 
     // Reentrant locking is scoped to the current task identity,
     // not task-local values inherited by child tasks.
@@ -59,7 +59,7 @@ public struct FileLock: Sendable {
     ///     Defaults to `0o644`.
     ///   - blocking: Whether to retry on contention.
     ///     Defaults to `true`.
-    public init(
+    init(
         path: URL,
         maxRetries: Int? = 5,
         retryDelay: TimeInterval = 1.0,
@@ -86,7 +86,7 @@ public struct FileLock: Sendable {
     /// - Throws: ``FileLockError/acquisitionFailed(_:attempts:totalWaitTime:)``
     ///   if the lock cannot be obtained,
     ///   or any error thrown by `body`.
-    public func withLock<T>(
+    func withLock<T>(
         blocking: Bool? = nil,
         _ body: () async throws -> T
     ) async throws -> T {
