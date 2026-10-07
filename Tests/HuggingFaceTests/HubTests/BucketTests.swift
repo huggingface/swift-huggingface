@@ -25,6 +25,24 @@
             #expect(Bucket.ID(rawValue: raw) == nil)
         }
 
+        // MARK: - Bucket.Region
+
+        @Test("Bucket.Region has the listed regions and accepts others")
+        func regions() {
+            #expect(Bucket.Region.us.rawValue == "us")
+            #expect(Bucket.Region.eu.rawValue == "eu")
+            #expect(Bucket.Region(rawValue: "us") == .us)
+            #expect(Bucket.Region(rawValue: "ap").rawValue == "ap")
+        }
+
+        @Test("Bucket.Region encodes and decodes as its identifier")
+        func regionCoding() throws {
+            let encoded = try JSONEncoder().encode([Bucket.Region.eu, Bucket.Region(rawValue: "ap")])
+            #expect(String(decoding: encoded, as: UTF8.self) == #"["eu","ap"]"#)
+            let decoded = try JSONDecoder().decode([Bucket.Region].self, from: encoded)
+            #expect(decoded == [.eu, Bucket.Region(rawValue: "ap")])
+        }
+
         // MARK: - Bucket
 
         @Test("Bucket decodes the Hub's shape")

@@ -105,10 +105,25 @@
             public let uploadedAt: Date?
         }
 
-        /// Optional cloud region for bucket creation. Requires Team plan or above.
-        public enum Region: String, Codable, Sendable, CaseIterable {
-            case us
-            case eu
+        /// A cloud region for bucket creation. Requires Team plan or above.
+        ///
+        /// Use ``us`` or ``eu``,
+        /// or create a region from its identifier
+        /// to use one this package doesn't list yet.
+        public struct Region: RawRepresentable, Codable, Hashable, Sendable {
+            /// The region's identifier, such as `"us"`.
+            public let rawValue: String
+
+            /// Creates a region from its identifier.
+            public init(rawValue: String) {
+                self.rawValue = rawValue
+            }
+
+            /// The United States region.
+            public static let us = Region(rawValue: "us")
+
+            /// The European Union region.
+            public static let eu = Region(rawValue: "eu")
         }
     }
 
