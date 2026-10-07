@@ -64,7 +64,7 @@
                         #expect(data == XetEndpointServer.payload)
                     } catch let error as XetDownloaderError {
                         #expect(transport == .xet)
-                        guard case .tokenRequestFailed(statusCode: 401, body: _) = error else {
+                        guard error.code == .tokenRequestFailed, error.statusCode == 401 else {
                             throw error
                         }
                     }
