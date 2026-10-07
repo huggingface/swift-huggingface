@@ -763,6 +763,18 @@ do {
 
 <summary>Hub API Endpoint Coverage</summary>
 
+##### Buckets
+
+Bucket methods require the `Xet` trait.
+
+- [x] `GET /api/buckets/{namespace}` → `listBuckets()`
+- [x] `POST /api/buckets/{namespace}/{name}` → `createBucket()`
+- [x] `GET /api/buckets/{namespace}/{name}` → `bucketInfo()`
+- [x] `DELETE /api/buckets/{namespace}/{name}` → `deleteBucket()`
+- [x] `POST /api/buckets/{namespace}/{name}/paths-info` → `getBucketPathsInfo()`
+- [x] `GET /api/buckets/{namespace}/{name}/tree/{path}` → `listBucketTree()`
+- [x] `POST /api/repos/move` → `moveBucket()`
+
 ##### Collections
 
 - [x] `GET /api/collections` → `listCollections()`
@@ -778,7 +790,9 @@ do {
 - [x] `GET /api/datasets-tags-by-type` → `getDatasetTags()`
 - [x] `GET /api/datasets/{namespace}/{repo}/parquet` → `listParquetFiles()`
 - [ ] `GET /api/datasets/{namespace}/{repo}/branch/{rev}`
-- [ ] `POST /api/datasets/{namespace}/{repo}/commit/{rev}`
+- [x] `POST /api/datasets/{namespace}/{repo}/branch/{rev}` → `createDatasetBranch()`
+- [x] `DELETE /api/datasets/{namespace}/{repo}/branch/{rev}` → `deleteDatasetBranch()`
+- [x] `POST /api/datasets/{namespace}/{repo}/commit/{rev}` → `deleteFiles()` (deletions only)
 - [x] `GET /api/datasets/{namespace}/{repo}/commits/{rev}` → `datasetCommits()`
 - [x] `GET /api/datasets/{namespace}/{repo}/compare/{compare}` → `compareDatasetRevisions()`
 - [ ] `GET /api/datasets/{namespace}/{repo}/lfs-files`
@@ -790,7 +804,7 @@ do {
 - [x] `GET /api/datasets/{namespace}/{repo}/refs` → `datasetRefs()`
 - [x] `POST /api/datasets/{namespace}/{repo}/resource-group` → `setDatasetResourceGroup()`
 - [x] `POST /api/datasets/{namespace}/{repo}/scan` → `scanDataset()`
-- [ ] `PUT /api/datasets/{namespace}/{repo}/settings` (implemented via `updateRepoSettings()`)
+- [x] `PUT /api/datasets/{namespace}/{repo}/settings` → `updateRepoSettings()`
 - [x] `POST /api/datasets/{namespace}/{repo}/super-squash/{rev}` → `superSquashDataset()`
 - [x] `POST /api/datasets/{namespace}/{repo}/tag/{rev}` → `createDatasetTag()`
 - [x] `GET /api/datasets/{namespace}/{repo}/tree/{rev}/{path}` → `datasetTree()`
@@ -799,9 +813,9 @@ do {
 - [x] `POST /api/datasets/{namespace}/{repo}/user-access-request/grant` → `grantDatasetAccess()`
 - [x] `POST /api/datasets/{namespace}/{repo}/user-access-request/handle` → `handleDatasetAccessRequest()`
 - [x] `GET /api/datasets/{namespace}/{repo}/user-access-request/{status}` → `listDatasetAccessRequests()`
-- [ ] `GET /api/datasets/{namespace}/{repo}/xet-read-token/{rev}`
+- [ ] `GET /api/datasets/{namespace}/{repo}/xet-read-token/{rev}` (used internally by Xet downloads)
 - [ ] `GET /api/datasets/{namespace}/{repo}/xet-write-token/{rev}`
-- [ ] `GET /datasets/{namespace}/{repo}/resolve/{rev}/{path}`
+- [x] `GET /datasets/{namespace}/{repo}/resolve/{rev}/{path}` → `resolveDatasetFile()`
 - [x] `POST /datasets/{namespace}/{repo}/ask-access` → `requestDatasetAccess()`
 - [x] `GET /datasets/{namespace}/{repo}/user-access-report` → `getDatasetUserAccessReport()`
 
@@ -811,7 +825,9 @@ do {
 - [x] `GET /api/models/{namespace}/{repo}` → `getModel()`
 - [x] `GET /api/models-tags-by-type` → `getModelTags()`
 - [ ] `GET /api/models/{namespace}/{repo}/branch/{rev}`
-- [ ] `POST /api/models/{namespace}/{repo}/commit/{rev}`
+- [x] `POST /api/models/{namespace}/{repo}/branch/{rev}` → `createModelBranch()`
+- [x] `DELETE /api/models/{namespace}/{repo}/branch/{rev}` → `deleteModelBranch()`
+- [x] `POST /api/models/{namespace}/{repo}/commit/{rev}` → `deleteFiles()` (deletions only)
 - [x] `GET /api/models/{namespace}/{repo}/commits/{rev}` → `modelCommits()`
 - [x] `GET /api/models/{namespace}/{repo}/compare/{compare}` → `compareModelRevisions()`
 - [ ] `GET /api/models/{namespace}/{repo}/lfs-files`
@@ -823,7 +839,7 @@ do {
 - [x] `GET /api/models/{namespace}/{repo}/refs` → `modelRefs()`
 - [x] `POST /api/models/{namespace}/{repo}/resource-group` → `setModelResourceGroup()`
 - [x] `POST /api/models/{namespace}/{repo}/scan` → `scanModel()`
-- [ ] `PUT /api/models/{namespace}/{repo}/settings` (implemented via `updateRepoSettings()`)
+- [x] `PUT /api/models/{namespace}/{repo}/settings` → `updateRepoSettings()`
 - [x] `POST /api/models/{namespace}/{repo}/super-squash/{rev}` → `superSquashModel()`
 - [x] `POST /api/models/{namespace}/{repo}/tag/{rev}` → `createModelTag()`
 - [x] `GET /api/models/{namespace}/{repo}/tree/{rev}/{path}` → `modelTree()`
@@ -832,9 +848,9 @@ do {
 - [x] `POST /api/models/{namespace}/{repo}/user-access-request/grant` → `grantModelAccess()`
 - [x] `POST /api/models/{namespace}/{repo}/user-access-request/handle` → `handleModelAccessRequest()`
 - [x] `GET /api/models/{namespace}/{repo}/user-access-request/{status}` → `listModelAccessRequests()`
-- [ ] `GET /api/models/{namespace}/{repo}/xet-read-token/{rev}`
+- [ ] `GET /api/models/{namespace}/{repo}/xet-read-token/{rev}` (used internally by Xet downloads)
 - [ ] `GET /api/models/{namespace}/{repo}/xet-write-token/{rev}`
-- [ ] `GET /{namespace}/{repo}/resolve/{rev}/{path}`
+- [x] `GET /{namespace}/{repo}/resolve/{rev}/{path}` → `resolveModelFile()`
 - [x] `POST /{namespace}/{repo}/ask-access` → `requestModelAccess()`
 - [x] `GET /{namespace}/{repo}/user-access-report` → `getModelUserAccessReport()`
 
@@ -875,7 +891,9 @@ do {
 - [x] `POST /api/spaces/{namespace}/{repo}/sleeptime` → `sleepSpace()`
 - [x] `POST /api/spaces/{namespace}/{repo}/restart` → `restartSpace()`
 - [ ] `GET /api/spaces/{namespace}/{repo}/branch/{rev}`
-- [ ] `POST /api/spaces/{namespace}/{repo}/commit/{rev}`
+- [x] `POST /api/spaces/{namespace}/{repo}/branch/{rev}` → `createSpaceBranch()`
+- [x] `DELETE /api/spaces/{namespace}/{repo}/branch/{rev}` → `deleteSpaceBranch()`
+- [x] `POST /api/spaces/{namespace}/{repo}/commit/{rev}` → `deleteFiles()` (deletions only)
 - [x] `GET /api/spaces/{namespace}/{repo}/commits/{rev}` → `spaceCommits()`
 - [x] `GET /api/spaces/{namespace}/{repo}/compare/{compare}` → `compareSpaceRevisions()`
 - [x] `GET /api/spaces/{namespace}/{repo}/events` → `streamSpaceEvents()`
@@ -892,16 +910,18 @@ do {
 - [x] `POST /api/spaces/{namespace}/{repo}/scan` → `scanSpace()`
 - [ ] `GET /api/spaces/{namespace}/{repo}/secrets`
 - [x] `POST /api/spaces/{namespace}/{repo}/secrets` → `upsertSpaceSecret()`
-- [ ] `PUT /api/spaces/{namespace}/{repo}/settings` (implemented via `updateRepoSettings()`)
+- [x] `DELETE /api/spaces/{namespace}/{repo}/secrets` → `deleteSpaceSecret()`
+- [x] `PUT /api/spaces/{namespace}/{repo}/settings` → `updateRepoSettings()`
 - [x] `POST /api/spaces/{namespace}/{repo}/super-squash/{rev}` → `superSquashSpace()`
 - [x] `POST /api/spaces/{namespace}/{repo}/tag/{rev}` → `createSpaceTag()`
 - [x] `GET /api/spaces/{namespace}/{repo}/tree/{rev}/{path}` → `spaceTree()`
 - [x] `GET /api/spaces/{namespace}/{repo}/treesize/{rev}/{path}` → `spaceTreeSize()`
 - [ ] `GET /api/spaces/{namespace}/{repo}/variables`
 - [x] `POST /api/spaces/{namespace}/{repo}/variables` → `upsertSpaceVariable()`
-- [ ] `GET /api/spaces/{namespace}/{repo}/xet-read-token/{rev}`
+- [x] `DELETE /api/spaces/{namespace}/{repo}/variables` → `deleteSpaceVariable()`
+- [ ] `GET /api/spaces/{namespace}/{repo}/xet-read-token/{rev}` (used internally by Xet downloads)
 - [ ] `GET /api/spaces/{namespace}/{repo}/xet-write-token/{rev}`
-- [ ] `GET /spaces/{namespace}/{repo}/resolve/{rev}/{path}`
+- [x] `GET /spaces/{namespace}/{repo}/resolve/{rev}/{path}` → `resolveSpaceFile()`
 
 ### User
 
