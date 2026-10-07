@@ -64,7 +64,9 @@ extension HubClient {
         do {
             let response: CreateResponse = try await httpClient.fetch(.post, "/api/repos/create", params: params)
             return (url: response.url, repoId: response.repoID)
-        } catch let HTTPClientError.responseError(response, _) where existOk && response.statusCode == 409 {
+        } catch let error as HTTPClientError
+            where existOk && error.code == .responseError && error.statusCode == 409
+        {
             var url = httpClient.host
             if kind != .model {
                 url = url.appending(path: kind.pluralized)
