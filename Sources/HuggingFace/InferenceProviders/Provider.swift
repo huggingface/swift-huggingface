@@ -2,208 +2,209 @@ import Foundation
 
 /// A provider for Hugging Face Inference Providers.
 ///
-/// This enum represents the different inference providers available through the
-/// Hugging Face Inference Providers API. Each provider offers different capabilities
-/// and model support.
+/// Use one of the built-in providers, such as ``groq``,
+/// or ``custom(name:baseURL:)`` for one this package doesn't list yet.
+/// New built-in providers may be added in minor releases.
 ///
 /// - SeeAlso: [Inference Providers Documentation](https://huggingface.co/docs/inference-providers/index)
-public enum Provider: Hashable, Sendable {
+public struct Provider: Hashable, Sendable {
+    /// The identifier used in API requests for this provider.
+    public let identifier: String
+
+    /// The display name for this provider.
+    public let displayName: String
+
+    /// The capabilities supported by this provider.
+    public let capabilities: Set<Capability>
+
+    /// The base URL of a custom provider, if it has one.
+    public let baseURL: URL?
+
+    /// Whether this is a custom provider rather than a built-in one.
+    let isCustom: Bool
+
+    private init(
+        identifier: String,
+        displayName: String,
+        capabilities: Set<Capability>,
+        baseURL: URL? = nil,
+        isCustom: Bool = false
+    ) {
+        self.identifier = identifier
+        self.displayName = displayName
+        self.capabilities = capabilities
+        self.baseURL = baseURL
+        self.isCustom = isCustom
+    }
+
     /// Automatically select the best available provider for the model.
-    case auto
+    public static let auto = Provider(
+        identifier: "auto",
+        displayName: "Auto",
+        capabilities: Set(Capability.allCases)
+    )
 
     // MARK: - Built-in Providers
 
     /// Cerebras provider for high-performance inference.
-    case cerebras
+    public static let cerebras = Provider(
+        identifier: "cerebras",
+        displayName: "Cerebras",
+        capabilities: [.chatCompletion]
+    )
 
     /// Cohere provider for language models and vision-language models.
-    case cohere
+    public static let cohere = Provider(
+        identifier: "cohere",
+        displayName: "Cohere",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Fal AI provider for various AI tasks.
-    case falAI
+    public static let falAI = Provider(
+        identifier: "fal-ai",
+        displayName: "Fal AI",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction]
+    )
 
     /// Featherless AI provider for fast inference.
-    case featherlessAI
+    public static let featherlessAI = Provider(
+        identifier: "featherless-ai",
+        displayName: "Featherless AI",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Fireworks AI provider for language and vision-language models.
-    case fireworks
+    public static let fireworks = Provider(
+        identifier: "fireworks-ai",
+        displayName: "Fireworks AI",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Groq provider for ultra-fast inference.
-    case groq
+    public static let groq = Provider(
+        identifier: "groq",
+        displayName: "Groq",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Hugging Face Inference provider for comprehensive model support.
-    case hfInference
+    public static let hfInference = Provider(
+        identifier: "hf-inference",
+        displayName: "Hugging Face Inference",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction, .textToImage, .textToVideo]
+    )
 
     /// Hyperbolic provider for specialized inference.
-    case hyperbolic
+    public static let hyperbolic = Provider(
+        identifier: "hyperbolic",
+        displayName: "Hyperbolic",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Nebius provider for cloud-based inference.
-    case nebius
+    public static let nebius = Provider(
+        identifier: "nebius",
+        displayName: "Nebius",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction, .textToImage]
+    )
 
     /// Novita provider for various AI tasks.
-    case novita
+    public static let novita = Provider(
+        identifier: "novita",
+        displayName: "Novita",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction]
+    )
 
     /// Nscale provider for scalable inference.
-    case nscale
+    public static let nscale = Provider(
+        identifier: "nscale",
+        displayName: "Nscale",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction]
+    )
 
     /// Public AI provider for open models.
-    case publicAI
+    public static let publicAI = Provider(
+        identifier: "public-ai",
+        displayName: "Public AI",
+        capabilities: [.chatCompletion]
+    )
 
     /// Replicate provider for model hosting and inference.
-    case replicate
+    public static let replicate = Provider(
+        identifier: "replicate",
+        displayName: "Replicate",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction]
+    )
 
     /// SambaNova provider for enterprise-grade inference.
-    case sambaNova
+    public static let sambaNova = Provider(
+        identifier: "sambanova",
+        displayName: "SambaNova",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Scaleway provider for European cloud inference.
-    case scaleway
+    public static let scaleway = Provider(
+        identifier: "scaleway",
+        displayName: "Scaleway",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     /// Together AI provider for various AI tasks.
-    case together
+    public static let together = Provider(
+        identifier: "together",
+        displayName: "Together AI",
+        capabilities: [.chatCompletion, .chatCompletionVLM, .featureExtraction]
+    )
 
     /// Z.ai provider for specialized inference.
-    case zai
+    public static let zai = Provider(
+        identifier: "zai-org",
+        displayName: "Z.ai",
+        capabilities: [.chatCompletion, .chatCompletionVLM]
+    )
 
     // MARK: - Custom Provider
 
     /// A custom provider with a specific name and optional base URL.
     ///
+    /// A custom provider is assumed to support all capabilities.
+    ///
     /// - Parameters:
     ///   - name: The name of the custom provider.
     ///   - baseURL: An optional custom base URL for the provider.
-    case custom(name: String, baseURL: URL? = nil)
-
-    /// The identifier used in API requests for this provider.
-    public var identifier: String {
-        switch self {
-        case .auto:
-            return "auto"
-        case .cerebras:
-            return "cerebras"
-        case .cohere:
-            return "cohere"
-        case .falAI:
-            return "fal-ai"
-        case .featherlessAI:
-            return "featherless-ai"
-        case .fireworks:
-            return "fireworks-ai"
-        case .groq:
-            return "groq"
-        case .hfInference:
-            return "hf-inference"
-        case .hyperbolic:
-            return "hyperbolic"
-        case .nebius:
-            return "nebius"
-        case .novita:
-            return "novita"
-        case .nscale:
-            return "nscale"
-        case .publicAI:
-            return "public-ai"
-        case .replicate:
-            return "replicate"
-        case .sambaNova:
-            return "sambanova"
-        case .scaleway:
-            return "scaleway"
-        case .together:
-            return "together"
-        case .zai:
-            return "zai-org"
-        case .custom(let name, _):
-            return name
-        }
+    public static func custom(name: String, baseURL: URL? = nil) -> Provider {
+        Provider(
+            identifier: name,
+            displayName: name,
+            capabilities: Set(Capability.allCases),
+            baseURL: baseURL,
+            isCustom: true
+        )
     }
 
-    /// The display name for this provider.
-    public var displayName: String {
-        switch self {
-        case .auto:
-            return "Auto"
-        case .cerebras:
-            return "Cerebras"
-        case .cohere:
-            return "Cohere"
-        case .falAI:
-            return "Fal AI"
-        case .featherlessAI:
-            return "Featherless AI"
-        case .fireworks:
-            return "Fireworks AI"
-        case .groq:
-            return "Groq"
-        case .hfInference:
-            return "Hugging Face Inference"
-        case .hyperbolic:
-            return "Hyperbolic"
-        case .nebius:
-            return "Nebius"
-        case .novita:
-            return "Novita"
-        case .nscale:
-            return "Nscale"
-        case .publicAI:
-            return "Public AI"
-        case .replicate:
-            return "Replicate"
-        case .sambaNova:
-            return "SambaNova"
-        case .scaleway:
-            return "Scaleway"
-        case .together:
-            return "Together AI"
-        case .zai:
-            return "Z.ai"
-        case .custom(let name, _):
-            return name
-        }
-    }
-
-    /// The capabilities supported by this provider.
-    public var capabilities: Set<Capability> {
-        switch self {
-        case .auto:
-            return Set(Capability.allCases)
-        case .cerebras:
-            return [.chatCompletion]
-        case .cohere:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .falAI:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction]
-        case .featherlessAI:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .fireworks:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .groq:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .hfInference:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction, .textToImage, .textToVideo]
-        case .hyperbolic:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .nebius:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction, .textToImage]
-        case .novita:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction]
-        case .nscale:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction]
-        case .publicAI:
-            return [.chatCompletion]
-        case .replicate:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction]
-        case .sambaNova:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .scaleway:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .together:
-            return [.chatCompletion, .chatCompletionVLM, .featureExtraction]
-        case .zai:
-            return [.chatCompletion, .chatCompletionVLM]
-        case .custom:
-            return Set(Capability.allCases)  // Assume custom providers support all capabilities
-        }
-    }
+    /// The built-in providers, including ``auto``.
+    static let builtIn: [Provider] = [
+        .auto,
+        .cerebras,
+        .cohere,
+        .falAI,
+        .featherlessAI,
+        .fireworks,
+        .groq,
+        .hfInference,
+        .hyperbolic,
+        .nebius,
+        .novita,
+        .nscale,
+        .publicAI,
+        .replicate,
+        .sambaNova,
+        .scaleway,
+        .together,
+        .zai,
+    ]
 }
 
 // MARK: - Capability
@@ -285,46 +286,7 @@ extension Provider: Codable {
         if let container = try? decoder.singleValueContainer(),
             let identifier = try? container.decode(String.self)
         {
-            switch identifier {
-            case "auto":
-                self = .auto
-            case "cerebras":
-                self = .cerebras
-            case "cohere":
-                self = .cohere
-            case "fal-ai":
-                self = .falAI
-            case "featherless-ai":
-                self = .featherlessAI
-            case "fireworks-ai":
-                self = .fireworks
-            case "groq":
-                self = .groq
-            case "hf-inference":
-                self = .hfInference
-            case "hyperbolic":
-                self = .hyperbolic
-            case "nebius":
-                self = .nebius
-            case "novita":
-                self = .novita
-            case "nscale":
-                self = .nscale
-            case "public-ai":
-                self = .publicAI
-            case "replicate":
-                self = .replicate
-            case "sambanova":
-                self = .sambaNova
-            case "scaleway":
-                self = .scaleway
-            case "together":
-                self = .together
-            case "zai-org":
-                self = .zai
-            default:
-                self = .custom(name: identifier)
-            }
+            self = Self.builtIn.first { $0.identifier == identifier } ?? .custom(name: identifier)
             return
         }
 
@@ -336,13 +298,12 @@ extension Provider: Codable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        switch self {
-        case .custom(let name, let baseURL):
+        if isCustom {
             // For custom providers, encode as a dictionary to preserve baseURL
             var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encode(name, forKey: .name)
+            try container.encode(identifier, forKey: .name)
             try container.encodeIfPresent(baseURL, forKey: .baseURL)
-        default:
+        } else {
             // For built-in providers, encode as a simple string
             var container = encoder.singleValueContainer()
             try container.encode(identifier)
