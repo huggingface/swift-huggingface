@@ -363,7 +363,7 @@ private actor FileLockContext {
 }
 
 /// Errors that can occur during file locking operations.
-public enum FileLockError: Error, LocalizedError, Sendable {
+enum FileLockError: Error, LocalizedError, Sendable {
     /// The lock could not be acquired within the allowed attempts.
     case acquisitionFailed(URL, attempts: Int, totalWaitTime: TimeInterval)
 
@@ -376,7 +376,7 @@ public enum FileLockError: Error, LocalizedError, Sendable {
     /// The filesystem does not support `flock(2)` (`ENOSYS`).
     case notSupported(URL)
 
-    public var errorDescription: String? {
+    var errorDescription: String? {
         switch self {
         case .acquisitionFailed(let path, let attempts, let totalWaitTime):
             "Failed to acquire file lock at \(path.path(percentEncoded: false)) "
