@@ -765,7 +765,8 @@ do {
 
 ##### Buckets
 
-Bucket methods require the `Xet` trait.
+Bucket methods require Xet support:
+the `Xet` trait on Swift 6.1+, or any build on Swift 6.0 (see [Optional Xet trait](#optional-xet-trait)).
 
 - [x] `GET /api/buckets/{namespace}` → `listBuckets()`
 - [x] `POST /api/buckets/{namespace}/{name}` → `createBucket()`
