@@ -9,7 +9,10 @@ for running AI tasks like chat completion, text-to-image generation, and more.
 ## Requirements
 
 - Swift 6.0+
-- macOS 14.0+ / iOS 17.0+ / watchOS 10.0+ / tvOS 17.0+ / visionOS 1.0+ / Linux
+- macOS 13.0+ / Mac Catalyst 16.0+ / iOS 16.0+ / watchOS 9.0+ / tvOS 16.0+ / visionOS 1.0+ / Linux
+
+`HuggingFaceAuthenticationManager`, in the `HuggingFaceOAuth` product,
+requires macOS 14.0+ / Mac Catalyst 17.0+ / iOS 17.0+ / watchOS 10.0+ / tvOS 17.0+.
 
 ## Installation
 
