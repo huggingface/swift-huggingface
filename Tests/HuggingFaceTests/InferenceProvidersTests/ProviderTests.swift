@@ -76,6 +76,34 @@ import Testing
             #expect(string == #""groq""#)
         }
 
+        @Test("Every built-in provider round-trips through its identifier")
+        func testBuiltInProvidersRoundTrip() throws {
+            #expect(Provider.builtIn.count == 18)
+            #expect(Set(Provider.builtIn.map(\.identifier)).count == Provider.builtIn.count)
+            for provider in Provider.builtIn {
+                let data = try JSONEncoder().encode(provider)
+                #expect(String(decoding: data, as: UTF8.self) == "\"\(provider.identifier)\"")
+                #expect(try JSONDecoder().decode(Provider.self, from: data) == provider)
+            }
+        }
+
+        @Test("A custom provider isn't equal to a built-in one with the same identifier")
+        func testCustomIsNotBuiltIn() {
+            #expect(Provider.custom(name: "groq") != .groq)
+            #expect(Provider.custom(name: "groq") == .custom(name: "groq"))
+            #expect(Provider.custom(name: "x", baseURL: URL(string: "https://example.com")) != .custom(name: "x"))
+        }
+
+        @Test("Capabilities encode and decode as their identifiers")
+        func testCapabilityCoding() throws {
+            #expect(Capability.allCases.count == 22)
+            #expect(Set(Capability.allCases.map(\.rawValue)).count == Capability.allCases.count)
+            let data = try JSONEncoder().encode([Capability.textToImage, Capability(rawValue: "image_to_3d")])
+            #expect(String(decoding: data, as: UTF8.self) == #"["text_to_image","image_to_3d"]"#)
+            let decoded = try JSONDecoder().decode([Capability].self, from: data)
+            #expect(decoded == [.textToImage, Capability(rawValue: "image_to_3d")])
+        }
+
         @Test("Encode custom provider as object")
         func testEncodeCustomAsObject() throws {
             let provider = Provider.custom(name: "internal", baseURL: URL(string: "https://example.com")!)
