@@ -26,7 +26,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/mattt/EventSource.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", "1.0.0" ..< "5.0.0"),
-        .package(url: "https://github.com/huggingface/swift-xet.git", from: "0.3.0"),
+        .package(url: "https://github.com/huggingface/swift-xet.git", from: "1.0.0"),
     ],
     targets: [
         .target(
