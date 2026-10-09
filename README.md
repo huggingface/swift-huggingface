@@ -22,7 +22,7 @@ Add the following to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "0.9.0")
+    .package(url: "https://github.com/huggingface/swift-huggingface.git", from: "1.0.0")
 ]
 ```
 
@@ -45,7 +45,7 @@ When declaring `swift-huggingface` as a dependency, enable it explicitly:
 dependencies: [
     .package(
         url: "https://github.com/huggingface/swift-huggingface.git",
-        from: "0.9.0",
+        from: "1.0.0",
         traits: ["Xet"]
     )
 ]
