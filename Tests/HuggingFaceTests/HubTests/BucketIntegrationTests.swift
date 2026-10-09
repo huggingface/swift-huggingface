@@ -34,7 +34,7 @@
 
             let id = Bucket.ID(namespace: "huggingface", name: "skills")
 
-            let info = try await client.bucketInfo(id)
+            let info = try await client.getBucket(id)
             #expect(info.id.namespace == "huggingface")
             #expect(info.id.name == "skills")
             #expect(info.visibility?.isPublic == true)
@@ -76,8 +76,8 @@
                 return
             }
 
-            // Round-trip via bucketInfo to verify the bucket really exists.
-            let info = try? await client.bucketInfo(id)
+            // Round-trip via getBucket to verify the bucket really exists.
+            let info = try? await client.getBucket(id)
             #expect(info != nil)
             #expect(info?.id.name == name)
 

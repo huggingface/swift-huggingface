@@ -70,7 +70,7 @@
         /// - Parameter id: The bucket identifier (`namespace/name`).
         /// - Returns: The bucket's info.
         /// - Throws: An error if the request fails or the bucket is not found.
-        public func bucketInfo(_ id: Bucket.ID) async throws -> Bucket {
+        public func getBucket(_ id: Bucket.ID) async throws -> Bucket {
             try await httpClient.fetch(.get, "/api/buckets/\(id.rawValue)")
         }
 
@@ -175,7 +175,7 @@
         ///   - paths: File paths to look up. Should be ≤ 1000 entries per call;
         ///     callers should batch larger lists themselves.
         /// - Returns: An array of `Bucket.File` entries for the paths that exist.
-        public func getBucketPathsInfo(
+        public func getBucketFiles(
             _ id: Bucket.ID,
             paths: [String]
         ) async throws -> [Bucket.File] {
