@@ -3,6 +3,10 @@
     import Foundation
     import Xet
 
+    #if canImport(FoundationNetworking)
+        import FoundationNetworking
+    #endif
+
     // MARK: - Buckets API
 
     extension HubClient {
