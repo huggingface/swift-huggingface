@@ -770,9 +770,9 @@ the `Xet` trait on Swift 6.1+, or any build on Swift 6.0 (see [Optional Xet trai
 
 - [x] `GET /api/buckets/{namespace}` → `listBuckets()`
 - [x] `POST /api/buckets/{namespace}/{name}` → `createBucket()`
-- [x] `GET /api/buckets/{namespace}/{name}` → `bucketInfo()`
+- [x] `GET /api/buckets/{namespace}/{name}` → `getBucket()`
 - [x] `DELETE /api/buckets/{namespace}/{name}` → `deleteBucket()`
-- [x] `POST /api/buckets/{namespace}/{name}/paths-info` → `getBucketPathsInfo()`
+- [x] `POST /api/buckets/{namespace}/{name}/paths-info` → `getBucketFiles()`
 - [x] `GET /api/buckets/{namespace}/{name}/tree/{path}` → `listBucketTree()`
 - [x] `POST /api/repos/move` → `moveBucket()`
 
