@@ -238,6 +238,12 @@
             #endif
 
             guard let metadata = XetFileMetadata(response: response) else {
+                if let httpResponse = response as? HTTPURLResponse, !(200 ..< 300).contains(httpResponse.statusCode) {
+                    throw HTTPClientError.responseError(
+                        response: httpResponse,
+                        detail: "Bucket file '\(remotePath)' could not be resolved"
+                    )
+                }
                 throw HTTPClientError.requestError(
                     "Bucket file '\(remotePath)' did not return Xet metadata; bucket downloads require Xet."
                 )
