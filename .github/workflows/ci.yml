@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
     name: Swift ${{ matrix.swift }} on macOS ${{ matrix.macos }} with Xcode ${{ matrix.xcode }}${{ matrix.traits != '' && format(' and --traits {0}', matrix.traits) || '' }}
-    runs-on: macos-${{ matrix.macos }}
+    runs-on: ${{ matrix.runner }}
     env:
       DEVELOPER_DIR: "/Applications/Xcode_${{ matrix.xcode }}.app/Contents/Developer"
     strategy:
@@ -37,30 +37,47 @@ jobs:
           - swift: "6.0"
             xcode: "16.0"
             macos: "15"
+            runner: macos-15
             traits: ""
           - swift: "6.1"
             xcode: "16.3"
             macos: "15"
+            runner: macos-15
             traits: ""
           - swift: "6.1"
             xcode: "16.3"
             macos: "15"
+            runner: macos-15
             traits: "Xet"
           - swift: "6.2"
             xcode: "26.3"
             macos: "26"
+            runner: macos-26
             traits: ""
           - swift: "6.2"
             xcode: "26.3"
             macos: "26"
+            runner: macos-26
             traits: "Xet"
           - swift: "6.3"
             xcode: "26.6"
             macos: "26"
+            runner: macos-26
             traits: ""
           - swift: "6.3"
             xcode: "26.6"
             macos: "26"
+            runner: macos-26
+            traits: "Xet"
+          - swift: "6.4"
+            xcode: "27.0"
+            macos: "27"
+            runner: xcode-27
+            traits: ""
+          - swift: "6.4"
+            xcode: "27.0"
+            macos: "27"
+            runner: xcode-27
             traits: "Xet"
     timeout-minutes: 10
     steps:
@@ -104,6 +121,10 @@ jobs:
           - swift: "6.3.3"
             traits: ""
           - swift: "6.3.3"
+            traits: "Xet"
+          - swift: "6.4.0"
+            traits: ""
+          - swift: "6.4.0"
             traits: "Xet"
     timeout-minutes: 10
     steps:
