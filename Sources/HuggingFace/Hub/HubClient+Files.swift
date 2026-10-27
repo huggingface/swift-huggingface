@@ -699,21 +699,25 @@ public extension HubClient {
                         request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
                     }
 
-                    let tempURL: URL
+                    // Stream into the incomplete blob as bytes arrive, so a
+                    // cancellation or a killed process leaves a resumable file.
                     let response: URLResponse
+                    let errorData: Data?
                     do {
-                        #if canImport(FoundationNetworking)
-                            (tempURL, response) = try await session.asyncDownload(for: request, progress: progress)
-                        #else
-                            (tempURL, response) = try await session.hfAsyncDownload(
-                                for: request,
-                                progress: progress,
-                                resumeOffset: resumeOffset
-                            )
-                        #endif
+                        (response, errorData) = try await session.hfStreamingDownload(
+                            for: request,
+                            progress: progress,
+                            resumeOffset: resumeOffset,
+                            targetURL: incompleteBlobPath,
+                            keepPartialFile: true
+                        )
                     } catch {
                         if error is CancellationError {
                             throw error
+                        }
+                        // URLError.cancelled is how URLSession reports cancellation.
+                        if let urlError = error as? URLError, urlError.code == .cancelled {
+                            throw CancellationError()
                         }
                         if let fallback = cache.cachedFilePath(
                             repo: repo,
@@ -735,7 +739,6 @@ public extension HubClient {
                         throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
                     }
                     if httpResponse.statusCode == 416, resumeOffset > 0 {
-                        try? FileManager.default.removeItem(at: tempURL)
                         try? FileManager.default.removeItem(at: incompleteBlobPath)
                         if let progress {
                             progress.completedUnitCount = 0
@@ -743,76 +746,41 @@ public extension HubClient {
                         continue
                     }
                     if !(200 ..< 300).contains(httpResponse.statusCode) {
-                        let errorData = try? Data(contentsOf: tempURL)
-                        try? FileManager.default.removeItem(at: tempURL)
                         _ = try httpClient.validateResponse(response, data: errorData)
                         throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
                     }
 
-                    let shouldMergeResume =
-                        resumeOffset > 0
-                        && httpResponse.statusCode == 206
-                    if resumeOffset > 0, httpResponse.statusCode == 200 {
-                        // Some servers ignore Range and return the full content with 200.
-                        // Treat this as a fresh download to avoid appending full content to a partial file.
-                        try? FileManager.default.removeItem(at: incompleteBlobPath)
-                    }
-
-                    // Persist into cache and resolve via repo-path mapping when possible
-                    // Store in cache before moving to destination.
-                    // This fallback parses metadata from the existing GET response object (no extra request).
+                    // The incomplete blob now holds the complete file: the
+                    // delegate appended on HTTP 206 and restarted on HTTP 200.
+                    var completedURL = incompleteBlobPath
                     let responseMetadata = FileMetadata(response: response)
                     if let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash {
-                        if shouldMergeResume {
-                            do {
-                                let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
-                                try FileManager.default.createDirectory(
-                                    at: blobsDirectory,
-                                    withIntermediateDirectories: true
-                                )
-                                if !FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
-                                    FileManager.default.createFile(atPath: incompleteBlobPath.path, contents: nil)
-                                }
-                                try appendFileContents(from: tempURL, to: incompleteBlobPath)
-                                if FileManager.default.fileExists(atPath: blobPath.path) {
-                                    _ = try FileManager.default.replaceItemAt(blobPath, withItemAt: incompleteBlobPath)
-                                } else {
-                                    try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
-                                }
-                                try? FileManager.default.removeItem(at: tempURL)
-                            } catch {
-                                try? FileManager.default.removeItem(at: incompleteBlobPath)
-                                try? FileManager.default.removeItem(at: tempURL)
-                                throw error
-                            }
-                            try? await cache.storeFile(
-                                at: blobPath,
-                                repo: repo,
-                                kind: kind,
-                                revision: commitHash,
-                                filename: repoPath,
-                                etag: etag,
-                                ref: revision != commitHash ? revision : nil
-                            )
+                        let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
+                        try FileManager.default.createDirectory(
+                            at: blobsDirectory,
+                            withIntermediateDirectories: true
+                        )
+                        if FileManager.default.fileExists(atPath: blobPath.path) {
+                            _ = try FileManager.default.replaceItemAt(blobPath, withItemAt: incompleteBlobPath)
                         } else {
-                            try? await cache.storeFile(
-                                at: tempURL,
-                                repo: repo,
-                                kind: kind,
-                                revision: commitHash,
-                                filename: repoPath,
-                                etag: etag,
-                                ref: revision != commitHash ? revision : nil
-                            )
+                            try FileManager.default.moveItem(at: incompleteBlobPath, to: blobPath)
                         }
+                        completedURL = blobPath
+                        try? await cache.storeFile(
+                            at: blobPath,
+                            repo: repo,
+                            kind: kind,
+                            revision: commitHash,
+                            filename: repoPath,
+                            etag: etag,
+                            ref: revision != commitHash ? revision : nil
+                        )
                         if let cachedPath = cache.cachedFilePath(
                             repo: repo,
                             kind: kind,
                             revision: commitHash,
                             filename: repoPath
                         ) {
-                            // The file was copied into the cache; the download temp file is no longer needed.
-                            try? FileManager.default.removeItem(at: tempURL)
                             return try copyFileToDestinationIfNeeded(
                                 cachedPath,
                                 destination: destination,
@@ -825,38 +793,40 @@ public extension HubClient {
                     guard let destination else {
                         throw HubCacheError.cachedPathResolutionFailed(repoPath)
                     }
-                    // Create parent directory if needed
                     try FileManager.default.createDirectory(
                         at: destination.deletingLastPathComponent(),
                         withIntermediateDirectories: true
                     )
-
-                    // Move from temporary location to final destination
                     try? FileManager.default.removeItem(at: destination)
-                    try FileManager.default.moveItem(at: tempURL, to: destination)
+                    try FileManager.default.moveItem(at: completedURL, to: destination)
 
                     return destination
                 }
             }
         }
 
-        // Generic non-ETag fallback path
-        let resumeOffset: Int64 = 0
-        let tempURL: URL
+        // Generic non-ETag fallback path. Without an etag there is no
+        // resumable identity, so stream into an owned temp file and remove
+        // it on cancellation or error instead of leaking it.
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hf-download-\(UUID().uuidString).tmp")
         let response: URLResponse
+        let errorData: Data?
         do {
-            #if canImport(FoundationNetworking)
-                (tempURL, response) = try await session.asyncDownload(for: baseRequest, progress: progress)
-            #else
-                (tempURL, response) = try await session.hfAsyncDownload(
-                    for: baseRequest,
-                    progress: progress,
-                    resumeOffset: resumeOffset
-                )
-            #endif
+            (response, errorData) = try await session.hfStreamingDownload(
+                for: baseRequest,
+                progress: progress,
+                resumeOffset: 0,
+                targetURL: tempURL,
+                keepPartialFile: false
+            )
         } catch {
+            try? FileManager.default.removeItem(at: tempURL)
             if error is CancellationError {
                 throw error
+            }
+            if let urlError = error as? URLError, urlError.code == .cancelled {
+                throw CancellationError()
             }
             if let cache = cache,
                 let fallback = cache.cachedFilePath(
@@ -871,10 +841,10 @@ public extension HubClient {
             throw error
         }
         guard let httpResponse = response as? HTTPURLResponse else {
+            try? FileManager.default.removeItem(at: tempURL)
             throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
         }
         if !(200 ..< 300).contains(httpResponse.statusCode) {
-            let errorData = try? Data(contentsOf: tempURL)
             try? FileManager.default.removeItem(at: tempURL)
             _ = try httpClient.validateResponse(response, data: errorData)
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
@@ -1049,6 +1019,216 @@ public extension HubClient {
             transport: transport,
             localFilesOnly: localFilesOnly
         )
+    }
+}
+
+// MARK: - Streaming Download
+
+private final class DataTaskBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDataTask?
+    private var isCancelled = false
+
+    func start(_ task: URLSessionDataTask) {
+        lock.lock()
+        self.task = task
+        let cancelled = isCancelled
+        lock.unlock()
+        if cancelled {
+            task.cancel()
+        } else {
+            task.resume()
+        }
+    }
+
+    func cancel() {
+        lock.lock()
+        isCancelled = true
+        let task = task
+        lock.unlock()
+        task?.cancel()
+    }
+}
+
+/// Streams a response body into a file as bytes arrive.
+///
+/// Bytes for a successful (2xx) response are written synchronously in the
+/// data delegate callback, so the file on disk always holds every byte the
+/// session has delivered. A process kill therefore leaves a resumable
+/// partial file, and cancellation leaves the same partial file behind.
+/// Successful responses are appended only when resuming with HTTP 206;
+/// an HTTP 200 reply to a ranged request truncates the file and restarts.
+private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    // Mutable state is confined to the session's serial delegate queue.
+    private let progress: Progress
+    private let resumeOffset: Int64
+    private let targetURL: URL
+    private let keepPartialFile: Bool
+    private let continuation: CheckedContinuation<(URLResponse, Data?), Error>
+    fileprivate weak var session: URLSession?
+    private var hasResumed = false
+    private var response: URLResponse?
+    private var fileHandle: FileHandle?
+    private var errorData = Data()
+    private var writeError: Error?
+    private var effectiveOffset: Int64 = 0
+    private var bytesWritten: Int64 = 0
+    private var isSuccessfulResponse = false
+
+    init(
+        progress: Progress,
+        resumeOffset: Int64,
+        targetURL: URL,
+        keepPartialFile: Bool,
+        continuation: CheckedContinuation<(URLResponse, Data?), Error>
+    ) {
+        self.progress = progress
+        self.resumeOffset = resumeOffset
+        self.targetURL = targetURL
+        self.keepPartialFile = keepPartialFile
+        self.continuation = continuation
+    }
+
+    func urlSession(
+        _: URLSession,
+        dataTask _: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        self.response = response
+        guard let httpResponse = response as? HTTPURLResponse,
+            (200 ..< 300).contains(httpResponse.statusCode)
+        else {
+            completionHandler(.allow)
+            return
+        }
+        isSuccessfulResponse = true
+        do {
+            try FileManager.default.createDirectory(
+                at: targetURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let appending = resumeOffset > 0 && httpResponse.statusCode == 206
+            if appending {
+                if !FileManager.default.fileExists(atPath: targetURL.path) {
+                    FileManager.default.createFile(atPath: targetURL.path, contents: nil)
+                }
+                let handle = try FileHandle(forWritingTo: targetURL)
+                _ = try handle.seekToEnd()
+                fileHandle = handle
+                effectiveOffset = resumeOffset
+            } else {
+                FileManager.default.createFile(atPath: targetURL.path, contents: nil)
+                fileHandle = try FileHandle(forWritingTo: targetURL)
+                effectiveOffset = 0
+            }
+            if response.expectedContentLength > 0 {
+                progress.totalUnitCount = response.expectedContentLength + effectiveOffset
+            }
+            progress.completedUnitCount = effectiveOffset
+        } catch {
+            writeError = error
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard isSuccessfulResponse else {
+            errorData.append(data)
+            return
+        }
+        guard let fileHandle else { return }
+        do {
+            try fileHandle.write(contentsOf: data)
+        } catch {
+            writeError = error
+            dataTask.cancel()
+            return
+        }
+        bytesWritten += Int64(data.count)
+        if progress.totalUnitCount <= 0, let response, response.expectedContentLength > 0 {
+            progress.totalUnitCount = response.expectedContentLength + effectiveOffset
+        }
+        progress.completedUnitCount = effectiveOffset + bytesWritten
+    }
+
+    func urlSession(_: URLSession, task _: URLSessionTask, didCompleteWithError error: Error?) {
+        guard !hasResumed else { return }
+        hasResumed = true
+        try? fileHandle?.close()
+        fileHandle = nil
+        session?.invalidateAndCancel()
+        if let writeError {
+            if !keepPartialFile {
+                try? FileManager.default.removeItem(at: targetURL)
+            }
+            continuation.resume(throwing: writeError)
+            return
+        }
+        if let error {
+            if !keepPartialFile {
+                try? FileManager.default.removeItem(at: targetURL)
+            }
+            continuation.resume(throwing: error)
+            return
+        }
+        guard let response else {
+            if !keepPartialFile {
+                try? FileManager.default.removeItem(at: targetURL)
+            }
+            continuation.resume(throwing: URLError(.badServerResponse))
+            return
+        }
+        if isSuccessfulResponse {
+            progress.totalUnitCount = max(effectiveOffset + bytesWritten, 1)
+            progress.completedUnitCount = progress.totalUnitCount
+            continuation.resume(returning: (response, nil))
+        } else {
+            continuation.resume(returning: (response, errorData))
+        }
+    }
+}
+
+extension URLSession {
+    /// Downloads `request`, streaming the body into `targetURL` as bytes arrive.
+    ///
+    /// - Parameters:
+    ///   - targetURL: File that receives a successful response body.
+    ///   - keepPartialFile: When `true`, bytes written before an error or
+    ///     cancellation stay in `targetURL` for a later ranged resume.
+    ///     When `false`, `targetURL` is removed on error or cancellation.
+    /// - Returns: The response and, for a non-2xx response, its body data.
+    func hfStreamingDownload(
+        for request: URLRequest,
+        progress: Progress? = nil,
+        resumeOffset: Int64 = 0,
+        targetURL: URL,
+        keepPartialFile: Bool
+    ) async throws -> (URLResponse, Data?) {
+        let box = DataTaskBox()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let delegate = StreamingDownloadDelegate(
+                    progress: progress ?? Progress(totalUnitCount: 0),
+                    resumeOffset: resumeOffset,
+                    targetURL: targetURL,
+                    keepPartialFile: keepPartialFile,
+                    continuation: continuation
+                )
+                let session = URLSession(
+                    configuration: configuration,
+                    delegate: delegate,
+                    delegateQueue: nil
+                )
+                delegate.session = session
+                let task = session.dataTask(with: request)
+                box.start(task)
+            }
+        } onCancel: {
+            box.cancel()
+        }
     }
 }
 
@@ -2210,27 +2390,6 @@ private extension HubClient {
             return String(filePath.dropFirst(basePathWithSlash.count))
         }
         return url.lastPathComponent
-    }
-
-    /// Appends source file bytes to destination file.
-    func appendFileContents(from source: URL, to destination: URL) throws {
-        let sourceHandle = try FileHandle(forReadingFrom: source)
-        let destinationHandle = try FileHandle(forWritingTo: destination)
-        defer {
-            try? sourceHandle.close()
-            try? destinationHandle.close()
-        }
-
-        _ = try destinationHandle.seekToEnd()
-
-        let chunkSize = 64 * 1024
-        while true {
-            let chunk = try sourceHandle.read(upToCount: chunkSize) ?? Data()
-            if chunk.isEmpty {
-                break
-            }
-            try destinationHandle.write(contentsOf: chunk)
-        }
     }
 
     /// Downloads file data using Xet's content-addressable storage system.
