@@ -84,6 +84,16 @@
             return downloadTempFiles().subtracting(before)
         }
 
+        private func seedPartial(_ data: Data, cache: HubCache) throws -> URL {
+            let incomplete = try cache.incompleteBlobPath(repo: "test/model", kind: .model, etag: "weights")
+            try FileManager.default.createDirectory(
+                at: incomplete.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: incomplete)
+            return incomplete
+        }
+
         /// Starts a download against a slow server, cancels it partway, and
         /// returns the size of the incomplete blob the cancellation left.
         private func cancelPartway(
@@ -108,7 +118,7 @@
                 _ = try await download.value
                 Issue.record("Canceled download succeeded")
             } catch {
-                #expect(error is CancellationError || (error as? URLError)?.code == .cancelled)
+                #expect(error is CancellationError)
             }
             let incomplete = try cache.incompleteBlobPath(repo: "test/model", kind: .model, etag: "weights")
             #expect(FileManager.default.fileExists(atPath: incomplete.path))
@@ -132,7 +142,8 @@
                     return .init(
                         headers: ["ETag": "weights", "X-Repo-Commit": commit],
                         body: Data(),
-                        delay: 0
+                        delay: 0,
+                        declaredSize: body.count
                     )
                 }
                 if honorRange, let offset = RequestLog.rangeOffset(in: request), offset > 0, offset < body.count {
@@ -209,6 +220,309 @@
             )
             #expect(log.rangeOffsets().contains(128 * 1024))
             #expect(try Data(contentsOf: file) == pattern(fullSize))
+        }
+
+        @Test(
+            "Invalid resumed ranges restart from zero",
+            arguments: [
+                "missing", "bytes 0-511/512", "bytes 128-127/512", "bytes 128-512/512", "bytes 128-511/*",
+            ]
+        )
+        func invalidRangeRestarts(contentRange: String) async throws {
+            let body = pattern(512)
+            let log = RequestLog()
+            let server = try SlowDownloadServer { [commit] request in
+                log.append(request)
+                if request.hasPrefix("HEAD ") {
+                    return .init(
+                        headers: ["ETag": "weights", "X-Repo-Commit": commit],
+                        body: Data(),
+                        delay: 0,
+                        declaredSize: body.count
+                    )
+                }
+                if RequestLog.rangeOffset(in: request) != nil {
+                    return .init(
+                        status: 206,
+                        headers: contentRange == "missing" ? [:] : ["Content-Range": contentRange],
+                        body: body,
+                        delay: 0
+                    )
+                }
+                return .init(body: body, delay: 0)
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            let incomplete = try seedPartial(Data(repeating: 0xFF, count: 128), cache: cache)
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                transport: .lfs
+            )
+            #expect(log.rangeOffsets() == [128])
+            #expect(log.requests.filter { $0.hasPrefix("GET ") }.count == 2)
+            #expect(try Data(contentsOf: file) == body)
+            #expect(!FileManager.default.fileExists(atPath: incomplete.path))
+        }
+
+        @Test(
+            "Short or changed files are never published",
+            arguments: ["shortRange", "shortRangeWithoutHeadSize", "shortRangeBody", "changedTotal", "shortBody"]
+        )
+        func invalidSizeIsNotPublished(mode: String) async throws {
+            let body = pattern(512)
+            let server = try SlowDownloadServer { [commit] request in
+                if request.hasPrefix("HEAD ") {
+                    return .init(
+                        headers: ["ETag": "weights", "X-Repo-Commit": commit],
+                        body: Data(),
+                        delay: 0,
+                        declaredSize: body.count,
+                        includesLength: mode != "shortRangeWithoutHeadSize"
+                    )
+                }
+                if mode == "shortBody" {
+                    return .init(body: Data(body.prefix(256)), delay: 0)
+                }
+                return .init(
+                    status: 206,
+                    headers: [
+                        "Content-Range": mode == "changedTotal"
+                            ? "bytes 128-255/256"
+                            : (mode == "shortRangeBody" ? "bytes 128-511/512" : "bytes 128-255/512")
+                    ],
+                    body: body.subdata(in: 128 ..< 256),
+                    delay: 0
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            let incomplete = try seedPartial(Data(body.prefix(128)), cache: cache)
+            let progress = Progress(totalUnitCount: 0)
+            await #expect(throws: StreamingDownloadError.sizeMismatch) {
+                try await client(host: host, cache: cache).downloadFile(
+                    at: "weights.bin",
+                    from: "test/model",
+                    progress: progress,
+                    transport: .lfs
+                )
+            }
+            let blob = try cache.blobPath(repo: "test/model", kind: .model, etag: "weights")
+            #expect(!FileManager.default.fileExists(atPath: blob.path))
+            #expect(!FileManager.default.fileExists(atPath: incomplete.path))
+            #expect(
+                cache.cachedFilePath(repo: "test/model", kind: .model, revision: "main", filename: "weights.bin") == nil
+            )
+            #expect(!progress.isFinished)
+        }
+
+        @Test("GET uses the preflight commit when the branch changes")
+        func movingRevisionIsPinned() async throws {
+            let body = pattern(512)
+            let log = RequestLog()
+            let server = try SlowDownloadServer { [commit] request in
+                log.append(request)
+                if request.hasPrefix("HEAD ") {
+                    return .init(
+                        headers: ["ETag": "weights", "X-Repo-Commit": commit],
+                        body: Data(),
+                        delay: 0,
+                        declaredSize: body.count
+                    )
+                }
+                let pinned = request.hasPrefix("GET /test/model/resolve/\(commit)/weights.bin ")
+                let bytes = pinned ? body : Data(repeating: 0xFF, count: body.count)
+                return .init(
+                    status: 206,
+                    headers: ["ETag": pinned ? "weights" : "changed", "Content-Range": "bytes 128-511/512"],
+                    body: bytes.subdata(in: 128 ..< 512),
+                    delay: 0
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            _ = try seedPartial(Data(body.prefix(128)), cache: cache)
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                transport: .lfs
+            )
+            #expect(try Data(contentsOf: file) == body)
+            #expect(log.requests.contains { $0.hasPrefix("HEAD /test/model/resolve/main/weights.bin ") })
+            #expect(log.requests.contains { $0.hasPrefix("GET /test/model/resolve/\(commit)/weights.bin ") })
+            #expect(log.requests.contains { $0.lowercased().contains("if-range: \"weights\"") })
+        }
+
+        @Test("Changed response identity discards the partial file and retries", arguments: ["etag", "commit"])
+        func identityMismatchRestarts(field: String) async throws {
+            let body = pattern(512)
+            let log = RequestLog()
+            let server = try SlowDownloadServer { [commit] request in
+                log.append(request)
+                if request.hasPrefix("HEAD ") {
+                    return .init(
+                        headers: ["ETag": "weights", "X-Repo-Commit": commit],
+                        body: Data(),
+                        delay: 0,
+                        declaredSize: body.count
+                    )
+                }
+                if RequestLog.rangeOffset(in: request) != nil {
+                    return .init(
+                        status: 206,
+                        headers: [
+                            "ETag": field == "etag" ? "changed" : "weights",
+                            "X-Repo-Commit": field == "commit" ? String(repeating: "a", count: 40) : commit,
+                            "Content-Range": "bytes 128-511/512",
+                        ],
+                        body: Data(repeating: 0xFF, count: 384),
+                        delay: 0
+                    )
+                }
+                return .init(headers: ["ETag": "weights", "X-Repo-Commit": commit], body: body, delay: 0)
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            _ = try seedPartial(Data(repeating: 0xEE, count: 128), cache: cache)
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                transport: .lfs
+            )
+            #expect(try Data(contentsOf: file) == body)
+            #expect(log.requests.filter { $0.hasPrefix("GET ") }.count == 2)
+            #expect(log.rangeOffsets() == [128])
+        }
+
+        @Test("Persistent identity mismatch fails without caching changed bytes", arguments: [false, true])
+        func persistentIdentityMismatchFails(redirect: Bool) async throws {
+            let server = try SlowDownloadServer { [commit] request in
+                .init(
+                    status: redirect ? 302 : 200,
+                    headers: [
+                        redirect ? "X-Linked-Etag" : "ETag": request.hasPrefix("HEAD ") ? "weights" : "changed",
+                        "X-Repo-Commit": commit,
+                        "X-Linked-Size": "512",
+                        "Location": "http://localhost:1/should-not-be-requested",
+                    ],
+                    body: request.hasPrefix("HEAD ") ? Data() : Data(repeating: 0xFF, count: 512),
+                    delay: 0,
+                    declaredSize: 512
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            let incomplete = try seedPartial(pattern(128), cache: cache)
+            await #expect(throws: StreamingDownloadError.identityMismatch) {
+                try await client(host: host, cache: cache).downloadFile(
+                    at: "weights.bin",
+                    from: "test/model",
+                    transport: .lfs
+                )
+            }
+            let blob = try cache.blobPath(repo: "test/model", kind: .model, etag: "weights")
+            #expect(!FileManager.default.fileExists(atPath: blob.path))
+            #expect(!FileManager.default.fileExists(atPath: incomplete.path))
+        }
+
+        @Test("CDN redirects retain the Hub size and tolerate different CDN ETags", arguments: [false, true])
+        func cdnRedirect(linked: Bool) async throws {
+            let body = pattern(512)
+            let cdn = try SlowDownloadServer { request in
+                #expect(!request.lowercased().contains("if-range:"))
+                #expect(RequestLog.rangeOffset(in: request) == 128)
+                return .init(
+                    status: 206,
+                    headers: ["ETag": "opaque-cdn-validator", "Content-Range": "bytes 128-511/512"],
+                    body: body.subdata(in: 128 ..< 512),
+                    delay: 0
+                )
+            }
+            let cdnHost = try await cdn.start()
+            defer { cdn.stop() }
+            let location = cdnHost.absoluteString.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "/file"
+            let server = try SlowDownloadServer { [commit] request in
+                if request.hasPrefix("GET ") {
+                    #expect(request.contains("/resolve/\(commit)/"))
+                }
+                var headers = ["Location": location, "X-Repo-Commit": commit]
+                headers[linked ? "X-Linked-Etag" : "ETag"] = "weights"
+                headers["X-Linked-Size"] = "512"
+                return .init(status: 302, headers: headers, body: Data(), delay: 0)
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            _ = try seedPartial(Data(body.prefix(128)), cache: cache)
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                transport: .lfs
+            )
+            #expect(try Data(contentsOf: file) == body)
+        }
+
+        @Test("A CDN response without a pinned or comparable identity restarts from zero")
+        func unverifiedCdnResumeRestarts() async throws {
+            let body = pattern(512)
+            let log = RequestLog()
+            let cdn = try SlowDownloadServer { [commit] request in
+                log.append(request)
+                if RequestLog.rangeOffset(in: request) != nil {
+                    return .init(
+                        status: 206,
+                        headers: ["Content-Range": "bytes 128-511/512", "ETag": "opaque-cdn-validator"],
+                        body: Data(repeating: 0xFF, count: 384),
+                        delay: 0
+                    )
+                }
+                return .init(headers: ["ETag": "opaque-cdn-validator", "X-Repo-Commit": commit], body: body, delay: 0)
+            }
+            let cdnHost = try await cdn.start()
+            defer { cdn.stop() }
+            let location = cdnHost.absoluteString.replacingOccurrences(of: "127.0.0.1", with: "localhost") + "/file"
+            let server = try SlowDownloadServer { _ in
+                .init(
+                    status: 302,
+                    headers: ["Location": location, "X-Linked-Etag": "weights", "X-Linked-Size": "512"],
+                    body: Data(),
+                    delay: 0
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            _ = try seedPartial(Data(repeating: 0xEE, count: 128), cache: cache)
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                to: directory.appendingPathComponent("weights.bin"),
+                transport: .lfs
+            )
+            #expect(try Data(contentsOf: file) == body)
+            #expect(log.rangeOffsets() == [128])
+            #expect(log.requests.count == 2)
+            let blob = try cache.blobPath(repo: "test/model", kind: .model, etag: "weights")
+            #expect(!FileManager.default.fileExists(atPath: blob.path))
         }
 
         @Test("Cancellation leaves no temporary download file behind")

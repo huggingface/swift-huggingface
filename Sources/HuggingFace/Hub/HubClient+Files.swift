@@ -356,7 +356,7 @@ public extension HubClient {
 // MARK: - Download Operations
 
 /// Metadata associated with a Hub file response.
-private struct FileMetadata: Sendable {
+struct FileMetadata: Sendable {
     /// The repository commit hash from the `X-Repo-Commit` header.
     let commitHash: String?
 
@@ -366,22 +366,15 @@ private struct FileMetadata: Sendable {
     /// The normalized ETag used for cache storage.
     let normalizedEtag: String?
 
-    /// Creates file metadata from response header values.
-    ///
-    /// - Parameters:
-    ///   - commitHash: The repository commit hash, if provided.
-    ///   - etag: The normalized ETag value, if provided.
-    init(commitHash: String?, etag: String?) {
-        self.commitHash = commitHash
-        self.etag = etag
-        normalizedEtag = etag.map(Self.normalizeEtag)
-    }
+    /// Expected file size, before a redirect or a ranged response.
+    let size: Int64?
+    let url: URL?
+    let usesLinkedEtag: Bool
 
     /// Creates file metadata from an HTTP response.
     ///
     /// - Parameter response: The response to parse.
-    /// - Returns: `nil` when the response is not an HTTP response,
-    ///            or when it does not contain either metadata header.
+    /// - Returns: `nil` when the response is not an HTTP response.
     init?(response: URLResponse) {
         guard let httpResponse = response as? HTTPURLResponse else {
             return nil
@@ -390,11 +383,45 @@ private struct FileMetadata: Sendable {
         let linkedEtag = httpResponse.value(forHTTPHeaderField: "X-Linked-Etag")
         let etag = linkedEtag ?? httpResponse.value(forHTTPHeaderField: "ETag")
         let commitHash = httpResponse.value(forHTTPHeaderField: "X-Repo-Commit")
-        guard commitHash != nil || etag != nil else {
-            return nil
-        }
+        self.commitHash = commitHash
+        self.etag = etag
+        normalizedEtag = etag.map(Self.normalizeEtag)
+        let sizeHeader =
+            httpResponse.value(forHTTPHeaderField: "X-Linked-Size")
+            ?? ((200 ..< 300).contains(httpResponse.statusCode)
+                ? httpResponse.value(forHTTPHeaderField: "Content-Length") : nil)
+        size = sizeHeader.flatMap(Int64.init).flatMap { $0 >= 0 ? $0 : nil }
+        url = response.url
+        usesLinkedEtag = linkedEtag != nil
+    }
 
-        self.init(commitHash: commitHash, etag: etag)
+    /// CDN ETags can use a different identity scheme from Hub blob ETags.
+    func matches(_ response: HTTPURLResponse) -> Bool {
+        guard let other = FileMetadata(response: response) else { return true }
+        if let commitHash, let otherCommit = other.commitHash, commitHash != otherCommit {
+            return false
+        }
+        let sameOrigin =
+            url?.scheme == response.url?.scheme
+            && url?.host == response.url?.host && url?.port == response.url?.port
+        if let normalizedEtag, let otherEtag = other.normalizedEtag,
+            other.usesLinkedEtag || (sameOrigin && !usesLinkedEtag)
+        {
+            return normalizedEtag == otherEtag
+        }
+        return true
+    }
+
+    /// Resuming needs a pinned commit, a comparable response identity, or If-Range.
+    func allowsResume(from response: HTTPURLResponse) -> Bool {
+        if commitHash != nil { return true }
+        guard let other = FileMetadata(response: response) else { return false }
+        if other.usesLinkedEtag, let normalizedEtag, other.normalizedEtag == normalizedEtag {
+            return true
+        }
+        return !usesLinkedEtag && etag?.hasPrefix("W/") == false
+            && url?.scheme == response.url?.scheme
+            && url?.host == response.url?.host && url?.port == response.url?.port
     }
 
     private static func normalizeEtag(_ etag: String) -> String {
@@ -625,9 +652,17 @@ public extension HubClient {
                 nil
             }
 
-        // GET request for the actual file bytes
-        var baseRequest = try await httpClient.createRequest(.get, url: url)
+        // Pin mutable revisions to the commit observed by the preflight.
+        let downloadURL =
+            preflightMetadata?.commitHash.map {
+                repositoryURL(repo, kind: kind)
+                    .appending(path: endpoint.rawValue)
+                    .appending(component: $0)
+                    .appending(path: repoPath)
+            } ?? url
+        var baseRequest = try await httpClient.createRequest(.get, url: downloadURL)
         baseRequest.cachePolicy = cachePolicy
+        baseRequest.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
 
         // ETag-aware cache flow guarded by a file lock to serialize blob writes
         if let cache, let etag = preflightMetadata?.normalizedEtag {
@@ -691,12 +726,20 @@ public extension HubClient {
                     )
                 }
 
-                // Download or resume into incomplete blob until success
+                // Download or resume into incomplete blob until success.
+                var didRestart = false
                 while true {
                     var request = baseRequest
                     let resumeOffset = fileSizeIfExists(at: incompleteBlobPath)
                     if resumeOffset > 0 {
                         request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+                        // A linked Hub ETag is not necessarily a CDN HTTP validator.
+                        if let metadata = preflightMetadata, !metadata.usesLinkedEtag,
+                            let etag = metadata.etag, !etag.hasPrefix("W/")
+                        {
+                            let validator = etag.hasPrefix("\"") ? etag : "\"\(etag)\""
+                            request.setValue(validator, forHTTPHeaderField: "If-Range")
+                        }
                     }
 
                     // Stream into the incomplete blob as bytes arrive, so a
@@ -709,9 +752,20 @@ public extension HubClient {
                             progress: progress,
                             resumeOffset: resumeOffset,
                             targetURL: incompleteBlobPath,
-                            keepPartialFile: true
+                            keepPartialFile: true,
+                            metadata: preflightMetadata
                         )
                     } catch {
+                        if let validationError = error as? StreamingDownloadError {
+                            if FileManager.default.fileExists(atPath: incompleteBlobPath.path) {
+                                try FileManager.default.removeItem(at: incompleteBlobPath)
+                            }
+                            if resumeOffset > 0, !didRestart, validationError != .sizeMismatch {
+                                didRestart = true
+                                progress?.completedUnitCount = 0
+                                continue
+                            }
+                        }
                         if error is CancellationError {
                             throw error
                         }
@@ -738,8 +792,9 @@ public extension HubClient {
                     guard let httpResponse = response as? HTTPURLResponse else {
                         throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
                     }
-                    if httpResponse.statusCode == 416, resumeOffset > 0 {
-                        try? FileManager.default.removeItem(at: incompleteBlobPath)
+                    if httpResponse.statusCode == 416, resumeOffset > 0, !didRestart {
+                        try FileManager.default.removeItem(at: incompleteBlobPath)
+                        didRestart = true
                         if let progress {
                             progress.completedUnitCount = 0
                         }
@@ -750,11 +805,24 @@ public extension HubClient {
                         throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
                     }
 
-                    // The incomplete blob now holds the complete file: the
-                    // delegate appended on HTTP 206 and restarted on HTTP 200.
+                    // Check the on-disk size before publishing the validated response.
+                    let expectedSize =
+                        preflightMetadata?.size
+                        ?? DownloadContentRange(httpResponse.value(forHTTPHeaderField: "Content-Range"))?.total
+                        ?? FileMetadata(response: response)?.size
+                    if let expectedSize,
+                        fileSizeIfExists(at: incompleteBlobPath) != expectedSize
+                    {
+                        try? FileManager.default.removeItem(at: incompleteBlobPath)
+                        throw StreamingDownloadError.sizeMismatch
+                    }
                     var completedURL = incompleteBlobPath
                     let responseMetadata = FileMetadata(response: response)
-                    if let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash {
+                    // Without a pinned commit, require a matching response ETag
+                    // before associating these bytes with the preflight blob.
+                    if let commitHash = preflightMetadata?.commitHash ?? responseMetadata?.commitHash,
+                        preflightMetadata?.commitHash != nil || responseMetadata?.normalizedEtag == etag
+                    {
                         let blobsDirectory = cache.blobsDirectory(repo: repo, kind: kind)
                         try FileManager.default.createDirectory(
                             at: blobsDirectory,
@@ -818,7 +886,8 @@ public extension HubClient {
                 progress: progress,
                 resumeOffset: 0,
                 targetURL: tempURL,
-                keepPartialFile: false
+                keepPartialFile: false,
+                metadata: preflightMetadata
             )
         } catch {
             try? FileManager.default.removeItem(at: tempURL)
@@ -1024,6 +1093,32 @@ public extension HubClient {
 
 // MARK: - Streaming Download
 
+enum StreamingDownloadError: Error {
+    case invalidRange
+    case identityMismatch
+    case sizeMismatch
+}
+
+/// A single, complete byte range with a known total size.
+private struct DownloadContentRange {
+    let start: Int64
+    let end: Int64
+    let total: Int64
+
+    init?(_ value: String?) {
+        guard let value, value.hasPrefix("bytes ") else { return nil }
+        let parts = value.dropFirst(6).split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 2, let total = Int64(parts[1]) else { return nil }
+        let bounds = parts[0].split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 2, let start = Int64(bounds[0]), let end = Int64(bounds[1]),
+            start >= 0, end >= start, total > end
+        else { return nil }
+        self.start = start
+        self.end = end
+        self.total = total
+    }
+}
+
 private final class DataTaskBox: @unchecked Sendable {
     private let lock = NSLock()
     private var task: URLSessionDataTask?
@@ -1056,14 +1151,17 @@ private final class DataTaskBox: @unchecked Sendable {
 /// data delegate callback, so the file on disk always holds every byte the
 /// session has delivered. A process kill therefore leaves a resumable
 /// partial file, and cancellation leaves the same partial file behind.
-/// Successful responses are appended only when resuming with HTTP 206;
-/// an HTTP 200 reply to a ranged request truncates the file and restarts.
+/// Successful responses are appended only when HTTP 206 identifies the requested
+/// offset and passes the metadata checks. HTTP 200 truncates the file and restarts.
 private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     // Mutable state is confined to the session's serial delegate queue.
     private let progress: Progress
     private let resumeOffset: Int64
     private let targetURL: URL
     private let keepPartialFile: Bool
+    private let metadata: FileMetadata?
+    private var expectedSize: Int64?
+    private var expectedBodySize: Int64?
     private let continuation: CheckedContinuation<(URLResponse, Data?), Error>
     fileprivate weak var session: URLSession?
     private var hasResumed = false
@@ -1080,13 +1178,37 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate,
         resumeOffset: Int64,
         targetURL: URL,
         keepPartialFile: Bool,
+        metadata: FileMetadata?,
         continuation: CheckedContinuation<(URLResponse, Data?), Error>
     ) {
         self.progress = progress
         self.resumeOffset = resumeOffset
         self.targetURL = targetURL
         self.keepPartialFile = keepPartialFile
+        self.metadata = metadata
+        self.expectedSize = metadata?.size
         self.continuation = continuation
+    }
+
+    func urlSession(
+        _: URLSession,
+        task _: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard metadata?.matches(response) != false else {
+            writeError = StreamingDownloadError.identityMismatch
+            completionHandler(nil)
+            return
+        }
+        var request = request
+        if response.url?.scheme != request.url?.scheme
+            || response.url?.host != request.url?.host || response.url?.port != request.url?.port
+        {
+            request.setValue(nil, forHTTPHeaderField: "If-Range")
+        }
+        completionHandler(request)
     }
 
     func urlSession(
@@ -1104,6 +1226,25 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate,
         }
         isSuccessfulResponse = true
         do {
+            guard metadata?.matches(httpResponse) != false else {
+                throw StreamingDownloadError.identityMismatch
+            }
+            if httpResponse.statusCode == 206 {
+                if resumeOffset > 0, metadata?.allowsResume(from: httpResponse) == false {
+                    throw StreamingDownloadError.identityMismatch
+                }
+                guard let range = DownloadContentRange(httpResponse.value(forHTTPHeaderField: "Content-Range")),
+                    range.start == resumeOffset
+                else { throw StreamingDownloadError.invalidRange }
+                if let expectedSize, expectedSize != range.total {
+                    throw StreamingDownloadError.sizeMismatch
+                }
+                expectedSize = range.total
+                expectedBodySize = range.end - range.start + 1
+            } else {
+                expectedBodySize = response.expectedContentLength >= 0 ? response.expectedContentLength : nil
+                if expectedSize == nil { expectedSize = expectedBodySize }
+            }
             try FileManager.default.createDirectory(
                 at: targetURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -1122,8 +1263,8 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate,
                 fileHandle = try FileHandle(forWritingTo: targetURL)
                 effectiveOffset = 0
             }
-            if response.expectedContentLength > 0 {
-                progress.totalUnitCount = response.expectedContentLength + effectiveOffset
+            if let expectedSize {
+                progress.totalUnitCount = expectedSize
             }
             progress.completedUnitCount = effectiveOffset
         } catch {
@@ -1182,6 +1323,13 @@ private final class StreamingDownloadDelegate: NSObject, URLSessionDataDelegate,
             return
         }
         if isSuccessfulResponse {
+            if (expectedBodySize != nil && expectedBodySize != bytesWritten)
+                || (expectedSize != nil && expectedSize != effectiveOffset + bytesWritten)
+            {
+                try? FileManager.default.removeItem(at: targetURL)
+                continuation.resume(throwing: StreamingDownloadError.sizeMismatch)
+                return
+            }
             progress.totalUnitCount = max(effectiveOffset + bytesWritten, 1)
             progress.completedUnitCount = progress.totalUnitCount
             continuation.resume(returning: (response, nil))
@@ -1205,7 +1353,8 @@ extension URLSession {
         progress: Progress? = nil,
         resumeOffset: Int64 = 0,
         targetURL: URL,
-        keepPartialFile: Bool
+        keepPartialFile: Bool,
+        metadata: FileMetadata? = nil
     ) async throws -> (URLResponse, Data?) {
         let box = DataTaskBox()
         return try await withTaskCancellationHandler {
@@ -1215,6 +1364,7 @@ extension URLSession {
                     resumeOffset: resumeOffset,
                     targetURL: targetURL,
                     keepPartialFile: keepPartialFile,
+                    metadata: metadata,
                     continuation: continuation
                 )
                 let session = URLSession(
@@ -2524,6 +2674,9 @@ private extension HubClient {
         #else
             let (_, response) = try await session.data(for: request, delegate: SameHostRedirectDelegate.shared)
         #endif
+        guard let httpResponse = response as? HTTPURLResponse,
+            (200 ..< 400).contains(httpResponse.statusCode)
+        else { return nil }
         return FileMetadata(response: response)
     }
 

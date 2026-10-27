@@ -94,7 +94,9 @@ import HuggingFace
                 status = 200
                 headers["Content-Type"] = "application/json"
                 body = Data(#"[{"path": "config.json", "type": "file", "oid": "abc", "size": 11}]"#.utf8)
-            } else if url.path == "/user/model/resolve/main/config.json" {
+            } else if url.path
+                == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : "1234567890123456789012345678901234567890")/config.json"
+            {
                 status = 200
                 if request.httpMethod == "HEAD" {
                     headers["ETag"] = "\"etag-config\""
