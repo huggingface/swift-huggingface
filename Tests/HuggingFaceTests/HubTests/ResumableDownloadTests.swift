@@ -47,7 +47,7 @@
             return directory
         }
 
-        private func client(host: URL, cache: HubCache) -> HubClient {
+        private func client(host: URL, cache: HubCache? = nil) -> HubClient {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 10
             return HubClient(
@@ -66,22 +66,6 @@
                 try await Task.sleep(for: .milliseconds(20))
             }
             Issue.record("No intermediate progress: \(progress.completedUnitCount)/\(progress.totalUnitCount)")
-        }
-
-        private func downloadTempFiles() -> Set<String> {
-            let contents =
-                (try? FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path))
-                ?? []
-            return Set(contents.filter { $0.hasPrefix("CFNetworkDownload_") || $0.hasPrefix("hf-download-") })
-        }
-
-        private func newDownloadTempFiles(since before: Set<String>) async -> Set<String> {
-            for _ in 0 ..< 20 {
-                let new = downloadTempFiles().subtracting(before)
-                if new.isEmpty { return new }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-            return downloadTempFiles().subtracting(before)
         }
 
         private func seedPartial(_ data: Data, cache: HubCache) throws -> URL {
@@ -525,19 +509,71 @@
             #expect(!FileManager.default.fileExists(atPath: blob.path))
         }
 
-        @Test("Cancellation leaves no temporary download file behind")
-        func cancellationLeavesNoTempFile() async throws {
-            let log = RequestLog()
-            let server = try makeServer(log: log, honorRange: true)
+        @Test("No-etag cancellation removes the operation's temporary file")
+        func noEtagCancellationCleansUp() async throws {
+            let server = try SlowDownloadServer()
             let host = try await server.start()
             defer { server.stop() }
             let directory = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
-            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
-            let before = downloadTempFiles()
-            _ = try await cancelPartway(host: host, cache: cache, directory: directory)
-            let leaked = await newDownloadTempFiles(since: before)
-            #expect(leaked.isEmpty, "Leaked download temp files: \(leaked)")
+            let tempDirectory = directory.appendingPathComponent("temporary")
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+            try await HubClient.$downloadTemporaryDirectory.withValue(tempDirectory) {
+                let progress = Progress(totalUnitCount: 0)
+                let download = Task {
+                    try await client(host: host).downloadFile(
+                        at: "weights.bin",
+                        from: "test/model",
+                        to: directory.appendingPathComponent("weights.bin"),
+                        progress: progress,
+                        transport: .lfs
+                    )
+                }
+                try await waitForIntermediateProgress(progress)
+                let files = try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path)
+                #expect(files.count == 1)
+                #expect(files.first?.hasPrefix("hf-download-") == true)
+                download.cancel()
+                await #expect(throws: CancellationError.self) { try await download.value }
+            }
+            #expect(try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path).isEmpty)
+        }
+
+        @Test(
+            "Destination errors after transfer remove owned temporary files",
+            arguments: ["missing", "parent", "move"]
+        )
+        func destinationErrorCleansUp(mode: String) async throws {
+            let server = try SlowDownloadServer { _ in .init(body: Data([1, 2, 3]), delay: 0) }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let tempDirectory = directory.appendingPathComponent("temporary")
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+            let parentFile = directory.appendingPathComponent("file")
+            try Data([0]).write(to: parentFile)
+            let destination: URL? =
+                switch mode {
+                case "parent": parentFile.appendingPathComponent("weights.bin")
+                case "move": directory.appendingPathComponent(String(repeating: "x", count: 300))
+                default: nil
+                }
+            let progress = Progress(totalUnitCount: 0)
+            await HubClient.$downloadTemporaryDirectory.withValue(tempDirectory) {
+                await #expect(throws: (any Error).self) {
+                    try await client(host: host).downloadFile(
+                        at: "weights.bin",
+                        from: "test/model",
+                        to: destination,
+                        progress: progress,
+                        transport: .lfs
+                    )
+                }
+            }
+            // The complete body arrived before the destination operation failed.
+            #expect(progress.completedUnitCount == 3)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path).isEmpty)
         }
     }
 #endif

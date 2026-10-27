@@ -876,8 +876,9 @@ public extension HubClient {
         // Generic non-ETag fallback path. Without an etag there is no
         // resumable identity, so stream into an owned temp file and remove
         // it on cancellation or error instead of leaking it.
-        let tempURL = FileManager.default.temporaryDirectory
+        let tempURL = Self.downloadTemporaryDirectory
             .appendingPathComponent("hf-download-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
         let response: URLResponse
         let errorData: Data?
         do {
@@ -890,7 +891,6 @@ public extension HubClient {
                 metadata: preflightMetadata
             )
         } catch {
-            try? FileManager.default.removeItem(at: tempURL)
             if error is CancellationError {
                 throw error
             }
@@ -910,11 +910,9 @@ public extension HubClient {
             throw error
         }
         guard let httpResponse = response as? HTTPURLResponse else {
-            try? FileManager.default.removeItem(at: tempURL)
             throw HTTPClientError.unexpectedError("Invalid response from server: \(response)")
         }
         if !(200 ..< 300).contains(httpResponse.statusCode) {
-            try? FileManager.default.removeItem(at: tempURL)
             _ = try httpClient.validateResponse(response, data: errorData)
             throw HTTPClientError.responseError(response: httpResponse, detail: "Invalid response")
         }
@@ -942,8 +940,6 @@ public extension HubClient {
                 revision: commitHash,
                 filename: repoPath
             ) {
-                // The file was copied into the cache; the download temp file is no longer needed.
-                try? FileManager.default.removeItem(at: tempURL)
                 return try copyFileToDestinationIfNeeded(
                     cachedPath,
                     destination: destination,
@@ -1089,6 +1085,11 @@ public extension HubClient {
             localFilesOnly: localFilesOnly
         )
     }
+}
+
+extension HubClient {
+    // Task-local storage lets tests inspect only the files owned by their operation.
+    @TaskLocal static var downloadTemporaryDirectory = FileManager.default.temporaryDirectory
 }
 
 // MARK: - Streaming Download
