@@ -856,7 +856,7 @@ import Testing
             let fileBody = Data("cached-file".utf8)
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     let headers: [String: String] =
                         if request.httpMethod == "HEAD" {
                             [
@@ -973,7 +973,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     if request.httpMethod == "HEAD" {
                         let response = HTTPURLResponse(
                             url: request.url!,
@@ -994,6 +994,7 @@ import Testing
                         headerFields: [
                             "Content-Type": "text/plain",
                             "Content-Length": "\(remainder.count)",
+                            "Content-Range": "bytes \(partial.count)-\(full.count - 1)/\(full.count)",
                         ]
                     )!
                     return (response, remainder)
@@ -1038,7 +1039,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     if request.httpMethod == "HEAD" {
                         let response = HTTPURLResponse(
                             url: request.url!,
@@ -1141,7 +1142,7 @@ import Testing
 
                 await MockURLProtocol.setHandler { request in
                     let path = request.url?.path ?? ""
-                    if path == "/user/model/resolve/main/test.txt" {
+                    if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                         if request.httpMethod == "HEAD" {
                             let response = HTTPURLResponse(
                                 url: request.url!,
@@ -1162,6 +1163,7 @@ import Testing
                             headerFields: [
                                 "Content-Type": "text/plain",
                                 "Content-Length": "\(remainder.count)",
+                                "Content-Range": "bytes \(partial.count)-\(full.count - 1)/\(full.count)",
                             ]
                         )!
                         return (response, remainder)
@@ -1208,7 +1210,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     if request.httpMethod == "HEAD" {
                         let response = HTTPURLResponse(
                             url: request.url!,
@@ -1234,6 +1236,7 @@ import Testing
                         headerFields: [
                             "Content-Type": "text/plain",
                             "Content-Length": "\(remainder.count)",
+                            "Content-Range": "bytes \(partial.count)-\(full.count - 1)/\(full.count)",
                         ]
                     )!
                     return (response, remainder)
@@ -1286,7 +1289,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     if request.httpMethod == "HEAD" {
                         let response = HTTPURLResponse(
                             url: request.url!,
@@ -1312,6 +1315,7 @@ import Testing
                         headerFields: [
                             "Content-Type": "text/plain",
                             "Content-Length": "\(remainder.count)",
+                            "Content-Range": "bytes \(partial.count)-\(full.count - 1)/\(full.count)",
                         ]
                     )!
                     return (response, remainder)
@@ -1372,7 +1376,7 @@ import Testing
 
             await MockURLProtocol.setHandler { request in
                 let path = request.url?.path ?? ""
-                if path == "/user/model/resolve/main/test.txt" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/test.txt" {
                     if request.httpMethod == "HEAD" {
                         let response = HTTPURLResponse(
                             url: request.url!,
@@ -1398,6 +1402,7 @@ import Testing
                         headerFields: [
                             "Content-Type": "text/plain",
                             "Content-Length": "\(remainder.count)",
+                            "Content-Range": "bytes \(partial.count)-\(full.count - 1)/\(full.count)",
                         ]
                     )!
                     return (response, remainder)
@@ -1665,7 +1670,7 @@ import Testing
                     return (response, Data(listResponse.utf8))
                 }
 
-                guard path.hasPrefix("/user/model/resolve/main/") else {
+                guard path.hasPrefix("/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/") else {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 404,
@@ -1675,7 +1680,9 @@ import Testing
                     return (response, Data())
                 }
 
-                let filename = String(path.dropFirst("/user/model/resolve/main/".count))
+                let filename = String(
+                    path.dropFirst("/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/".count)
+                )
                 if request.httpMethod == "HEAD" {
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -1738,7 +1745,7 @@ import Testing
                     return (response, Data(listResponse.utf8))
                 }
 
-                guard path.hasPrefix("/user/model/resolve/main/") else {
+                guard path.hasPrefix("/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/") else {
                     let response = HTTPURLResponse(
                         url: request.url!,
                         statusCode: 404,
@@ -1748,7 +1755,9 @@ import Testing
                     return (response, Data())
                 }
 
-                let filename = String(path.dropFirst("/user/model/resolve/main/".count))
+                let filename = String(
+                    path.dropFirst("/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/".count)
+                )
                 if request.httpMethod == "HEAD" {
                     let response = HTTPURLResponse(
                         url: request.url!,
@@ -2232,7 +2241,7 @@ import Testing
                     )!
                     return (response, Data(listResponse.utf8))
                 }
-                if path == "/user/model/resolve/main/config.json" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/config.json" {
                     let headers: [String: String] =
                         if request.httpMethod == "HEAD" {
                             ["ETag": "\"etag-123\"", "X-Repo-Commit": commit]
@@ -2309,7 +2318,9 @@ import Testing
                     )!
                     return (response, Data(listResponse.utf8))
                 }
-                if path == "/user/model/resolve/main/prompts/conversational_a.txt" {
+                if path
+                    == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/prompts/conversational_a.txt"
+                {
                     let headers: [String: String] =
                         if request.httpMethod == "HEAD" {
                             ["ETag": "\"shared-etag\"", "X-Repo-Commit": commit]
@@ -2324,7 +2335,9 @@ import Testing
                     )!
                     return (response, request.httpMethod == "HEAD" ? Data() : sharedBody)
                 }
-                if path == "/user/model/resolve/main/prompts/conversational_b.txt" {
+                if path
+                    == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/prompts/conversational_b.txt"
+                {
                     let headers: [String: String] =
                         if request.httpMethod == "HEAD" {
                             // Intentionally omit X-Repo-Commit to exercise fallback commit resolution.
@@ -2404,7 +2417,7 @@ import Testing
                     )!
                     return (response, Data(listResponse.utf8))
                 }
-                if path == "/user/model/resolve/main/config.json" {
+                if path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/config.json" {
                     let headers: [String: String] =
                         if request.httpMethod == "HEAD" {
                             ["ETag": "\"etag-123\"", "X-Repo-Commit": commit]

@@ -202,7 +202,11 @@
             let offset = 128 * 1024
             let server = try SlowDownloadServer { [commit] request in
                 if request.hasPrefix("HEAD ") {
-                    return .init(headers: ["ETag": "weights", "X-Repo-Commit": commit], body: Data())
+                    return .init(
+                        headers: ["ETag": "weights", "X-Repo-Commit": commit],
+                        body: Data(),
+                        declaredSize: fullSize
+                    )
                 }
                 #expect(request.lowercased().contains("range: bytes=\(offset)-"))
                 let headers = status == 206 ? ["Content-Range": "bytes \(offset)-\(fullSize - 1)/\(fullSize)"] : [:]
