@@ -105,8 +105,12 @@ import Testing
             let file = try await client.downloadFile(at: "other.txt", from: "user/model", to: destination)
             #expect(try Data(contentsOf: file) == payload)
 
-            // The cache-aware download paths send a HEAD request for file metadata.
-            #expect(methods.messages == ["HEAD", "GET", "HEAD", "GET"])
+            // The cache-aware download paths send a HEAD request for file metadata
+            // before each GET; with the Xet trait, they also send one to look up a Xet file ID.
+            let sent = methods.messages
+            #expect(sent.filter { $0 == "GET" }.count == 2)
+            #expect(sent.first == "HEAD")
+            #expect(sent.allSatisfy { $0 == "HEAD" || $0 == "GET" })
 
             #expect(warnings.messages.count == 1)
             #expect(warnings.messages.first?.contains("does not support background URL sessions") == true)
