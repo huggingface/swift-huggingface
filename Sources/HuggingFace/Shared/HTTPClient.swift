@@ -29,6 +29,10 @@ final class HTTPClient: @unchecked Sendable {
     /// The underlying URL session.
     let session: URLSession
 
+    /// Whether the client invalidates `session` when it is deallocated,
+    /// because the client created the session and nothing else uses it.
+    private let invalidatesSession: Bool
+
     /// A shared JSON decoder with consistent configuration.
     private let jsonDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
@@ -42,11 +46,13 @@ final class HTTPClient: @unchecked Sendable {
     ///   - userAgent: The value for the `User-Agent` header sent in requests.
     ///   - tokenProvider: The token provider for authentication.
     ///   - session: The underlying URL session.
+    ///   - invalidatesSession: Whether to invalidate `session` when the client is deallocated.
     init(
         host: URL,
         userAgent: String? = nil,
         tokenProvider: TokenProvider = .environment,
-        session: URLSession = URLSession(configuration: .default)
+        session: URLSession = URLSession(configuration: .default),
+        invalidatesSession: Bool = false
     ) {
         var host = host
         if !host.path.hasSuffix("/") {
@@ -57,6 +63,13 @@ final class HTTPClient: @unchecked Sendable {
         self.userAgent = userAgent
         self.tokenProvider = tokenProvider
         self.session = session
+        self.invalidatesSession = invalidatesSession
+    }
+
+    deinit {
+        if invalidatesSession {
+            session.finishTasksAndInvalidate()
+        }
     }
 
     private struct ClientErrorResponse: Decodable {

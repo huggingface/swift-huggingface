@@ -69,10 +69,6 @@ public final class HubClient: Sendable {
     /// `SameHostRedirectDelegate` to preserve cross-host redirect blocking.
     let metadataSession: URLSession
 
-    /// The session that the client created in place of a background session, if any.
-    /// The client invalidates it when the client is deallocated, to release its delegate.
-    private let replacementSession: URLSession?
-
     /// The cache for downloaded files, or `nil` if caching is disabled.
     ///
     /// When set, downloaded files are stored in a Python-compatible cache structure,
@@ -191,12 +187,14 @@ public final class HubClient: Sendable {
     ) {
         let original = session
         let session = Self.foregroundSession(for: session, warn: warn)
-        self.replacementSession = session === original ? nil : session
+        // A replacement session belongs to the HTTP client, which streams keep alive,
+        // so the HTTP client invalidates it once nothing uses it, releasing its delegate.
         self.httpClient = HTTPClient(
             host: host,
             userAgent: userAgent,
             tokenProvider: tokenProvider,
-            session: session
+            session: session,
+            invalidatesSession: session !== original
         )
         #if canImport(FoundationNetworking)
             self.metadataSession = URLSession(
@@ -208,10 +206,6 @@ public final class HubClient: Sendable {
             self.metadataSession = session
         #endif
         self.cache = cache
-    }
-
-    deinit {
-        replacementSession?.finishTasksAndInvalidate()
     }
 
     // MARK: - Session
