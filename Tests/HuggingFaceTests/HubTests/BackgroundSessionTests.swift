@@ -127,5 +127,26 @@ import Testing
             #expect(client.session === session)
             #expect(warnings.messages.isEmpty)
         }
+
+        @Test("Fallback session keeps the caller's delegate and queue")
+        func testFallbackKeepsDelegateAndQueue() {
+            final class Delegate: NSObject, URLSessionDelegate {}
+            let delegate = Delegate()
+            let queue = OperationQueue()
+            let session = URLSession(
+                configuration: .background(withIdentifier: "BackgroundSessionTests.\(UUID().uuidString)"),
+                delegate: delegate,
+                delegateQueue: queue
+            )
+            defer { session.invalidateAndCancel() }
+
+            let fallback = HubClient.foregroundSession(for: session) { _ in }
+            defer { fallback.invalidateAndCancel() }
+
+            #expect(fallback !== session)
+            #expect(fallback.configuration.identifier == nil)
+            #expect(fallback.delegate === delegate)
+            #expect(fallback.delegateQueue === queue)
+        }
     }
 #endif

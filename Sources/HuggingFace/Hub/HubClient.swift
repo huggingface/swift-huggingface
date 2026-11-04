@@ -224,7 +224,11 @@ public final class HubClient: Sendable {
                 "Warning: HubClient does not support background URL sessions. "
                     + "Using a regular session with the same configuration instead."
             )
-            return URLSession(configuration: session.configuration.foregroundCopy())
+            return URLSession(
+                configuration: session.configuration.foregroundCopy(),
+                delegate: session.delegate,
+                delegateQueue: session.delegateQueue
+            )
         #endif
     }
 
