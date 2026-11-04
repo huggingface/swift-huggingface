@@ -154,13 +154,38 @@ public final class HubClient: Sendable {
     ///   - tokenProvider: The token provider for authentication.
     ///   - cache: The cache for downloaded files. Defaults to `HubCache.default`.
     ///            Pass `nil` to disable caching.
-    public init(
+    ///
+    /// - Note: `HubClient` doesn't support background sessions.
+    ///   If `session` has a background configuration,
+    ///   the client prints a warning and uses a regular session
+    ///   with the same settings instead.
+    public convenience init(
         session: URLSession = URLSession(configuration: .default),
         host: URL,
         userAgent: String? = nil,
         tokenProvider: TokenProvider,
         cache: HubCache? = .default
     ) {
+        self.init(
+            session: session,
+            host: host,
+            userAgent: userAgent,
+            tokenProvider: tokenProvider,
+            cache: cache,
+            warn: { print($0) }
+        )
+    }
+
+    /// Creates a client, reporting configuration problems to `warn`.
+    init(
+        session: URLSession,
+        host: URL,
+        userAgent: String?,
+        tokenProvider: TokenProvider,
+        cache: HubCache?,
+        warn: (String) -> Void
+    ) {
+        let session = Self.foregroundSession(for: session, warn: warn)
         self.httpClient = HTTPClient(
             host: host,
             userAgent: userAgent,
@@ -177,6 +202,30 @@ public final class HubClient: Sendable {
             self.metadataSession = session
         #endif
         self.cache = cache
+    }
+
+    // MARK: - Session
+
+    /// Returns a session that the client can use for all of its requests.
+    ///
+    /// Background sessions don't support completion handlers or task delegates,
+    /// and a second session with the same background identifier never delivers results.
+    /// For a background session, this method calls `warn` and returns a new session
+    /// with a default configuration that copies the background configuration's settings.
+    /// Otherwise, it returns `session` unchanged.
+    static func foregroundSession(for session: URLSession, warn: (String) -> Void) -> URLSession {
+        #if canImport(FoundationNetworking)
+            return session
+        #else
+            guard session.configuration.isBackground else {
+                return session
+            }
+            warn(
+                "Warning: HubClient does not support background URL sessions. "
+                    + "Using a regular session with the same configuration instead."
+            )
+            return URLSession(configuration: session.configuration.foregroundCopy())
+        #endif
     }
 
     // MARK: - Auto-detection
