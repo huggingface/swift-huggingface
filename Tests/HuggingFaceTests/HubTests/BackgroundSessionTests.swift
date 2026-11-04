@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 
 @testable import HuggingFace
@@ -147,6 +148,22 @@ import Testing
             #expect(fallback.configuration.identifier == nil)
             #expect(fallback.delegate === delegate)
             #expect(fallback.delegateQueue === queue)
+        }
+
+        @Test("Fallback configuration keeps the proxy configurations")
+        @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, visionOS 1.0, *)
+        func testFallbackKeepsProxyConfigurations() {
+            let configuration = URLSessionConfiguration.background(
+                withIdentifier: "BackgroundSessionTests.\(UUID().uuidString)"
+            )
+            configuration.proxyConfigurations = [
+                ProxyConfiguration(httpCONNECTProxy: .hostPort(host: "proxy.example.com", port: 8080))
+            ]
+
+            let copy = configuration.foregroundCopy()
+
+            #expect(copy.identifier == nil)
+            #expect(copy.proxyConfigurations.count == 1)
         }
     }
 #endif

@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(Network)
+    import Network
+#endif
+
 #if !canImport(FoundationNetworking)
     extension URLSessionConfiguration {
         /// Whether this is a background configuration,
@@ -38,6 +42,12 @@ import Foundation
             copy.urlCredentialStorage = urlCredentialStorage
             copy.urlCache = urlCache
             copy.protocolClasses = protocolClasses
+
+            #if canImport(Network)
+                if #available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, visionOS 1.0, *) {
+                    copy.proxyConfigurations = proxyConfigurations
+                }
+            #endif
 
             #if os(iOS) && !targetEnvironment(macCatalyst)
                 copy.multipathServiceType = multipathServiceType
