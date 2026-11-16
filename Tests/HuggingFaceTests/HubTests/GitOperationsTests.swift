@@ -58,20 +58,12 @@ import Testing
             #expect(entries[0].type == .file)
         }
 
-        @Test("datasetRefs decodes branches and optional tags", .mockURLSession)
+        @Test("datasetRefs decodes branches, tags, and target commits", .mockURLSession)
         func testDatasetRefs() async throws {
-            let responseBody = """
-                {
-                  "branches": [
-                    {
-                      "name": "main",
-                      "ref": "refs/heads/main",
-                      "targetOid": "sha-main"
-                    }
-                  ],
-                  "tags": null
-                }
-                """
+            // Captured on 2026-11-16 from
+            // https://huggingface.co/api/datasets/nyu-mll/glue/refs
+            let responseBody =
+                #"{"tags":[],"branches":[{"name":"script","ref":"refs/heads/script","targetCommit":"06983ca6c77a72be60a85e65634e385b5cbe995c"},{"name":"main","ref":"refs/heads/main","targetCommit":"bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c"}],"converts":[{"name":"parquet","ref":"refs/convert/parquet","targetCommit":"931904215b58b95ca536c5fe6103d54d03ff7842"}]}"#
 
             await MockURLProtocol.setHandler { request in
                 #expect(request.url?.path == "/api/datasets/user/repo/refs")
@@ -89,9 +81,11 @@ import Testing
             let client = createMockClient()
             let id: Repo.ID = "user/repo"
             let refs = try await client.datasetRefs(id)
-            #expect(refs.branches.count == 1)
-            #expect(refs.branches[0].name == "main")
-            #expect(refs.tags == nil)
+            #expect(refs.branches.map(\.name) == ["script", "main"])
+            let main = try #require(refs.branches.first { $0.name == "main" })
+            #expect(main.ref == "refs/heads/main")
+            #expect(main.targetCommit == "bcdcba79d07bc864c1c254ccfcedcce55bcc9a8c")
+            #expect(refs.tags?.isEmpty == true)
         }
 
         @Test("spaceCommits builds commits path and decodes payload", .mockURLSession)
