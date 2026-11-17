@@ -125,24 +125,56 @@ public enum Git {
         public let authors: [Author]
 
         /// The parent commit IDs.
+        ///
+        /// The Hub doesn't send this value.
         public let parents: [String]?
     }
 
     /// Represents a commit author.
     public struct Author: Hashable, Codable, Sendable {
         /// The author's name.
+        ///
+        /// The Hub identifies commit authors by username,
+        /// so for commits from the Hub this is the same as ``user``.
         public let name: String
 
         /// The author's email address.
+        ///
+        /// The Hub doesn't send this value.
         public let email: String?
 
         /// The timestamp of the commit.
+        ///
+        /// The Hub doesn't send this value.
+        /// Use ``Commit/date`` instead.
         public let time: Date?
 
-        /// The Hugging Face user information, if the author has an account.
+        /// The author's Hugging Face username.
         public let user: String?
 
         /// The avatar URL of the author, if available.
         public let avatarURL: String?
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let user = try container.decodeIfPresent(String.self, forKey: .user)
+            // The Hub sends only the username.
+            // Earlier versions of this package encoded a name.
+            if let name = try container.decodeIfPresent(String.self, forKey: .name) ?? user {
+                self.name = name
+            } else {
+                throw DecodingError.keyNotFound(
+                    CodingKeys.user,
+                    DecodingError.Context(
+                        codingPath: container.codingPath,
+                        debugDescription: "An author needs a user or a name."
+                    )
+                )
+            }
+            self.user = user
+            self.email = try container.decodeIfPresent(String.self, forKey: .email)
+            self.time = try container.decodeIfPresent(Date.self, forKey: .time)
+            self.avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+        }
     }
 }
