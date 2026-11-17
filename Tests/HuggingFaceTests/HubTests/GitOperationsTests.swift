@@ -24,17 +24,10 @@ import Testing
 
         @Test("modelTree builds tree path and decodes entries", .mockURLSession)
         func testModelTree() async throws {
-            let responseBody = """
-                [
-                  {
-                    "path": "README.md",
-                    "type": "file",
-                    "oid": "abc123",
-                    "size": 12,
-                    "lastCommit": null
-                  }
-                ]
-                """
+            // Captured on 2026-11-17 from
+            // https://huggingface.co/api/models/openai-community/gpt2/tree/main/onnx?limit=2
+            let responseBody =
+                #"[{"type":"file","oid":"00bc2ad81dcdd043bf8490fdbd7cd82629fab389","size":879,"path":"onnx/config.json"},{"type":"file","oid":"d1e0f6797a98e4710ae4c6928bd19440cf39bfbc","size":653665842,"lfs":{"oid":"e3fc9615868ff8f5e0429b892a0f6ca692784ba6c4ca31c4e9ee8218e7cce34f","size":653665842,"pointerSize":134},"xetHash":"8e0a346a29483c54443f10b62662d77f82084cd3d8cde68b60013383754615be","path":"onnx/decoder_model.onnx"}]"#
 
             await MockURLProtocol.setHandler { request in
                 #expect(request.url?.path == "/api/models/user/repo/tree/main/src")
@@ -53,9 +46,9 @@ import Testing
             let client = createMockClient()
             let id: Repo.ID = "user/repo"
             let entries = try await client.modelTree(id, path: "src")
-            #expect(entries.count == 1)
-            #expect(entries[0].path == "README.md")
-            #expect(entries[0].type == .file)
+            #expect(entries.map(\.path) == ["onnx/config.json", "onnx/decoder_model.onnx"])
+            #expect(entries.map(\.type) == [.file, .file])
+            #expect(entries[1].effectiveSize == 653_665_842)
         }
 
         @Test("datasetRefs decodes branches, tags, and target commits", .mockURLSession)

@@ -8,61 +8,69 @@ import Foundation
 
 @Suite("Git Tests")
 struct GitTests {
-    @Test("TreeEntry decoding")
+    @Test("TreeEntry decodes an expanded Hub tree response")
     func testTreeEntryDecoding() throws {
-        let json = """
-            {
-                "path": "README.md",
-                "type": "file",
-                "oid": "abc123def456",
-                "size": 1234,
-                "lastCommit": {
-                    "id": "commit123",
-                    "title": "Update README",
-                    "date": "2023-01-15T10:30:00.000Z"
-                }
-            }
-            """
+        // Captured on 2026-11-17 from
+        // https://huggingface.co/api/spaces/gradio/hello_world/tree/main/__pycache__?expand=true&limit=1
+        let data = Data(
+            #"[{"type":"file","oid":"26c99ed4fff8cb2ab7e91aa100697083c0a197b0","size":400,"path":"__pycache__/run.cpython-36.pyc","lastCommit":{"id":"5d06a5fecad2004207245543fa65977a6e8ca90f","title":"Upload  with huggingface_hub","date":"2022-09-14T15:17:32.000Z"},"securityFileStatus":{"status":"safe","protectAiScan":{"status":"unscanned"},"avScan":{"status":"safe","message":"No security issues detected","reportLink":"https://fdtn.ai/ai-supply-chain/hugging-face?utm_source=huggingface"},"pickleImportScan":{"status":"unscanned","pickleImports":[],"version":"0.0.0"},"virusTotalScan":{"status":"unscanned"}}}]"#
+                .utf8
+        )
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+        let entries = try decoder.decode([Git.TreeEntry].self, from: data)
+        let entry = try #require(entries.first)
 
-        let data = json.data(using: .utf8)!
-        let entry = try decoder.decode(Git.TreeEntry.self, from: data)
-
-        #expect(entry.path == "README.md")
+        #expect(entry.path == "__pycache__/run.cpython-36.pyc")
         #expect(entry.type == .file)
-        #expect(entry.oid == "abc123def456")
-        #expect(entry.size == 1234)
+        #expect(entry.oid == "26c99ed4fff8cb2ab7e91aa100697083c0a197b0")
+        #expect(entry.size == 400)
         #expect(entry.lfs == nil)
-        #expect(entry.effectiveSize == 1234)
-        #expect(entry.lastCommit != nil)
-        #expect(entry.lastCommit?.id == "commit123")
-        #expect(entry.lastCommit?.title == "Update README")
+        #expect(entry.effectiveSize == 400)
+        #expect(entry.lastCommit?.id == "5d06a5fecad2004207245543fa65977a6e8ca90f")
+        #expect(entry.lastCommit?.title == "Upload  with huggingface_hub")
+        #expect(entry.lastCommit?.date == Date(timeIntervalSince1970: 1_663_168_652))
     }
 
     @Test("TreeEntry directory decoding")
     func testTreeEntryDirectoryDecoding() throws {
-        let json = """
-            {
-                "path": "src",
-                "type": "directory",
-                "oid": null,
-                "size": null
-            }
-            """
+        // Captured on 2026-11-17 from
+        // https://huggingface.co/api/spaces/gradio/hello_world/tree/main?limit=1
+        let data = Data(
+            #"[{"type":"directory","oid":"93126891cbfacfce960a125dce9e42bec6a11753","size":0,"path":"__pycache__"}]"#
+                .utf8
+        )
+        let entries = try JSONDecoder().decode([Git.TreeEntry].self, from: data)
+        let entry = try #require(entries.first)
 
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
-
-        let data = json.data(using: .utf8)!
-        let entry = try decoder.decode(Git.TreeEntry.self, from: data)
-
-        #expect(entry.path == "src")
+        #expect(entry.path == "__pycache__")
         #expect(entry.type == .directory)
-        #expect(entry.oid == nil)
-        #expect(entry.size == nil)
-        #expect(entry.effectiveSize == nil)
+        #expect(entry.oid == "93126891cbfacfce960a125dce9e42bec6a11753")
+        #expect(entry.size == 0)
+        #expect(entry.lastCommit == nil)
+    }
+
+    @Test("TreeEntry decodes entry types that the package doesn't list")
+    func testTreeEntryOpenTypeDecoding() throws {
+        // The Hub's OpenAPI description lists "unknown" as a tree entry type.
+        let unknown = Data(
+            #"{"type":"unknown","oid":"93126891cbfacfce960a125dce9e42bec6a11753","size":0,"path":"vendor"}"#
+                .utf8
+        )
+        let entry = try JSONDecoder().decode(Git.TreeEntry.self, from: unknown)
+        #expect(entry.type == .unknown)
+        #expect(entry.type.description == "unknown")
+
+        let unlisted = Data(#"{"type":"symlink","oid":"abc123","path":"link"}"#.utf8)
+        let other = try JSONDecoder().decode(Git.TreeEntry.self, from: unlisted)
+        #expect(other.type == Git.TreeEntry.EntryType(rawValue: "symlink"))
+        #expect(!Git.TreeEntry.EntryType.allCases.contains(other.type))
+
+        let encoded = try JSONEncoder().encode(other)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["type"] as? String == "symlink")
+        #expect(try JSONDecoder().decode(Git.TreeEntry.self, from: encoded) == other)
     }
 
     @Test("TreeEntry decodes LFS metadata and prefers its size")

@@ -40,12 +40,32 @@ public enum Git {
         public let lastCommit: LastCommitInfo?
 
         /// The type of a tree entry.
-        public enum EntryType: String, Hashable, CaseIterable, CustomStringConvertible, Codable, Sendable {
+        ///
+        /// Use ``file``, ``directory``, or ``unknown``,
+        /// or create a type from its identifier
+        /// to use one this package doesn't list yet.
+        public struct EntryType: RawRepresentable, Hashable, CaseIterable, CustomStringConvertible, Codable,
+            Sendable
+        {
+            /// The type's identifier, such as `"file"`.
+            public let rawValue: String
+
+            /// Creates a type from its identifier.
+            public init(rawValue: String) {
+                self.rawValue = rawValue
+            }
+
             /// A file entry.
-            case file
+            public static let file = EntryType(rawValue: "file")
 
             /// A directory entry.
-            case directory
+            public static let directory = EntryType(rawValue: "directory")
+
+            /// An entry that the Hub can't classify.
+            public static let unknown = EntryType(rawValue: "unknown")
+
+            /// The types this package lists.
+            public static let allCases: [EntryType] = [.file, .directory, .unknown]
 
             public var description: String {
                 return rawValue
