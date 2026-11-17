@@ -202,6 +202,24 @@ struct GitTests {
         #expect(commit.authors[0].time == nil)
     }
 
+    @Test("Author decodes the avatar URL from a Hub response")
+    func testAuthorAvatarDecoding() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+        let commits = try decoder.decode([Git.Commit].self, from: Self.modelCommitsResponse)
+        let author = try #require(commits.first?.authors.first)
+
+        #expect(
+            author.avatarURL
+                == "https://cdn-avatars.huggingface.co/v1/production/uploads/5e3aec01f55e2b62848a5217/PMKS0NNB4MJQlTSFzh918.jpeg"
+        )
+
+        let encoded = try JSONEncoder().encode(author)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["avatar"] as? String == author.avatarURL)
+        #expect(object["avatarURL"] == nil)
+    }
+
     @Test("Author round-trips and decodes values that earlier versions encoded")
     func testAuthorCoding() throws {
         let decoder = JSONDecoder()
@@ -221,6 +239,7 @@ struct GitTests {
         #expect(legacyAuthor.email == "john@example.com")
         #expect(legacyAuthor.time == Date(timeIntervalSince1970: 1_686_839_400))
         #expect(legacyAuthor.user == "johndoe")
+        #expect(legacyAuthor.avatarURL == "https://example.com/a.png")
     }
 
 }

@@ -155,6 +155,16 @@ public enum Git {
         /// The avatar URL of the author, if available.
         public let avatarURL: String?
 
+        private enum CodingKeys: String, CodingKey {
+            case name
+            case email
+            case time
+            case user
+            case avatarURL = "avatar"
+            // Earlier versions encoded the avatar URL with this key.
+            case legacyAvatarURL = "avatarURL"
+        }
+
         public init(from decoder: any Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let user = try container.decodeIfPresent(String.self, forKey: .user)
@@ -174,7 +184,18 @@ public enum Git {
             self.user = user
             self.email = try container.decodeIfPresent(String.self, forKey: .email)
             self.time = try container.decodeIfPresent(Date.self, forKey: .time)
-            self.avatarURL = try container.decodeIfPresent(String.self, forKey: .avatarURL)
+            self.avatarURL =
+                try container.decodeIfPresent(String.self, forKey: .avatarURL)
+                ?? container.decodeIfPresent(String.self, forKey: .legacyAvatarURL)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(name, forKey: .name)
+            try container.encodeIfPresent(email, forKey: .email)
+            try container.encodeIfPresent(time, forKey: .time)
+            try container.encodeIfPresent(user, forKey: .user)
+            try container.encodeIfPresent(avatarURL, forKey: .avatarURL)
         }
     }
 }
