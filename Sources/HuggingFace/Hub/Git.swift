@@ -73,13 +73,37 @@ public enum Git {
         /// The full reference path (e.g., "refs/heads/main").
         public let ref: String
 
-        /// The target object ID (SHA).
-        public let targetOid: String?
+        /// The SHA of the commit that the reference points to.
+        public let targetCommit: String?
+
+        /// The SHA of the commit that the reference points to.
+        @available(*, deprecated, renamed: "targetCommit")
+        public var targetOid: String? {
+            targetCommit
+        }
 
         private enum CodingKeys: String, CodingKey {
             case name
             case ref
-            case targetOid = "targetOid"
+            case targetCommit
+            // Earlier versions encoded the commit with this key.
+            case legacyTargetOid = "targetOid"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.name = try container.decode(String.self, forKey: .name)
+            self.ref = try container.decode(String.self, forKey: .ref)
+            self.targetCommit =
+                try container.decodeIfPresent(String.self, forKey: .targetCommit)
+                ?? container.decodeIfPresent(String.self, forKey: .legacyTargetOid)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(name, forKey: .name)
+            try container.encode(ref, forKey: .ref)
+            try container.encodeIfPresent(targetCommit, forKey: .targetCommit)
         }
     }
 

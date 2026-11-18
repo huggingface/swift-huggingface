@@ -94,66 +94,81 @@ struct GitTests {
         #expect(try JSONDecoder().decode(Git.TreeEntry.self, from: null).effectiveSize == 10)
     }
 
-    @Test("Ref decoding")
-    func testRefDecoding() throws {
-        let json = """
-            {
-                "name": "main",
-                "ref": "refs/heads/main",
-                "targetOid": "abc123def456"
-            }
-            """
+    // Captured on 2026-11-16 from
+    // https://huggingface.co/api/models/bigscience/bloom/refs
+    private static let modelRefsResponse = Data(
+        #"{"tags":[{"name":"gs91100","ref":"refs/tags/gs91100","targetCommit":"d5f6a9a208dbb2de2ffe4fb27868f51ff776fea9"}],"branches":[{"name":"main","ref":"refs/heads/main","targetCommit":"7f10a99ce7c08f03c7719a586cb2cbda1433ac05"},{"name":"pr/121","ref":"refs/heads/pr/121","targetCommit":"46967aa0521973f212b461065132fb6e9a32c6d8"}],"converts":[]}"#
+            .utf8
+    )
 
-        let data = json.data(using: .utf8)!
+    @Test("Ref decodes the target commit from a Hub response")
+    func testRefDecoding() throws {
+        let data = Data(
+            #"{"name":"main","ref":"refs/heads/main","targetCommit":"7f10a99ce7c08f03c7719a586cb2cbda1433ac05"}"#
+                .utf8
+        )
         let ref = try JSONDecoder().decode(Git.Ref.self, from: data)
 
         #expect(ref.name == "main")
         #expect(ref.ref == "refs/heads/main")
-        #expect(ref.targetOid == "abc123def456")
+        #expect(ref.targetCommit == "7f10a99ce7c08f03c7719a586cb2cbda1433ac05")
+    }
+
+    @Test("Ref keeps the deprecated targetOid property")
+    @available(*, deprecated)
+    func testRefDeprecatedTargetOid() throws {
+        let data = Data(
+            #"{"name":"main","ref":"refs/heads/main","targetCommit":"7f10a99ce7c08f03c7719a586cb2cbda1433ac05"}"#
+                .utf8
+        )
+        let ref = try JSONDecoder().decode(Git.Ref.self, from: data)
+
+        #expect(ref.targetOid == "7f10a99ce7c08f03c7719a586cb2cbda1433ac05")
+    }
+
+    @Test("Ref decodes values encoded with the legacy targetOid key")
+    func testRefLegacyDecoding() throws {
+        let data = Data(#"{"name":"main","ref":"refs/heads/main","targetOid":"abc123"}"#.utf8)
+        let ref = try JSONDecoder().decode(Git.Ref.self, from: data)
+
+        #expect(ref.targetCommit == "abc123")
+    }
+
+    @Test("Ref encodes targetCommit and round-trips")
+    func testRefRoundTrip() throws {
+        let data = Data(
+            #"{"name":"gs91100","ref":"refs/tags/gs91100","targetCommit":"d5f6a9a208dbb2de2ffe4fb27868f51ff776fea9"}"#
+                .utf8
+        )
+        let ref = try JSONDecoder().decode(Git.Ref.self, from: data)
+
+        let encoded = try JSONEncoder().encode(ref)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: String])
+        #expect(object["targetCommit"] == "d5f6a9a208dbb2de2ffe4fb27868f51ff776fea9")
+        #expect(object["targetOid"] == nil)
+        #expect(try JSONDecoder().decode(Git.Ref.self, from: encoded) == ref)
     }
 
     @Test("Refs list decoding")
     func testRefsListDecoding() throws {
-        let json = """
-            {
-                "branches": [
-                    {
-                        "name": "main",
-                        "ref": "refs/heads/main",
-                        "targetOid": "abc123"
-                    },
-                    {
-                        "name": "dev",
-                        "ref": "refs/heads/dev",
-                        "targetOid": "def456"
-                    }
-                ],
-                "tags": [
-                    {
-                        "name": "v1.0.0",
-                        "ref": "refs/tags/v1.0.0",
-                        "targetOid": "xyz789"
-                    }
-                ]
-            }
-            """
+        let decoded = try JSONDecoder().decode([String: [Git.Ref]].self, from: Self.modelRefsResponse)
 
-        let data = json.data(using: .utf8)!
-        let decoded = try JSONDecoder().decode([String: [Git.Ref]?].self, from: data)
+        let branches = try #require(decoded["branches"])
+        let tags = try #require(decoded["tags"])
 
-        let branches = decoded["branches"] ?? []
-        let tags = decoded["tags"]
-
-        #expect(branches?.count == 2)
-        #expect(tags??.count == 1)
-        #expect(branches?[0].name == "main")
-        #expect(branches?[1].name == "dev")
-        #expect(tags??[0].name == "v1.0.0")
-
-        // Test utility of creating a dictionary by name
-        let branchesByName = Dictionary(uniqueKeysWithValues: branches?.map { ($0.name, $0) } ?? [])
-        #expect(branchesByName["main"]?.name == "main")
-        #expect(branchesByName["dev"]?.name == "dev")
+        #expect(branches.map(\.name) == ["main", "pr/121"])
+        #expect(branches.map(\.ref) == ["refs/heads/main", "refs/heads/pr/121"])
+        #expect(
+            branches.map(\.targetCommit) == [
+                "7f10a99ce7c08f03c7719a586cb2cbda1433ac05",
+                "46967aa0521973f212b461065132fb6e9a32c6d8",
+            ]
+        )
+        #expect(tags.count == 1)
+        #expect(tags[0].name == "gs91100")
+        #expect(tags[0].ref == "refs/tags/gs91100")
+        #expect(tags[0].targetCommit == "d5f6a9a208dbb2de2ffe4fb27868f51ff776fea9")
+        #expect(decoded["converts"]?.isEmpty == true)
     }
 
     @Test("Commit decoding")
