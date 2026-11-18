@@ -90,18 +90,10 @@ import Testing
 
         @Test("spaceCommits builds commits path and decodes payload", .mockURLSession)
         func testSpaceCommits() async throws {
-            let responseBody = """
-                [
-                  {
-                    "id": "commit123",
-                    "title": "Initial commit",
-                    "message": null,
-                    "date": "2023-06-15T14:30:00.000Z",
-                    "authors": [],
-                    "parents": []
-                  }
-                ]
-                """
+            // Captured on 2026-11-17 from
+            // https://huggingface.co/api/spaces/gradio/hello_world/commits/main?limit=1
+            let responseBody =
+                #"[{"id":"9b2f9bdde5b35f2555eab5c23c3bbf664d3c513c","title":"Upload folder using huggingface_hub","message":"","authors":[{"user":"gradio-pr-bot","avatar":"https://cdn-avatars.huggingface.co/v1/production/uploads/653920e4b5a5431cee25051a/yUXDlNUCfU372lUYlVfuv.png"}],"date":"2026-11-12T20:42:02.000Z"}]"#
 
             await MockURLProtocol.setHandler { request in
                 #expect(request.url?.path == "/api/spaces/user/repo/commits/dev")
@@ -120,7 +112,10 @@ import Testing
             let id: Repo.ID = "user/repo"
             let commits = try await client.spaceCommits(id, revision: "dev")
             #expect(commits.count == 1)
-            #expect(commits[0].id == "commit123")
+            #expect(commits[0].id == "9b2f9bdde5b35f2555eab5c23c3bbf664d3c513c")
+            #expect(commits[0].title == "Upload folder using huggingface_hub")
+            #expect(commits[0].message == "")
+            #expect(commits[0].authors.map(\.user) == ["gradio-pr-bot"])
         }
 
         @Test("resolve file uses correct prefixes for model dataset and space", .mockURLSession)

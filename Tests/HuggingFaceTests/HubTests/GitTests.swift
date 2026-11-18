@@ -171,66 +171,75 @@ struct GitTests {
         #expect(decoded["converts"]?.isEmpty == true)
     }
 
-    @Test("Commit decoding")
+    // Captured on 2026-11-17 from
+    // https://huggingface.co/api/models/openai-community/gpt2/commits/main?limit=1
+    private static let modelCommitsResponse = Data(
+        #"[{"id":"607a30d783dfa663caf39e06633721c8d4cfcd7e","title":"Adds the tokenizer configuration file (#80)","message":"\n\n\n- Adds tokenizer_config.json file (db6d57930088fb63e52c010bd9ac77c955ac55e7)\n\n","authors":[{"user":"lysandre","avatar":"https://cdn-avatars.huggingface.co/v1/production/uploads/5e3aec01f55e2b62848a5217/PMKS0NNB4MJQlTSFzh918.jpeg"}],"date":"2024-02-19T10:57:45.000Z"}]"#
+            .utf8
+    )
+
+    @Test("Commit decodes a Hub commits response")
     func testCommitDecoding() throws {
-        let json = """
-            {
-                "id": "commit123abc",
-                "title": "Add new feature",
-                "message": "Add new feature\\n\\nDetailed description here.",
-                "date": "2023-06-15T14:30:00.000Z",
-                "authors": [
-                    {
-                        "name": "John Doe",
-                        "email": "john@example.com",
-                        "time": "2023-06-15T14:30:00.000Z",
-                        "user": "johndoe",
-                        "avatarUrl": "https://avatars.example.com/johndoe"
-                    }
-                ],
-                "parents": ["parent123abc"]
-            }
-            """
-
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
 
-        let data = json.data(using: .utf8)!
-        let commit = try decoder.decode(Git.Commit.self, from: data)
+        let commits = try decoder.decode([Git.Commit].self, from: Self.modelCommitsResponse)
 
-        #expect(commit.id == "commit123abc")
-        #expect(commit.title == "Add new feature")
-        #expect(commit.message == "Add new feature\n\nDetailed description here.")
+        #expect(commits.count == 1)
+        let commit = try #require(commits.first)
+        #expect(commit.id == "607a30d783dfa663caf39e06633721c8d4cfcd7e")
+        #expect(commit.title == "Adds the tokenizer configuration file (#80)")
+        #expect(
+            commit.message
+                == "\n\n\n- Adds tokenizer_config.json file (db6d57930088fb63e52c010bd9ac77c955ac55e7)\n\n"
+        )
+        #expect(commit.date == Date(timeIntervalSince1970: 1_708_340_265))
+        #expect(commit.parents == nil)
         #expect(commit.authors.count == 1)
-        #expect(commit.authors[0].name == "John Doe")
-        #expect(commit.authors[0].email == "john@example.com")
-        #expect(commit.authors[0].user == "johndoe")
-        #expect(commit.parents?.count == 1)
-        #expect(commit.parents?[0] == "parent123abc")
+        #expect(commit.authors[0].user == "lysandre")
+        #expect(commit.authors[0].name == "lysandre")
+        #expect(commit.authors[0].email == nil)
+        #expect(commit.authors[0].time == nil)
     }
 
-    @Test("Author decoding with minimal fields")
-    func testAuthorMinimalDecoding() throws {
-        let json = """
-            {
-                "name": "Jane Smith",
-                "email": null,
-                "time": null,
-                "user": null,
-                "avatarUrl": null
-            }
-            """
-
+    @Test("Author decodes the avatar URL from a Hub response")
+    func testAuthorAvatarDecoding() throws {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+        let commits = try decoder.decode([Git.Commit].self, from: Self.modelCommitsResponse)
+        let author = try #require(commits.first?.authors.first)
 
-        let data = json.data(using: .utf8)!
-        let author = try decoder.decode(Git.Author.self, from: data)
+        #expect(
+            author.avatarURL
+                == "https://cdn-avatars.huggingface.co/v1/production/uploads/5e3aec01f55e2b62848a5217/PMKS0NNB4MJQlTSFzh918.jpeg"
+        )
 
-        #expect(author.name == "Jane Smith")
-        #expect(author.email == nil)
-        #expect(author.time == nil)
-        #expect(author.user == nil)
-        #expect(author.avatarURL == nil)
+        let encoded = try JSONEncoder().encode(author)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["avatar"] as? String == author.avatarURL)
+        #expect(object["avatarURL"] == nil)
     }
+
+    @Test("Author round-trips and decodes values that earlier versions encoded")
+    func testAuthorCoding() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601WithFractionalSeconds
+        let commits = try decoder.decode([Git.Commit].self, from: Self.modelCommitsResponse)
+        let author = try #require(commits.first?.authors.first)
+        let encoded = try JSONEncoder().encode(author)
+        #expect(try JSONDecoder().decode(Git.Author.self, from: encoded) == author)
+
+        // Encoded by this package at c4d1d40 with a default JSONEncoder.
+        let legacy = Data(
+            #"{"avatarURL":"https:\/\/example.com\/a.png","email":"john@example.com","name":"John Doe","time":708532200,"user":"johndoe"}"#
+                .utf8
+        )
+        let legacyAuthor = try JSONDecoder().decode(Git.Author.self, from: legacy)
+        #expect(legacyAuthor.name == "John Doe")
+        #expect(legacyAuthor.email == "john@example.com")
+        #expect(legacyAuthor.time == Date(timeIntervalSince1970: 1_686_839_400))
+        #expect(legacyAuthor.user == "johndoe")
+        #expect(legacyAuthor.avatarURL == "https://example.com/a.png")
+    }
+
 }
