@@ -1736,10 +1736,8 @@ public extension HubClient {
 public extension HubClient {
     /// Download a repository snapshot to a destination directory.
     ///
-    /// This method downloads all files from a repository to the cache and then
-    /// copies them to `destination`.
-    /// Files are automatically cached in the Python-compatible cache directory,
-    /// allowing cache reuse between Swift and Python Hugging Face clients.
+    /// With caching enabled, this method copies the cached snapshot to `destination`.
+    /// With caching disabled, it downloads matching files directly to `destination`.
     ///
     /// - Parameters:
     ///   - repo: Repository identifier
@@ -1781,10 +1779,8 @@ public extension HubClient {
     /// method above, so that an unlabeled trailing closure in an existing call
     /// still binds to `progressHandler` in Swift 5 language mode.
     ///
-    /// This method downloads all files from a repository to the cache and then
-    /// copies them to `destination`.
-    /// Files are automatically cached in the Python-compatible cache directory,
-    /// allowing cache reuse between Swift and Python Hugging Face clients.
+    /// With caching enabled, this method copies the cached snapshot to `destination`.
+    /// With caching disabled, it downloads matching files directly to `destination`.
     ///
     /// - Parameters:
     ///   - repo: Repository identifier
@@ -2110,24 +2106,32 @@ public extension HubClient {
             _ = await samplingTask.result
         }
 
+        if workItems.isEmpty, cache == nil, let effectiveDestination {
+            try FileManager.default.createDirectory(at: effectiveDestination, withIntermediateDirectories: true)
+            progress.completedUnitCount = progress.totalUnitCount
+        }
         if let progressHandler {
             await progressHandler(progress)
         }
 
-        guard let cache else {
+        let resolved: URL
+        if let cache {
+            let resolvedCommitHash =
+                isCommitHash(revision)
+                ? revision
+                : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
+            let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
+                .appendingPathComponent(resolvedCommitHash)
+            resolved = try copySnapshotToLocalDirectoryIfNeeded(
+                from: snapshotPath,
+                destination: effectiveDestination,
+                returnCachePath: returnCachePath
+            )
+        } else if let effectiveDestination {
+            resolved = effectiveDestination
+        } else {
             throw HubCacheError.snapshotRequiresCacheOrDestination(repo.description)
         }
-        let resolvedCommitHash =
-            isCommitHash(revision)
-            ? revision
-            : cache.resolveRevision(repo: repo, kind: kind, ref: revision) ?? revision
-        let snapshotPath = cache.snapshotsDirectory(repo: repo, kind: kind)
-            .appendingPathComponent(resolvedCommitHash)
-        let resolved = try copySnapshotToLocalDirectoryIfNeeded(
-            from: snapshotPath,
-            destination: effectiveDestination,
-            returnCachePath: returnCachePath
-        )
         // Emitted after the sampler is cancelled and the final copy succeeds:
         // the last 100 ms sample can land before the final bytes, and a copy
         // that throws must leave the terminal per-file state unobserved, same

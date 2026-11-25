@@ -2099,6 +2099,40 @@ import Testing
             #expect(rows.first?.sizeBytes == 20)
         }
 
+        @Test("downloadSnapshot returns the uncached destination", .mockURLSession, arguments: [true, false])
+        @MainActor
+        func testDownloadSnapshotWithoutCache(matchesFile: Bool) async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler(perFileProgressHandler(commit: commit, holdFirstRequestFor: 0))
+            let client = createMockClientWithoutCache()
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+
+            var fractionCompleted: Double?
+            var finalRows: [SnapshotFileProgress]?
+            let result = try await client.downloadSnapshot(
+                of: "user/model",
+                to: destination,
+                revision: commit,
+                matching: [matchesFile ? "small.bin" : "*.txt"],
+                progressHandler: { fractionCompleted = $0.fractionCompleted },
+                fileProgressHandler: { finalRows = $0 }
+            )
+
+            #expect(result == destination)
+            let files = try FileManager.default.contentsOfDirectory(atPath: destination.path)
+            #expect(files == (matchesFile ? ["small.bin"] : []))
+            #expect(fractionCompleted == 1)
+            let rows = try #require(finalRows)
+            #expect(rows.map(\.path) == files)
+            if matchesFile {
+                let contents = try Data(contentsOf: result.appendingPathComponent("small.bin"))
+                #expect(contents == Data(repeating: 3, count: 100))
+                #expect(rows.first?.fractionCompleted == 1)
+            }
+        }
+
         @Test("downloadSnapshot copies to destination when provided", .mockURLSession)
         func testDownloadSnapshotCopiesToDestinationWhenProvided() async throws {
             let commit = "1234567890123456789012345678901234567890"
