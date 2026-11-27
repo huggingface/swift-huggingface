@@ -397,7 +397,7 @@ public struct HubCache: Sendable {
         try? FileManager.default.removeItem(at: snapshotPath)
 
         // Try to create symlink, fall back to copy
-        let relativeBlobPath = relativePathToBlob(from: snapshotPath, blobName: normalizedEtag)
+        let relativeBlobPath = relativePathToBlob(filename: filename, blobName: normalizedEtag)
         if !createSymlink(at: snapshotPath, pointingTo: relativeBlobPath) {
             // Symlinks not supported, copy the file instead
             try FileManager.default.copyItem(at: blobPath, to: snapshotPath)
@@ -474,7 +474,7 @@ public struct HubCache: Sendable {
         try? FileManager.default.removeItem(at: snapshotPath)
 
         // Try to create symlink, fall back to copy
-        let relativeBlobPath = relativePathToBlob(from: snapshotPath, blobName: normalizedEtag)
+        let relativeBlobPath = relativePathToBlob(filename: filename, blobName: normalizedEtag)
         if !createSymlink(at: snapshotPath, pointingTo: relativeBlobPath) {
             try data.write(to: snapshotPath, options: .atomic)
         }
@@ -580,18 +580,14 @@ public struct HubCache: Sendable {
     /// The path needs to go up to the repo directory, then into blobs.
     /// For a file at `snapshots/<commit>/<filename>`, the path is `../../blobs/<etag>`.
     /// For nested files like `snapshots/<commit>/path/to/file`, we need more `..`.
-    private func relativePathToBlob(from snapshotPath: URL, blobName: String) -> String {
-        // Count directory depth from snapshots/<commit>/ to the file
-        let snapshotComponents = snapshotPath.pathComponents
-        guard let snapshotsIndex = snapshotComponents.lastIndex(of: "snapshots") else {
-            return "../../blobs/\(blobName)"
-        }
-
-        // Components after "snapshots": commit hash + filename path components
-        let componentsAfterSnapshots = snapshotComponents.count - snapshotsIndex - 1
-        // We need to go up (componentsAfterSnapshots) levels to reach the repo root
-        let upPath = String(repeating: "../", count: componentsAfterSnapshots)
-
+    ///
+    /// The depth comes from `filename`, not from the last `snapshots` component of the
+    /// full path: a repo path can contain a `snapshots` directory of its own, as in
+    /// `models--org--name/snapshots/<hash>/config.json`.
+    private func relativePathToBlob(filename: String, blobName: String) -> String {
+        // Validation rejects empty and ".." components; "." does not change the depth.
+        let directories = filename.split(separator: "/").filter { $0 != "." }.count - 1
+        let upPath = String(repeating: "../", count: directories + 2)
         return "\(upPath)blobs/\(blobName)"
     }
 
