@@ -2348,6 +2348,62 @@ import Testing
             }
         }
 
+        @Test("downloadSnapshot reports an empty tree body as a response error", .mockURLSession)
+        func testDownloadSnapshotEmptyTreeBodyIsResponseError() async throws {
+            await MockURLProtocol.setHandler { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: request.url?.path == "/api/models/user/model/tree/main" ? 200 : 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (response, Data())
+            }
+
+            let client = createMockClientWithoutCache()
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+
+            await #expect {
+                try await client.downloadSnapshot(
+                    of: "user/model",
+                    kind: .model,
+                    to: destination,
+                    revision: "main"
+                )
+            } throws: { error in
+                let error = error as? HTTPClientError
+                return error?.code == .responseError && error?.statusCode == 200
+            }
+        }
+
+        @Test("downloadSnapshot accepts an empty tree listing", .mockURLSession)
+        func testDownloadSnapshotEmptyTreeListing() async throws {
+            await MockURLProtocol.setHandler { request in
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: request.url?.path == "/api/models/user/model/tree/main" ? 200 : 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": "application/json"]
+                )!
+                return (response, Data("[]".utf8))
+            }
+
+            let client = createMockClientWithoutCache()
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+
+            let result = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                to: destination,
+                revision: "main"
+            )
+            #expect(result == destination)
+        }
+
         @Test("downloadSnapshot can return cache path instead of copying", .mockURLSession)
         func testDownloadSnapshotReturnsCachePathWhenRequested() async throws {
             let commit = "1234567890123456789012345678901234567890"

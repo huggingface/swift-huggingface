@@ -144,6 +144,11 @@ final class HTTPClient: @unchecked Sendable {
         let (data, response) = try await session.data(for: request)
         let httpResponse = try validateResponse(response, data: data)
 
+        // Match performFetch, which reports an empty body as a response error.
+        guard !data.isEmpty else {
+            throw HTTPClientError.responseError(response: httpResponse, detail: "Empty response body")
+        }
+
         do {
             let items = try jsonDecoder.decode([T].self, from: data)
             let nextURL = parseNextPageURL(from: httpResponse)
