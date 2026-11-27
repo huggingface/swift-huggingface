@@ -449,6 +449,43 @@ struct HubCacheTests {
         #expect(FileManager.default.fileExists(atPath: snapshotPath.path))
     }
 
+    @Test("Store file links to the blob when the repo path contains a snapshots directory")
+    func storeFileSnapshotsDirectoryInRepoPath() async throws {
+        let cache = HubCache(cacheDirectory: tempDirectory)
+        let repoID: Repo.ID = "user/repo"
+        let commitHash = "abc123def456789012345678901234567890abcd"
+
+        let sourceFile = tempDirectory.appendingPathComponent("source.json")
+        try "{}".write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        // A repo that ships a Hub cache of its own has paths like the second one.
+        let filenames = [
+            "snapshots/config.json",
+            "models--org--name/snapshots/f465978e618db8cc79c83b8bbf24964857db1875/config.json",
+        ]
+        for (index, filename) in filenames.enumerated() {
+            try await cache.storeFile(
+                at: sourceFile,
+                repo: repoID,
+                kind: .model,
+                revision: commitHash,
+                filename: filename,
+                etag: "etag\(index)"
+            )
+
+            let cachedPath = cache.cachedFilePath(
+                repo: repoID,
+                kind: .model,
+                revision: commitHash,
+                filename: filename
+            )
+            #expect(cachedPath != nil, "\(filename)")
+            if let cachedPath {
+                #expect(try String(contentsOf: cachedPath, encoding: .utf8) == "{}")
+            }
+        }
+    }
+
     @Test("Store file does not duplicate blob")
     func storeFileNoDuplicateBlob() async throws {
         let cache = HubCache(cacheDirectory: tempDirectory)
