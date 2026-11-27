@@ -585,8 +585,14 @@ public struct HubCache: Sendable {
     /// full path: a repo path can contain a `snapshots` directory of its own, as in
     /// `models--org--name/snapshots/<hash>/config.json`.
     private func relativePathToBlob(filename: String, blobName: String) -> String {
+        // Split on the slash byte, not on `Character`s:
+        // a slash followed by a combining mark, as in "dir/\u{0301}file",
+        // forms one `Character` and would hide a directory level.
         // Validation rejects empty and ".." components; "." does not change the depth.
-        let directories = filename.split(separator: "/").filter { $0 != "." }.count - 1
+        let slash = UInt8(ascii: "/")
+        let dot = Array(".".utf8)
+        let directories =
+            filename.utf8.split(separator: slash).filter { !$0.elementsEqual(dot) }.count - 1
         let upPath = String(repeating: "../", count: directories + 2)
         return "\(upPath)blobs/\(blobName)"
     }

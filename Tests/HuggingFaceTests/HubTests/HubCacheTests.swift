@@ -462,6 +462,8 @@ struct HubCacheTests {
         let filenames = [
             "snapshots/config.json",
             "models--org--name/snapshots/f465978e618db8cc79c83b8bbf24964857db1875/config.json",
+            // A slash followed by a combining mark forms one `Character`.
+            "dir/\u{0301}file.json",
         ]
         for (index, filename) in filenames.enumerated() {
             try await cache.storeFile(
