@@ -539,6 +539,44 @@
             #expect(try FileManager.default.contentsOfDirectory(atPath: tempDirectory.path).isEmpty)
         }
 
+        @Test("An unresolved snapshot path copies the blob and keeps it in the cache")
+        func unresolvedSnapshotKeepsBlob() async throws {
+            // A commit that is not a full hash stores a snapshot entry
+            // that `cachedFilePath` cannot resolve by that commit.
+            let shortCommit = "abc123"
+            let body = pattern(1024)
+            let server = try SlowDownloadServer { request in
+                .init(
+                    headers: ["ETag": "weights", "X-Repo-Commit": shortCommit],
+                    body: request.hasPrefix("HEAD ") ? Data() : body,
+                    delay: 0,
+                    declaredSize: body.count
+                )
+            }
+            let host = try await server.start()
+            defer { server.stop() }
+            let directory = try temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let cache = HubCache(cacheDirectory: directory.appendingPathComponent("cache"))
+            let destination = directory.appendingPathComponent("weights.bin")
+
+            let file = try await client(host: host, cache: cache).downloadFile(
+                at: "weights.bin",
+                from: "test/model",
+                to: destination,
+                transport: .lfs
+            )
+            #expect(file == destination)
+            #expect(try Data(contentsOf: destination) == body)
+            let blob = try cache.blobPath(repo: "test/model", kind: .model, etag: "weights")
+            #expect(try Data(contentsOf: blob) == body)
+            // The branch ref resolves to the stored snapshot, whose link needs the blob.
+            let cached = try #require(
+                cache.cachedFilePath(repo: "test/model", kind: .model, revision: "main", filename: "weights.bin")
+            )
+            #expect(try Data(contentsOf: cached) == body)
+        }
+
         @Test(
             "Destination errors after transfer remove owned temporary files",
             arguments: ["missing", "parent", "move"]

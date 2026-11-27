@@ -861,6 +861,14 @@ public extension HubClient {
                     guard let destination else {
                         throw HubCacheError.cachedPathResolutionFailed(repoPath)
                     }
+                    // The cache owns the blob, so copy it instead of moving it.
+                    if completedURL == blobPath {
+                        return try copyFileToDestinationIfNeeded(
+                            blobPath,
+                            destination: destination,
+                            progress: progress
+                        )
+                    }
                     try FileManager.default.createDirectory(
                         at: destination.deletingLastPathComponent(),
                         withIntermediateDirectories: true
