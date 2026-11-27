@@ -2256,6 +2256,98 @@ import Testing
             #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("b.json").path))
         }
 
+        @Test("downloadSnapshot throws when a later tree page fails", .mockURLSession)
+        func testDownloadSnapshotThrowsOnLaterTreePageFailure() async throws {
+            let commit = "1234567890123456789012345678901234567890"
+            await MockURLProtocol.setHandler { request in
+                let url = request.url!
+                if url.path == "/api/models/user/model/tree/main" {
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    let body = #"[{"path": "a.json", "type": "file", "oid": "a", "size": 2}]"#
+                    return (response, Data(body.utf8))
+                }
+                if url.path == "/user/model/resolve/\(request.httpMethod == "HEAD" ? "main" : commit)/a.json" {
+                    let headers: [String: String] =
+                        if request.httpMethod == "HEAD" {
+                            ["ETag": "\"etag-a\"", "X-Repo-Commit": commit]
+                        } else {
+                            ["Content-Type": "application/json"]
+                        }
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, request.httpMethod == "HEAD" ? Data() : Data("{}".utf8))
+                }
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let (client, cacheDirectory) = createMockClientWithCache()
+            defer { try? FileManager.default.removeItem(at: cacheDirectory) }
+            // Cache a snapshot that holds only a.json.
+            _ = try await client.downloadSnapshot(of: "user/model", kind: .model, revision: "main")
+
+            await MockURLProtocol.setHandler { request in
+                let url = request.url!
+                guard url.path == "/api/models/user/model/tree/main" else {
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 404,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [:]
+                    )!
+                    return (response, Data())
+                }
+                let cursor = URLComponents(url: url, resolvingAgainstBaseURL: true)?
+                    .queryItems?.first { $0.name == "cursor" }?.value
+                if cursor == nil {
+                    let body = """
+                        [
+                            {"path": "a.json", "type": "file", "oid": "a", "size": 2},
+                            {"path": "b.json", "type": "file", "oid": "b", "size": 2}
+                        ]
+                        """
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: [
+                            "Content-Type": "application/json",
+                            "Link":
+                                "<https://huggingface.co/api/models/user/model/tree/main?recursive=true&cursor=two>; rel=\"next\"",
+                        ]
+                    )!
+                    return (response, Data(body.utf8))
+                }
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 503,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            await #expect {
+                try await client.downloadSnapshot(of: "user/model", kind: .model, revision: "main")
+            } throws: { error in
+                (error as? HTTPClientError)?.statusCode == 503
+            }
+        }
+
         @Test("downloadSnapshot can return cache path instead of copying", .mockURLSession)
         func testDownloadSnapshotReturnsCachePathWhenRequested() async throws {
             let commit = "1234567890123456789012345678901234567890"

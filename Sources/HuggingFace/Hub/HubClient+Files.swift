@@ -1983,15 +1983,14 @@ public extension HubClient {
             return resolved
         }
 
-        let allEntries: [Git.TreeEntry]
+        // listFiles returns only the first page of the tree; collect every page.
+        let pages: Pages<Git.TreeEntry>
         do {
-            // listFiles returns only the first page of the tree; collect every page.
-            var entries: [Git.TreeEntry] = []
-            for try await page in try await listAllTree(in: repo, kind: kind, revision: revision, recursive: true) {
-                entries.append(contentsOf: page.items)
-            }
-            allEntries = entries
+            pages = try await listAllTree(in: repo, kind: kind, revision: revision, recursive: true)
         } catch {
+            // Only a failure of the first page falls back to the cache.
+            // A later page failure propagates,
+            // so a partial cached snapshot is not returned as complete.
             if let cachedPath = cachedSnapshotPathForLocalFilesOnly(
                 repo: repo,
                 kind: kind,
@@ -2014,6 +2013,10 @@ public extension HubClient {
                 return resolved
             }
             throw error
+        }
+        var allEntries: [Git.TreeEntry] = []
+        for try await page in pages {
+            allEntries.append(contentsOf: page.items)
         }
         let entries =
             allEntries
