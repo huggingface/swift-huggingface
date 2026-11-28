@@ -1985,7 +1985,12 @@ public extension HubClient {
 
         let allEntries: [Git.TreeEntry]
         do {
-            allEntries = try await listFiles(in: repo, kind: kind, revision: revision, recursive: true)
+            // listFiles returns only the first page of the tree; collect every page.
+            var entries: [Git.TreeEntry] = []
+            for try await page in try await listAllTree(in: repo, kind: kind, revision: revision, recursive: true) {
+                entries.append(contentsOf: page.items)
+            }
+            allEntries = entries
         } catch {
             if let cachedPath = cachedSnapshotPathForLocalFilesOnly(
                 repo: repo,

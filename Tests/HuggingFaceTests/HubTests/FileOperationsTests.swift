@@ -2197,6 +2197,65 @@ import Testing
             #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("config.json").path))
         }
 
+        @Test("downloadSnapshot downloads files from every tree page", .mockURLSession)
+        func testDownloadSnapshotFollowsTreePages() async throws {
+            await MockURLProtocol.setHandler { request in
+                let url = request.url!
+                if url.path == "/api/models/user/model/tree/main" {
+                    let cursor = URLComponents(url: url, resolvingAgainstBaseURL: true)?
+                        .queryItems?.first { $0.name == "cursor" }?.value
+                    var headers = ["Content-Type": "application/json"]
+                    let body: String
+                    if cursor == nil {
+                        body = #"[{"path": "a.json", "type": "file", "oid": "a", "size": 2}]"#
+                        headers["Link"] =
+                            "<https://huggingface.co/api/models/user/model/tree/main?recursive=true&cursor=two>; rel=\"next\""
+                    } else {
+                        body = #"[{"path": "b.json", "type": "file", "oid": "b", "size": 2}]"#
+                    }
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: headers
+                    )!
+                    return (response, Data(body.utf8))
+                }
+                if url.path == "/user/model/resolve/main/a.json" || url.path == "/user/model/resolve/main/b.json" {
+                    let response = HTTPURLResponse(
+                        url: url,
+                        statusCode: 200,
+                        httpVersion: "HTTP/1.1",
+                        headerFields: ["Content-Type": "application/json"]
+                    )!
+                    return (response, Data("{}".utf8))
+                }
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 404,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: [:]
+                )!
+                return (response, Data())
+            }
+
+            let client = createMockClientWithoutCache()
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hf-destination-\(UUID().uuidString)", isDirectory: true)
+            defer { try? FileManager.default.removeItem(at: destination) }
+
+            _ = try await client.downloadSnapshot(
+                of: "user/model",
+                kind: .model,
+                to: destination,
+                revision: "main",
+                matching: ["*.json"]
+            )
+
+            #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("a.json").path))
+            #expect(FileManager.default.fileExists(atPath: destination.appendingPathComponent("b.json").path))
+        }
+
         @Test("downloadSnapshot can return cache path instead of copying", .mockURLSession)
         func testDownloadSnapshotReturnsCachePathWhenRequested() async throws {
             let commit = "1234567890123456789012345678901234567890"
